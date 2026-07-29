@@ -576,7 +576,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.18.0';
+const APP_VER='1.19.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -757,6 +757,77 @@ window.addEventListener('beforeunload',e=>{
   if(saved||FH) return;
   e.preventDefault(); e.returnValue='';   /* unsaved takeoff — let the browser warn */
 });
+/* ---- the drawings themselves ----
+   A project file deliberately does not carry the PDFs, which meant every reload
+   asked for them again. IndexedDB keeps the bytes in this browser instead, keyed
+   by the sheet they belong to, so reopening a job is just open-and-work. The
+   project file is still the portable copy — this is a convenience, not the
+   record. */
+const PDB='linework-pdfs', PSTORE='pdf';
+let pdbP=null;
+function pdb(){
+  if(pdbP) return pdbP;
+  pdbP=new Promise((res,rej)=>{
+    if(!window.indexedDB) return rej(new Error('no indexedDB'));
+    const q=indexedDB.open(PDB,1);
+    q.onupgradeneeded=()=>{ const db=q.result;
+      if(!db.objectStoreNames.contains(PSTORE)) db.createObjectStore(PSTORE); };
+    q.onsuccess=()=>res(q.result);
+    q.onerror=()=>rej(q.error||new Error('indexedDB'));
+  }).catch(e=>{ pdbP=null; throw e; });
+  return pdbP;
+}
+function pdbTx(mode,fn){
+  return pdb().then(db=>new Promise((res,rej)=>{
+    const tx=db.transaction(PSTORE,mode), st=tx.objectStore(PSTORE);
+    let out;
+    try{ out=fn(st); }catch(e){ rej(e); return; }
+    tx.oncomplete=()=>res(out&&out.result!==undefined?out.result:out);
+    tx.onerror=tx.onabort=()=>rej(tx.error||new Error('transaction'));
+  }));
+}
+const pdfSave=(id,buf,meta)=>pdbTx('readwrite',st=>st.put({buf,name:meta.name,size:meta.size,at:Date.now()},id));
+const pdfLoad=id=>pdbTx('readonly',st=>st.get(id));
+const pdfDrop=id=>pdbTx('readwrite',st=>st.delete(id));
+const pdfKeys=()=>pdbTx('readonly',st=>st.getAllKeys());
+async function pdfStoreSize(){
+  try{
+    const db=await pdb();
+    return await new Promise((res,rej)=>{
+      const tx=db.transaction(PSTORE,'readonly'), q=tx.objectStore(PSTORE).getAll();
+      q.onsuccess=()=>res((q.result||[]).reduce((s,r)=>s+((r.buf&&r.buf.byteLength)||0),0));
+      q.onerror=()=>rej(q.error);
+    });
+  }catch(e){ return 0; }
+}
+async function pdfForget(){
+  try{ await pdbTx('readwrite',st=>st.clear()); toast('Stored drawings cleared'); }
+  catch(e){ toast('Could not clear the stored drawings'); }
+}
+/* drop bytes for sheets the project no longer has */
+async function pdfPrune(){
+  try{
+    const keys=await pdfKeys();
+    const live=new Set(P.docs.map(d=>d.id));
+    for(const k of (keys||[])) if(!live.has(k)) await pdfDrop(k);
+  }catch(e){}
+}
+async function restoreDrawings(){
+  if(P.keepPdf===false||!P.docs.length) return 0;
+  let n=0;
+  for(const d of P.docs){
+    if(FILES[d.id]) continue;
+    try{
+      const rec=await pdfLoad(d.id);
+      if(!rec||!rec.buf) continue;
+      const pdf=await pdfjsLib.getDocument({data:new Uint8Array(rec.buf)}).promise;
+      FILES[d.id]={pdf};
+      d.pages=pdf.numPages;
+      n++;
+    }catch(e){ /* a sheet that will not reopen is simply not restored */ }
+  }
+  return n;
+}
 async function loadProject(){
   let raw=null;
   try{ if(window.storage){ const r=await window.storage.get(KEY,false); if(r&&r.value) raw=r.value; } }catch(e){}
@@ -820,6 +891,8 @@ function applyProject(d){
   ['rate','matUp','labFt','labFeed','labEa'].forEach(k=>{ P[k]=Math.max(0,+P[k]||0); });
   P.cur=String(P.cur||'$').slice(0,3);
   P.minOff=Math.max(0,+P.minOff||0);
+  P.rowCap=clamp(+P.rowCap||250,10,1e6);
+  if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
   P.alts=Array.isArray(P.alts)?P.alts.filter(a=>a&&a.id).map(a=>({id:a.id,name:String(a.name||'Alternate'),
     sub:(a.sub&&typeof a.sub==='object')?a.sub:{}})):[];
@@ -896,6 +969,7 @@ async function openFiles(list){
     if(!/\.pdf$/i.test(f.name)&&f.type!=='application/pdf'){ toast('Skipped '+f.name+' — PDF only'); continue; }
     try{
       const buf=await f.arrayBuffer();
+      const copy=buf.slice(0);
       const pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
       let rec=P.docs.find(d=>d.name===f.name&&d.size===f.size);
       if(!rec){
@@ -904,6 +978,14 @@ async function openFiles(list){
         P.docs.push(rec);
       }else{ toast('Relinked '+f.name+' — markups restored'); }
       FILES[rec.id]={pdf};
+      /* keep the bytes so a reload does not ask for the file again. The copy is
+         taken before pdf.js gets the buffer, which it may detach. */
+      if(P.keepPdf!==false){
+        pdfSave(rec.id,copy,{name:f.name,size:f.size}).catch(e=>{
+          P.keepPdf=false;
+          toast('No room to keep the drawings in this browser — they will need re-importing');
+        });
+      }
       /* read the titleblock once, on import — cheap, and it saves retyping */
       if(!rec.sheetNo&&!rec.title){
         const tb=await readTitleblock(pdf,1);
@@ -1094,9 +1176,78 @@ async function renderBase(){
    complete, so the visible sheet is never cleared and never flashes. Paints are
    serialised because pdf.js refuses to render onto a canvas whose previous task
    is still unwinding, and a refused render would leave that buffer blank. */
-let paintGen=0, renderP=null;
+/* ---- tile cache ----
+   Panning back to where you just were used to re-render it. A few finished
+   windows are kept per page and zoom, and a pan that lands inside one is a blit
+   instead of a parse. Bitmaps are heavy, so the cache is small and closes what
+   it evicts. */
+const TILE_KEEP=3;
+const TILES=new Map();
+const tileKey=()=>V.pageDoc+'|'+V.pageNo+'|'+V.zoom.toFixed(4);
+function tilePut(bmp,win,dscale){
+  if(!bmp) return;
+  const k=tileKey();
+  let arr=TILES.get(k);
+  if(!arr){ arr=[]; TILES.set(k,arr); }
+  arr.push({bmp,win,dscale});
+  /* one page and zoom keeps a couple of windows; older zooms go first */
+  while(arr.length>2){ const old=arr.shift(); try{old.bmp.close()}catch(e){} }
+  while(TILES.size>TILE_KEEP){
+    const first=TILES.keys().next().value;
+    if(first===k) break;
+    (TILES.get(first)||[]).forEach(t=>{ try{t.bmp.close()}catch(e){} });
+    TILES.delete(first);
+  }
+}
+function tileFind(){
+  const arr=TILES.get(tileKey());
+  if(!arr||!arr.length) return null;
+  const v=visRect();
+  for(let i=arr.length-1;i>=0;i--){
+    const o=arr[i].win;
+    if(v.x>=o.x0-1&&v.y>=o.y0-1&&v.x+v.w<=o.x0+o.w+1&&v.y+v.h<=o.y0+o.h+1) return arr[i];
+  }
+  return null;
+}
+const tileCount=()=>{ let n=0; TILES.forEach(a=>{n+=a.length}); return n; };
+function tileClear(){
+  TILES.forEach(arr=>arr.forEach(t=>{ try{t.bmp.close()}catch(e){} }));
+  TILES.clear();
+}
+/* Blit a cached window into the spare buffer and swap it in. Synchronous, so a
+   pan that lands on a cached tile is sharp in the same frame. */
+function paintFromTile(t){
+  const c=spareDetail(), cx=c.getContext('2d');
+  const bw=t.bmp.width, bh=t.bmp.height;
+  if(c.width!==bw||c.height!==bh){ c.width=bw; c.height=bh; }
+  else cx.clearRect(0,0,bw,bh);
+  cx.drawImage(t.bmp,0,0);
+  c.style.transform='';
+  c.style.left=t.win.x0+'px'; c.style.top=t.win.y0+'px';
+  c.style.width=t.win.w+'px'; c.style.height=t.win.h+'px';
+  c.style.visibility='visible';
+  shownDetail().style.visibility='hidden';
+  detIdx=1-detIdx;
+  V.win=t.win; V.winZoom=V.zoom; V.dscale=t.dscale;
+  syncZoomUI(); drawOverlay();
+}
+/* An OffscreenCanvas keeps the render off any canvas the compositor is showing;
+   without it the spare buffer is a live DOM canvas being resized and repainted.
+   Where it is missing, the double-buffered path below is unchanged. */
+const OFFSCREEN=(()=>{ try{ return typeof OffscreenCanvas==='function'
+  && !!(new OffscreenCanvas(2,2).getContext('2d')); }catch(e){ return false; } })();
+let paintGen=0, renderP=null, paintMs=0, paintKind='';
 async function paintPage(){
   if(!V.pageObj||!V.vp) return;
+  /* already rendered this window at this zoom — blit it and stop */
+  const hit=P.tiles===false?null:tileFind();
+  if(hit){
+    if(V.win===hit.win&&V.winZoom===V.zoom){ paintKind='shown'; paintMs=0; return; }
+    paintKind='tile'; paintMs=0;
+    paintFromTile(hit);
+    return;
+  }
+  const t0=performance.now();
   const gen=++paintGen;
   if(renderTask){ try{renderTask.cancel()}catch(e){} }
   if(renderP){ try{ await renderP; }catch(e){} }
@@ -1105,9 +1256,11 @@ async function paintPage(){
   if(gen!==paintGen) return;
   const win=pageWindow(), zoomAt=V.zoom;
   const s=deviceScale(win.w,win.h); V.dscale=s;
-  const c=spareDetail(), cx=c.getContext('2d');
+  const c=spareDetail();
   const bw=Math.max(1,Math.round(win.w*s)), bh=Math.max(1,Math.round(win.h*s));
-  if(c.width!==bw||c.height!==bh){ c.width=bw; c.height=bh; }
+  const off=(OFFSCREEN&&P.gpu!==false)?new OffscreenCanvas(bw,bh):null;
+  const cx=off?off.getContext('2d'):c.getContext('2d');
+  if(!off&&(c.width!==bw||c.height!==bh)){ c.width=bw; c.height=bh; }
   let task;
   /* render the full-page viewport, shifted so only the window lands on canvas */
   try{
@@ -1119,6 +1272,13 @@ async function paintPage(){
   catch(e){ if(gen===paintGen) scheduleRepaint(true); return; }
   if(gen!==paintGen) return;                          /* stale: leave the view alone */
   renderTask=null; renderP=null;
+  let bmp=null;
+  if(off){
+    /* one drawImage onto the visible buffer, instead of pdf.js painting it live */
+    bmp=off.transferToImageBitmap();
+    if(c.width!==bw||c.height!==bh){ c.width=bw; c.height=bh; }
+    c.getContext('2d').drawImage(bmp,0,0);
+  }
   /* atomic swap — position the finished buffer, reveal it, hide the old one */
   c.style.transform='';
   c.style.left=win.x0+'px'; c.style.top=win.y0+'px';
@@ -1127,8 +1287,15 @@ async function paintPage(){
   shownDetail().style.visibility='hidden';
   detIdx=1-detIdx;
   V.win=win; V.winZoom=zoomAt;
+  paintMs=performance.now()-t0; paintKind=off?'offscreen':'canvas';
   syncZoomUI();
   drawOverlay();
+  /* keep the finished window for the pan back */
+  if(P.tiles!==false){
+    if(bmp) tilePut(bmp,win,s);
+    else if(typeof createImageBitmap==='function')
+      createImageBitmap(c).then(b=>tilePut(b,win,s)).catch(()=>{});
+  }
   if(P.snap!==false&&SNAP.key!==V.docId+'|'+V.page) buildSnap();
 }
 /* Repaint after scrolling out of the window, zooming, or resizing. The base layer
@@ -1166,9 +1333,27 @@ async function renderPage(){
 const SNAP_TOL=11;              /* screen px */
 const SNAP_CAP=120000;          /* points; a very dense sheet is truncated */
 const SNAP_CELL=24;             /* grid cell, PDF points */
-const SNAP={key:null,grid:null,n:0,truncated:false,building:false};
+const SNAP_KEEP=6;              /* pages of geometry kept in memory */
+const SNAP={key:null,grid:null,n:0,truncated:false,building:false,busy:null,cache:new Map()};
 
-function snapReset(){ SNAP.key=null; SNAP.grid=null; SNAP.n=0; SNAP.truncated=false; }
+/* Paging back and forth used to rebuild the geometry every time, and
+   getOperatorList on a dense sheet is the longest stall in the app. Keep the
+   last few pages instead — the grids are small next to a rendered bitmap. */
+function snapRemember(key,grid,n,truncated){
+  SNAP.cache.set(key,{grid,n,truncated});
+  while(SNAP.cache.size>SNAP_KEEP) SNAP.cache.delete(SNAP.cache.keys().next().value);
+}
+function snapUse(key){
+  const hit=SNAP.cache.get(key);
+  if(!hit) return false;
+  SNAP.cache.delete(key); SNAP.cache.set(key,hit);        /* most recently used */
+  SNAP.grid=hit.grid; SNAP.n=hit.n; SNAP.truncated=hit.truncated; SNAP.key=key;
+  return true;
+}
+function snapReset(){
+  /* the current page's grid goes back to the cache rather than being thrown away */
+  SNAP.key=null; SNAP.grid=null; SNAP.n=0; SNAP.truncated=false;
+}
 function mul(m,n){ return [
   m[0]*n[0]+m[2]*n[1], m[1]*n[0]+m[3]*n[1],
   m[0]*n[2]+m[2]*n[3], m[1]*n[2]+m[3]*n[3],
@@ -1176,9 +1361,17 @@ function mul(m,n){ return [
 }
 const apply=(m,x,y)=>[m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]];
 
-async function buildSnap(){
+function buildSnap(){
   const key=V.docId+'|'+V.page;
-  if(SNAP.key===key||SNAP.building||!V.pageObj||!PDF_OK) return;
+  if(SNAP.key===key||!V.pageObj||!PDF_OK) return Promise.resolve();
+  /* a build already running for this page is the answer to this call, not a
+     reason to start a second one — and callers can await it */
+  if(SNAP.building) return SNAP.busy||Promise.resolve();
+  if(snapUse(key)){ syncSnapBtn(); return Promise.resolve(); }
+  SNAP.busy=buildSnapNow(key);
+  return SNAP.busy;
+}
+async function buildSnapNow(key){
   SNAP.building=true;
   const grid=new Map(); let n=0, truncated=false;
   try{
@@ -1216,8 +1409,9 @@ async function buildSnap(){
       if(truncated) break;
     }
     SNAP.grid=grid; SNAP.n=n; SNAP.truncated=truncated; SNAP.key=key;
+    snapRemember(key,grid,n,truncated);
   }catch(e){ SNAP.grid=null; SNAP.key=key; SNAP.n=0; }   /* snapping simply stays off */
-  SNAP.building=false;
+  SNAP.building=false; SNAP.busy=null;
   syncSnapBtn();
 }
 /* nearest geometry point to a PDF-space point, within the screen tolerance */
@@ -1489,6 +1683,9 @@ function chipLeader(r){
 function layoutChips(q){
   const smart=P.smart!==false;
   q.forEach(r=>{
+    /* a cached record has been laid out before: start again from its anchor so
+       two layouts of the same record give the same answer */
+    if(r.ax!=null){ r.x=r.ax; r.y=r.ay; r.manual=false; }
     r.ax=r.x; r.ay=r.y;                       /* where the label belongs */
     const off=r.owner?offFor(r.owner,r.role):null;
     if(off){ r.x+=off[0]*V.zoom; r.y+=off[1]*V.zoom; r.manual=true; }
@@ -1553,23 +1750,74 @@ function tick(a,b,at){ // drafting slash tick perpendicular-ish at endpoint
   const ang=Math.atan2(b[1]-a[1],b[0]-a[0])+Math.PI/4, L=6;
   return '<line x1="'+(at[0]-Math.cos(ang)*L).toFixed(1)+'" y1="'+(at[1]-Math.sin(ang)*L).toFixed(1)+'" x2="'+(at[0]+Math.cos(ang)*L).toFixed(1)+'" y2="'+(at[1]+Math.sin(ang)*L).toFixed(1)+'"/>';
 }
-function drawOverlay(){
-  if(!V.vp){ ov.innerHTML=''; return; }
-  invalidateAnns();          /* cheap: the key check re-filters only when needed */
-  const list=pageAnns().filter(annVisible);
-  let s=withChips(()=>{
-    let b='';
-    for(const a of list) b+=drawAnn(a,a.id===V.sel);
-    if(V.draft) b+=drawAnn(V.draft,false,true);
-    return b;
-  });
-  if(V.snapHit&&(isMeasureTool(V.tool)||V.tool==='cal')){
-    const q=sp(V.snapHit);
-    s+='<g stroke="#8FC46A" stroke-width="1.6" fill="none">'
-      +'<rect x="'+(q[0]-5.5).toFixed(1)+'" y="'+(q[1]-5.5).toFixed(1)+'" width="11" height="11"/>'
-      +'<path d="M'+(q[0]-9)+' '+q[1]+' h4 M'+(q[0]+5)+' '+q[1]+' h4 M'+q[0]+' '+(q[1]-9)+' v4 M'+q[0]+' '+(q[1]+5)+' v4"/></g>';
+/* ---- overlay: rebuild what changed, not the sheet ----
+   Every markup used to be re-formatted on every pointer move — hundreds of
+   coordinate conversions and string builds to move one vertex. Each markup's
+   SVG and its queued labels are cached instead, so dragging one re-formats one
+   and reassembles the rest from cache. Label layout is global, so the labels
+   are always laid out again; that part is cheap. */
+const OVC={svg:new Map(),chips:new Map(),key:null};
+const ovKey=()=>V.docId+'|'+V.page+'|'+V.zoom.toFixed(4)+'|'+(P.code||'off')+'|'+CHIP_FS.toFixed(2)+'|'+W_MUL;
+function ovInvalidate(id){
+  if(id){ OVC.svg.delete(id); OVC.chips.delete(id); }
+  else { OVC.svg.clear(); OVC.chips.clear(); }
+}
+/* run drawAnn for one markup, capturing its label records separately */
+function annParts(a,selected,isDraft){
+  const prev=CHIPQ; CHIPQ=[];
+  let body='', mine=[];
+  try{ body=drawAnn(a,selected,isDraft); }
+  finally{ mine=CHIPQ; CHIPQ=prev; }
+  return {body,chips:mine};
+}
+function cachedParts(a){
+  const k=a.id+(a.id===V.sel?'|s':'');
+  let hit=OVC.svg.get(k);
+  if(hit===undefined){
+    const p=annParts(a,a.id===V.sel);
+    OVC.svg.set(k,p.body); OVC.chips.set(k,p.chips);
+    hit=p.body;
+    /* the other selection state is now stale */
+    OVC.svg.delete(a.id+(a.id===V.sel?'':'|s'));
+    OVC.chips.delete(a.id+(a.id===V.sel?'':'|s'));
   }
-  ov.innerHTML=s;
+  return k;
+}
+function snapCursorSvg(){
+  if(!(V.snapHit&&(isMeasureTool(V.tool)||V.tool==='cal'))) return '';
+  const q=sp(V.snapHit);
+  return '<g stroke="#8FC46A" stroke-width="1.6" fill="none">'
+    +'<rect x="'+(q[0]-5.5).toFixed(1)+'" y="'+(q[1]-5.5).toFixed(1)+'" width="11" height="11"/>'
+    +'<path d="M'+(q[0]-9)+' '+q[1]+' h4 M'+(q[0]+5)+' '+q[1]+' h4 M'+q[0]+' '+(q[1]-9)+' v4 M'+q[0]+' '+(q[1]+5)+' v4"/></g>';
+}
+function assembleOverlay(){
+  invalidateAnns();
+  const list=pageAnns().filter(annVisible);
+  const keys=list.map(cachedParts);
+  let body=keys.map(k=>OVC.svg.get(k)||'').join('');
+  const q=[];
+  keys.forEach(k=>{ (OVC.chips.get(k)||[]).forEach(r=>q.push(r)); });
+  if(V.draft){
+    /* a draft is re-formatted every time by definition — it is what is moving */
+    const p=annParts(V.draft,false,true);
+    body+=p.body;
+    p.chips.forEach(r=>q.push(r));
+  }
+  ov.innerHTML=body+layoutChips(q)+snapCursorSvg();
+}
+/* an explicit redraw makes no promises about what changed, so it rebuilds all */
+function drawOverlay(){
+  if(!V.vp){ ov.innerHTML=''; ovInvalidate(); OVC.key=null; return; }
+  OVC.key=ovKey(); ovInvalidate();
+  assembleOverlay();
+}
+/* one markup moved, or only the draft did: re-format that and reassemble the
+   rest from cache. Falls back to a full redraw if the zoom or theme moved. */
+function drawOverlayFor(a){
+  if(!V.vp) return;
+  if(OVC.key!==ovKey()){ drawOverlay(); return; }
+  if(a&&a.id) ovInvalidate(a.id);
+  assembleOverlay();
 }
 function drawAnn(a,selected,isDraft){
   const col=colOf(a), pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
@@ -1943,7 +2191,7 @@ function editMove(e){
     /* offset kept in zoom-independent units so the label stays put as you zoom */
     const dx=(e.clientX-edit.cx)/Math.max(V.zoom,.01), dy=(e.clientY-edit.cy)/Math.max(V.zoom,.01);
     setOff(a,edit.role,[edit.base[0]+dx,edit.base[1]+dy]);
-    drawOverlay();
+    drawOverlayFor(a);
     return;
   }
   if(edit.mode==='move'){
@@ -1956,7 +2204,7 @@ function editMove(e){
     V.snapHit=snapTo;
   }
   edit.last=p;
-  drawOverlay(); liveEditLen(a);
+  drawOverlayFor(a); liveEditLen(a);
 }
 function liveEditLen(a){
   if(a.type!=='line') { $('#stCoord').textContent='—'; return; }
@@ -2098,30 +2346,30 @@ stage.addEventListener('pointermove',e=>{
     if(!press.moved&&Math.hypot(e.clientX-press.x0,e.clientY-press.y0)>7) press.moved=true;
     if(V.tool==='ink'&&stroke){ evs.forEach(ev=>{ const q=toPt(ev), l=stroke.pts[stroke.pts.length-1];
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>0.9) stroke.pts.push([q[0],q[1],ev.pressure||.5]); });
-      drawOverlay(); return; }
+      drawOverlayFor(); return; }
     if(V.tool==='erase'){ evs.forEach(ev=>eraseAt(toS(ev))); return; }
-    if((V.tool==='box'||V.tool==='tbox')&&V.draft){ V.draft.pts[1]=p; drawOverlay(); return; }
+    if((V.tool==='box'||V.tool==='tbox')&&V.draft){ V.draft.pts[1]=p; drawOverlayFor(); return; }
     if(V.tool==='cal'&&press.moved){
       V.draft={id:'d',type:'cal',doc:V.docId,page:V.page,pts:[snapped(press.p0),snapped(ortho(press.p0,p,e.shiftKey))],color:'#5AB6DE',w:V.width};
-      drawOverlay(); liveLen(V.draft); return; }
+      drawOverlayFor(); liveLen(V.draft); return; }
     if(V.tool==='line'&&press.moved&&!press.vertex){
       if(!curScale()){ press=null; toast('Set the scale first'); setTool('cal'); return; }
       if(!press.free){ press.free=[press.p0]; V.draft={id:'d',type:'line',doc:V.docId,page:V.page,pts:press.free,color:V.color,w:V.width}; }
       evs.forEach(ev=>{ const q=toPt(ev), l=press.free[press.free.length-1];
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>1.4) press.free.push(q); });
-      V.draft.pts=press.free; drawOverlay(); liveLen(V.draft); return; }
+      V.draft.pts=press.free; drawOverlayFor(); liveLen(V.draft); return; }
   }
   if(isMeasureTool(V.tool)||V.tool==='cal'){ snapAt(p)?(V.snapHit=snapAt(p)):(V.snapHit=null); }
   else V.snapHit=null;
   if(V.draft&&V.draft.type==='arc'&&!press){
     V.draft.pts[Math.min(V.arcN||1,2)]=p;
     if((V.arcN||1)<2) V.draft.pts[2]=p;
-    drawOverlay(); liveLen(V.draft); return;
+    drawOverlayFor(); liveLen(V.draft); return;
   }
   if(V.draft&&!press&&isPolyDraft(V.draft)){   /* hover preview between taps */
     const n=V.draft.pts.length;
     V.draft.pts[n-1]=snapAt(p)||ortho(V.draft.pts[n-2],p,e.shiftKey);
-    drawOverlay(); liveLen(V.draft); return; }
+    drawOverlayFor(); liveLen(V.draft); return; }
   const k=inPerPt();
   $('#stCoord').textContent=k?('x '+fmtLen(p[0]*k)+'   y '+fmtLen(p[1]*k)):'—';
 },{passive:false});
@@ -2185,7 +2433,7 @@ function tapVertex(p,e){
     if(V.tool==='cal'){ finishDraft(); return; }
     V.draft.pts.push(V.draft.pts[V.draft.pts.length-1].slice());
   }
-  drawOverlay(); liveLen(V.draft);
+  drawOverlayFor(); liveLen(V.draft);
 }
 function tapArc(p){
   if(!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
@@ -3084,6 +3332,32 @@ function setSort(key,by,dir){
   P.sort[key]={by,dir:dir!==undefined?dir:(cur.by===by?-cur.dir:1)};
   markDirty();
 }
+/* ---- row caps ----
+   A 2,000-piece job built 2,000 rows on every keystroke. Long tables are cut to
+   a cap with a control to see the rest, and the cap says what it is hiding —
+   silent truncation reads as "that is the whole list". */
+const CAPS={};
+const rowCap=key=>{
+  if(CAPS[key]==='all') return Infinity;
+  const n=+P.rowCap;
+  return CAPS[key]||(isFinite(n)&&n>0?n:250);
+};
+function capList(key,list){
+  const cap=rowCap(key);
+  return {shown:list.length>cap?list.slice(0,cap):list,hidden:Math.max(0,list.length-cap),total:list.length};
+}
+function capNote(key,c,cols){
+  if(!c.hidden) return '';
+  return '<tr><td colspan="'+(cols||8)+'" class="hint" style="padding:8px 10px">Showing '
+    +c.shown.length.toLocaleString()+' of '+c.total.toLocaleString()+' rows — '
+    +'<button class="btn sm" data-cap="'+key+'">show all</button></td></tr>';
+}
+function wireCaps(root){
+  $$('[data-cap]',root||document).forEach(b=>b.onclick=()=>{
+    CAPS[b.dataset.cap]='all';
+    renderBom(); renderAnnList();
+  });
+}
 /* stable: fall back to the original index so equal keys keep their order */
 function sortBy(list,keyFn,st){
   return list.map((x,i)=>({x,i})).sort((a,b)=>{
@@ -3155,7 +3429,9 @@ function renderAnnList(){
     if(st.by==='tag'){ const t=a.treat&&P.treat.find(x=>x.id===a.treat); return t?tagOf(t):'\uffff'; }
     return 0;
   };
-  const list=st.by==='order'&&st.dir>0?raw:sortBy(raw,key,st);
+  const all=st.by==='order'&&st.dir>0?raw:sortBy(raw,key,st);
+  const cap=capList('annList',all);
+  const list=cap.shown;
   $('#annSort').innerHTML=raw.length?sortSelect('ann'):'';
   wireSortSelects($('#annSort'));
   $('#cAnn').textContent=raw.length; $('#annEmpty').style.display=raw.length?'none':'';
@@ -3180,6 +3456,14 @@ function renderAnnList(){
       if(!onScreen(a)) centerOn(a); };
     h.appendChild(el);
   });
+  if(cap.hidden){
+    const more=document.createElement('div');
+    more.className='body'; more.style.padding='6px 12px';
+    more.innerHTML='<button class="btn sm" data-cap="annList" style="width:100%">Showing '
+      +cap.shown.length+' of '+cap.total+' — show all</button>';
+    h.appendChild(more);
+    wireCaps(h);
+  }
 }
 function renderLinks(){
   const h=$('#linkList'); h.innerHTML='';
@@ -3928,7 +4212,9 @@ function renderBom(){
     return {tag:tagOf(t),type:t.type||'\uffff',zone:t.zone||'\uffff',room:t.room||t.name||'\uffff',
       detail:t.detail||'\uffff',prod:r.f.name,qty:r.qty,L:r.L,cut:r.tot.cut,w:r.tot.watts,feeds:r.tot.feeds}[cst.by];
   };
-  (cst.by==='order'?P.treat:sortBy(P.treat,ckey,cst)).forEach(t=>{
+  const cutAll=cst.by==='order'?P.treat:sortBy(P.treat,ckey,cst);
+  const cutCap=capList('cutTbl',cutAll);
+  cutCap.shown.forEach(t=>{
     const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts; tf+=r.tot.feeds;
     h+='<tr><td><span class="tag">'+esc(tagOf(t))+'</span></td>'
       +'<td>'+(t.type?'<span class="typ">'+esc(t.type)+'</span>':'<span class="hint">—</span>')+'</td>'
@@ -3940,7 +4226,12 @@ function renderBom(){
       +'<td class="n" style="color:var(--amber)">'+fmtRun(r.cut)+'</td>'
       +'<td class="n">'+r.tot.watts.toFixed(0)+'</td><td class="n">'+r.tot.feeds+(r.feedSet?'*':'')+'</td></tr>';
   });
-  h+='<tr class="tot"><td colspan="7">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
+  /* the total is the whole job even when the table is capped, so cap and total
+     never disagree */
+  if(cutCap.hidden) cutAll.forEach((t,i)=>{ if(i<cutCap.shown.length) return;
+    const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts; tf+=r.tot.feeds; });
+  h+=capNote('cutTbl',cutCap,11);
+  h+='<tr class="tot"><td colspan="7">Total'+(cutCap.hidden?' — whole job':'')+'</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
   c.innerHTML=h;
   }
   const rows=bomData();
@@ -3950,7 +4241,7 @@ function renderBom(){
     +thSort('bom','qty','Qty','n')+thSort('bom','unit','Unit')+'</tr>'
     +bord.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
   renderRollups(); renderPieces(); renderCost(); renderAlts(); renderBase();
-  wireThSorts();
+  wireThSorts(); wireCaps();
 }
 function rollTable(el,head,rows){
   if(!rows.length){ el.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; return; }
@@ -4000,8 +4291,10 @@ function renderPieces(){
   if(!pc.length){ pt.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; }
   else{
     const pst=sortState('piece');
-    const pord=pst.by==='order'?pc:sortBy(pc,r=>({tag:r.tag,zone:r.zone||'\uffff',run:r.run,mark:r.mark,
+    const pall=pst.by==='order'?pc:sortBy(pc,r=>({tag:r.tag,zone:r.zone||'\uffff',run:r.run,mark:r.mark,
       item:r.item,len:r.len,note:r.note}[pst.by]),pst);
+    const pcap=capList('pieceTbl',pall);
+    const pord=pcap.shown;
     pt.innerHTML='<tr>'+thSort('piece','mark','Mark')+thSort('piece','tag','Tag')+thSort('piece','zone','Zone')
       +thSort('piece','run','Run','n')+thSort('piece','item','Item')
       +thSort('piece','len','Cut to','n')+thSort('piece','note','Note')+'</tr>'
@@ -4011,6 +4304,7 @@ function renderPieces(){
         +'</td><td class="n">'+r.run+'</td><td>'+esc(r.item)+'<div class="hint">'+esc(r.kind)+'</div></td>'
         +'<td class="n" style="color:var(--amber)">'+esc(fmtLen(r.len))+'</td>'
         +'<td class="hint">'+esc(r.note)+(r.locked?' · locked':'')+'</td></tr>').join('')
+      +capNote('pieceTbl',pcap,7)
       +'<tr class="tot"><td colspan="5">'+pc.length+' pieces</td><td class="n">'
       +fmtRun(pc.reduce((a,b)=>a+b.len,0))+'</td><td></td></tr>';
   }
@@ -4018,7 +4312,12 @@ function renderPieces(){
   if(!nest.length){ nt.innerHTML='<tr><td class="hint" style="padding:12px">No channel with a stock length yet.</td></tr>'; }
   else{
     let h='<tr><th>Channel</th><th class="n">Stock #</th><th>Cut from it</th><th class="n">Off-cut left</th></tr>';
+    const flat=[];
+    nest.forEach(g=>g.bins.forEach((b,i)=>flat.push({g,b,i})));
+    const ncap=capList('nestTbl',flat);
+    let drawn=0;
     nest.forEach(g=>g.bins.forEach((b,i)=>{
+      if(drawn++>=ncap.shown.length) return;
       const keep=g.minOff>0&&b.left>=g.minOff;
       h+='<tr><td>'+(i?'':esc(g.name)+'<div class="hint">'+esc(fmtLen(g.stock))+' stock'
         +(g.scope?' · '+esc(g.scope):'')+'</div>')
@@ -4026,6 +4325,7 @@ function renderPieces(){
         +'</td><td class="n"'+(keep?' style="color:var(--ok,#8FC46A)"':(b.left>1?' style="color:var(--flag)"':''))
         +'>'+esc(fmtRun(b.left))+(keep?' ↺':'')+'</td></tr>';
     }));
+    h+=capNote('nestTbl',ncap,4);
     nt.innerHTML=h;
   }
   const yt=$('#yieldTbl');
@@ -4759,12 +5059,21 @@ async function openProjectFile(file){
   catch(e){ toast(e.message); return; }
   /* PDFs never travel with the project, so drop the render state too */
   Object.keys(FILES).forEach(k=>delete FILES[k]);
-  clearHist();
+  tileClear(); clearHist();
   V.docId=null; V.page=1; V.sel=null; V.draft=null; V.pageObj=null; V.vp=null;
   showInspector(null); closeCtx();
   stage.style.display='none'; $('#blank').style.display='';
   boot(); setTool('pan'); saveProject();
-  toast('Opened '+file.name+(P.docs.length?' — re-import the drawings to see markups':''));
+  /* the same drawings may already be in this browser from a previous session */
+  const back=await restoreDrawings();
+  if(back){
+    boot(true);
+    const first=P.docs.find(d=>FILES[d.id]);
+    if(first) await openDoc(first.id,1,true);
+  }
+  pdfPrune();
+  toast('Opened '+file.name+(back?' — '+back+' drawing'+(back===1?'':'s')+' restored'
+    :(P.docs.length?' — re-import the drawings to see markups':'')));
 }
 $('#btnPdf').onclick=exportSheetPdf;
 $('#btnCsvPieces').onclick=()=>{
@@ -4946,7 +5255,7 @@ $('#btnProj').onclick=async()=>{
   if(!r) return;
   if(r.wipe){ P=Object.assign(BLANK(),{name:r.name||'Untitled Project',no:r.no,units:r.units,scrollZoom:P.scrollZoom!==false});
     Object.keys(FILES).forEach(k=>delete FILES[k]);
-    clearHist();
+    tileClear(); pdfForget(); clearHist();
     V.docId=null; stage.style.display='none'; $('#blank').style.display=''; }
   else Object.assign(P,{name:r.name,no:r.no,units:r.units});
   boot(true); markDirty();
@@ -5063,6 +5372,15 @@ function settingsHtml(){
     +'</div><div class="setgrp"><h4>Colour</h4>'
     +setRow('Colour markups by','Derived colours beat colouring a busy sheet by hand.',
       setSel('code',CODE_MODES,P.code||'off'))
+    +'</div><div class="setgrp"><h4>Performance</h4>'
+    +setRow('Re-use rendered views','Panning back to where you were is a copy rather than a re-render.',
+      setChk('tiles',P.tiles!==false,P.tiles!==false?'On · '+tileCount()+' kept':'Off'))
+    +setRow('Render off screen','Where the browser supports it, pages are rasterised away from the visible canvas.',
+      setChk('gpu',P.gpu!==false,OFFSCREEN?(P.gpu!==false?'On':'Off'):'Not available here'))
+    +setRow('Last page paint','',('<span class="val">'+(paintMs?paintMs.toFixed(0)+' ms · '+paintKind:'—')+'</span>'))
+    +'</div><div class="setgrp"><h4>Long lists</h4>'
+    +setRow('Rows before a table is capped','A capped table still totals the whole job, and says what it is hiding.',
+      setSel('rowCap',[{v:100,t:'100'},{v:250,t:'250'},{v:1000,t:'1,000'},{v:100000,t:'No cap'}],+P.rowCap||250))
     +'</div>';
   if(setTab==='measure') return '<div class="setgrp"><h4>Units</h4>'
     +setRow('Units','Imperial reads as decimal feet with inches alongside.',
@@ -5121,6 +5439,10 @@ function settingsHtml(){
       setChk('autoFile',autoFile,FH?('Writing to '+FH.name):'No file linked yet'))
     +setRow('Undo depth','How many steps are kept. They survive a reload.',
       '<span class="val">'+HIST.length+' of 60 used</span>')
+    +setRow('Keep drawings in this browser','Reopening the job then needs no re-import. The project file is still the portable copy.',
+      setChk('keepPdf',P.keepPdf!==false,P.keepPdf!==false?'On':'Off'))
+    +setRow('Stored drawings','',('<span class="val" id="setPdfSize">…</span>'
+      +' <button class="btn sm" id="setPdfClear">Forget them</button>'))
     +'</div><div class="setgrp"><h4>This project</h4>'
     +setRow('Project name','',('<input type="text" data-set="name" value="'+esc(P.name||'')+'">'))
     +setRow('Job number','',('<input type="text" data-set="no" value="'+esc(P.no||'')+'">'))
@@ -5137,6 +5459,15 @@ function settingsHtml(){
 }
 function renderSettings(){
   $('#setVer').textContent='v'+APP_VER;
+  /* the store is asynchronous, so the size lands a moment after the row does */
+  setTimeout(async()=>{
+    const el=$('#setPdfSize');
+    if(!el) return;
+    const b=await pdfStoreSize();
+    el.textContent=b?((b/1048576).toFixed(1)+' MB across '+((await pdfKeys().catch(()=>[]))||[]).length+' sheet(s)'):'nothing stored';
+    const cl=$('#setPdfClear');
+    if(cl) cl.onclick=async()=>{ await pdfForget(); renderSettings(); };
+  },0);
   $('#setNav').innerHTML=SET_TABS.map(t=>'<button data-tab="'+t.k+'"'+(t.k===setTab?' class="on"':'')+'>'+esc(t.t)+'</button>').join('');
   $$('#setNav button').forEach(b=>b.onclick=()=>{ setTab=b.dataset.tab; renderSettings(); });
   const body=$('#setBody');
@@ -5171,6 +5502,11 @@ function applySetting(el){
     case 'maxHome': { const v=parseLen(val); P.maxHome=(isFinite(v)&&v>0)?v:240;
       drawOverlay(); renderBom(); break; }
     case 'nestBy': P.nestBy=val; renderBom(); break;
+    case 'tiles': P.tiles=val; if(!val) tileClear(); renderSettings(); break;
+    case 'gpu': P.gpu=val; tileClear(); scheduleRepaint(true); renderSettings(); break;
+    case 'rowCap': P.rowCap=clamp(+val||250,10,1e6);
+      Object.keys(CAPS).forEach(k=>delete CAPS[k]);
+      renderBom(); renderAnnList(); break;
     case 'minOff': { const v=parseLen(val); P.minOff=(isFinite(v)&&v>0)?v:0; renderBom(); break; }
     case 'labFt': case 'labFeed': case 'labEa': case 'rate': case 'matUp':
       P[k]=Math.max(0,+val||0); boot(true); break;
@@ -5182,6 +5518,7 @@ function applySetting(el){
     case 'fingerDraws': V.fingerDraws=val==='1'; P.fingerDraws=V.fingerDraws;
       $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans'; break;
     case 'autoFile': autoFile=val; syncFileBtn(); break;
+    case 'keepPdf': P.keepPdf=val; if(!val) pdfForget(); renderSettings(); break;
     case 'name': P.name=val; $('#projName').value=val; break;
     case 'no': P.no=val; $('#projNo').value=val; break;
   }
@@ -5219,6 +5556,11 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
+  drawOverlay,drawOverlayFor,ovInvalidate,ovCache:()=>({svg:OVC.svg.size,chips:OVC.chips.size,key:OVC.key}),
+  rowCap,capList,caps:CAPS,
+  tileCount,tileClear,tileFind,paintStats:()=>({ms:paintMs,kind:paintKind,tiles:tileCount(),offscreen:OFFSCREEN}),
+  pdfSave,pdfLoad,pdfDrop,pdfKeys,pdfStoreSize,pdfForget,pdfPrune,restoreDrawings,
+  snapCache:()=>({pages:SNAP.cache.size,keys:[...SNAP.cache.keys()]}),
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
@@ -5230,7 +5572,16 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
   render(){boot()}};
-(async()=>{ await loadProject(); loadHist(); boot(); setTool('pan');
-  if(!PDF_OK) toast('The PDF engine did not load — check vendor/pdf.min.js');
+(async()=>{
+  await loadProject(); loadHist(); boot(); setTool('pan');
+  if(!PDF_OK){ toast('The PDF engine did not load — check vendor/pdf.min.js'); return; }
+  /* drawings kept in this browser come back on their own */
+  const n=await restoreDrawings();
+  if(n){
+    boot(true);
+    const first=P.docs.find(d=>FILES[d.id]);
+    if(first) await openDoc(first.id,1,true);
+    toast('Restored '+n+' drawing'+(n===1?'':'s')+' from this browser');
+  }
 })();
 </script>
