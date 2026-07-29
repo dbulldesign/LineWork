@@ -32,6 +32,7 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1);border-bottom:1px solid var(--line2)}
 .tb .mark{display:flex;align-items:center;gap:9px;padding:0 16px;border-right:1px solid var(--line);}
 .tb .mark b{font-weight:700;letter-spacing:-.02em;font-size:15px}
+.ver{font-family:var(--mono);font-size:9.5px;color:var(--faint);border:1px solid var(--line2);border-radius:2px;padding:0 3px;vertical-align:2px}
 .tb .mark span{font-size:9px;letter-spacing:.16em;color:var(--faint);text-transform:uppercase;line-height:1.1}
 .glyph{width:22px;height:22px;flex:none}
 .cell{padding:7px 14px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;min-width:0}
@@ -90,7 +91,8 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
    height instead of scrolling, which kills vertical pan and zoom-at-cursor */
 #viewport{flex:1;min-height:0;overflow:auto;position:relative;padding:26px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 #stage{position:relative;margin:0 auto;box-shadow:0 0 0 1px #000,0 18px 50px rgba(0,0,0,.6);background:var(--paper);touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-#pdfCanvas{display:block}
+/* windowed: positioned inside the stage, covering only what is on screen */
+#pdfCanvas{display:block;position:absolute;left:0;top:0}
 #overlay{position:absolute;inset:0;pointer-events:none;overflow:visible}
 #viewport.pan{cursor:grab}
 #viewport.pan.drag{cursor:grabbing}
@@ -224,7 +226,7 @@ body.haspen #penFlag{display:inline}
 <header class="tb">
   <div class="mark">
     <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="#F2A93B" stroke-width="1.5"><path d="M3 6h18M3 6v3M21 6v3" stroke="#6E6357"/><rect x="4" y="12" width="16" height="4" rx="1"/><path d="M6 16v2M12 16v2M18 16v2" stroke="#F2A93B" opacity=".5"/></svg>
-    <div><b>LINEWORK</b><br><span>Linear lighting takeoff</span></div>
+    <div><b>LINEWORK</b> <span id="verTag" class="ver">v—</span><br><span>Linear lighting takeoff</span></div>
   </div>
   <div class="cell" style="min-width:190px"><label>Project</label><input class="val" id="projName" value="Untitled Project"></div>
   <div class="cell" style="min-width:110px"><label>Job no.</label><input class="val" id="projNo" placeholder="—"></div>
@@ -270,7 +272,9 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
     <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
     <button class="tool" data-tool="erase" title="Erase markups (E)"><svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg></button>
-    <button class="tool" data-tool="note" title="Note (N)"><svg viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4"/></svg></button>
+    <button class="tool" data-tool="text" title="Text — plain note straight on the sheet (T)"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></svg></button>
+    <button class="tool" data-tool="tbox" title="Text box — drag a box, text wraps inside (X)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M7 9h10M7 12h10M7 15h6"/></svg></button>
+    <button class="tool" data-tool="note" title="Callout note with a leader (N)"><svg viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4"/></svg></button>
     <button class="tool" data-tool="link" title="Link a shop drawing (K)"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 006 .5l2-2a4 4 0 00-5.6-5.6l-1 1"/><path d="M14 10a4 4 0 00-6-.5l-2 2A4 4 0 0011.6 17l1-1"/></svg></button>
     <span class="sep"></span>
     <span class="inkbar" id="inkbar"></span>
@@ -376,6 +380,10 @@ body.haspen #penFlag{display:inline}
    LINEWORK — linear lighting takeoff
    A) foundations: state, units, storage, dialogs
    ============================================================ */
+/* Bump APP_VER on every released change. FILE_VER (below) is the project-file
+   schema and only moves when the saved shape changes incompatibly. */
+const APP_VER='1.3.0';
+const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
@@ -536,6 +544,7 @@ function applyProject(d){
   const pref=P.scrollZoom!==false;
   P=Object.assign(BLANK(),d);
   ['docs','ann','treat'].forEach(k=>{ if(!Array.isArray(P[k])) P[k]=[]; });
+  P.ann=P.ann.filter(a=>a&&a.type!=='cal');       /* older files kept the calibration line */
   if(!P.cal||typeof P.cal!=='object'||Array.isArray(P.cal)) P.cal={};
   if(!Array.isArray(P.fix)||!P.fix.length) P.fix=clone(DEF_FIX);
   if(!Array.isArray(P.ch)||!P.ch.length) P.ch=clone(DEF_CH);
@@ -544,7 +553,7 @@ function applyProject(d){
   if(P.units!=='metric') P.units='imperial';
   P.seq=Math.max(1,+P.seq||1); P.waste=+P.waste||0; P.load=+P.load||80;
   if(typeof d.scrollZoom!=='boolean') P.scrollZoom=pref;
-  delete P.savedAt; delete P.app; delete P.ver;
+  delete P.savedAt; delete P.app; delete P.ver; delete P.appVer;
   return P;
 }
 
@@ -627,32 +636,126 @@ async function openDoc(id,page=1,fit=false){
   renderSheets(); renderAnnList(); renderLinks(); syncScaleUI();
 }
 
+/* ---- windowed rendering ----
+   Painting the whole page at high zoom asks for a bitmap the browser refuses to
+   allocate, and then silently paints nothing — the sheet goes white. So the
+   canvas covers only the visible window (plus a margin) and is repositioned
+   inside the stage as you scroll. The stage keeps full-page CSS dimensions, so
+   markup coordinates and the overlay are untouched. */
+const CV_MAX_DIM=8192, CV_MAX_AREA=16e6, WIN_MARGIN=220;
+const MIN_ZOOM=.08, HARD_MAX_ZOOM=8;
+function deviceScale(w,h){
+  let s=Math.min(window.devicePixelRatio||1,2);
+  s=Math.min(s,CV_MAX_DIM/w,CV_MAX_DIM/h,Math.sqrt(CV_MAX_AREA/(w*h)));
+  return Math.max(.15,s);
+}
+/* zoom is limited only by how large a CSS box the browser will lay out */
+function maxZoom(){
+  if(!V.pw||!V.ph) return HARD_MAX_ZOOM;
+  const byCss=32000/Math.max(V.pw,V.ph);
+  return clamp(Math.min(HARD_MAX_ZOOM,byCss),Math.max(.5,(V.fitZoom||.5)*1.5),HARD_MAX_ZOOM);
+}
+/* the part of the page actually on screen, in stage pixels */
+function visRect(){
+  const W=V.vp.width,H=V.vp.height;
+  const x=clamp(viewport.scrollLeft-stage.offsetLeft,0,Math.max(0,W)),
+        y=clamp(viewport.scrollTop -stage.offsetTop ,0,Math.max(0,H));
+  return {x,y,w:Math.min(W-x,viewport.clientWidth),h:Math.min(H-y,viewport.clientHeight)};
+}
+function pageWindow(){
+  const W=V.vp.width,H=V.vp.height,v=visRect();
+  const x0=Math.max(0,Math.floor(v.x-WIN_MARGIN)), y0=Math.max(0,Math.floor(v.y-WIN_MARGIN));
+  return {x0,y0,
+    w:Math.max(1,Math.ceil(Math.min(W-x0,v.w+WIN_MARGIN*2))),
+    h:Math.max(1,Math.ceil(Math.min(H-y0,v.h+WIN_MARGIN*2)))};
+}
+/* has the view scrolled outside what is currently painted? */
+function needRepaint(){
+  if(!V.win) return true;
+  const v=visRect(),o=V.win;
+  return v.x<o.x0-1||v.y<o.y0-1||v.x+v.w>o.x0+o.w+1||v.y+v.h>o.y0+o.h+1;
+}
+const clampZoom=z=>clamp(z,MIN_ZOOM,maxZoom());
+
+async function ensurePage(){
+  const d=FILES[V.docId]; if(!d) return false;
+  if(!V.pageObj||V.pageNo!==V.page||V.pageDoc!==V.docId){
+    V.pageObj=await d.pdf.getPage(V.page); V.pageNo=V.page; V.pageDoc=V.docId;
+    const v1=V.pageObj.getViewport({scale:1}); V.pw=v1.width; V.ph=v1.height;
+  }
+  return true;
+}
 async function fitPage(){
-  const d=FILES[V.docId]; if(!d) return;
-  const pg=await d.pdf.getPage(V.page);
-  const v1=pg.getViewport({scale:1});
+  if(!await ensurePage()) return;
   const w=Math.max(120,viewport.clientWidth-58), h=Math.max(120,viewport.clientHeight-58);
-  V.zoom=clamp(Math.min(w/v1.width,h/v1.height),.08,8); V.fitZoom=V.zoom;
-  await renderPage();
+  V.fitZoom=clamp(Math.min(w/V.pw,h/V.ph),MIN_ZOOM,HARD_MAX_ZOOM);
+  V.zoom=clampZoom(V.fitZoom);
+  resizeStage(); await paintPage();
 }
 
-async function renderPage(){
-  const d=FILES[V.docId]; if(!d) return;
-  V.pageObj=await d.pdf.getPage(V.page);
-  const vp=V.pageObj.getViewport({scale:V.zoom}); V.vp=vp;
-  const dpr=Math.min(window.devicePixelRatio||1,2);
-  cv.width=Math.round(vp.width*dpr); cv.height=Math.round(vp.height*dpr);
-  cv.style.width=vp.width+'px'; cv.style.height=vp.height+'px';
+/* Sizing is synchronous and separate from painting, so a zoom commit can resize
+   the stage and correct the scroll in the same frame — awaiting the render in
+   between is what made zooming lurch. */
+function resizeStage(){
+  if(!V.pageObj) return;
+  const vp=V.pageObj.getViewport({scale:V.zoom});
+  V.vp=vp; V.win=null;                       /* window is stale until the next paint */
   stage.style.width=vp.width+'px'; stage.style.height=vp.height+'px';
   ov.setAttribute('viewBox','0 0 '+vp.width+' '+vp.height);
   ov.style.width=vp.width+'px'; ov.style.height=vp.height+'px';
+}
+/* Paints are serialised. pdf.js refuses to start a render while a cancelled one
+   is still unwinding on the same canvas, and a refused render leaves the canvas
+   cleared — which is the blank sheet. So wait for the old task to settle, and if
+   a paint is ever lost, schedule another rather than leaving the page empty. */
+let paintGen=0, renderP=null;
+async function paintPage(){
+  if(!V.pageObj||!V.vp) return;
+  const gen=++paintGen;
   if(renderTask){ try{renderTask.cancel()}catch(e){} }
-  ctx.setTransform(1,0,0,1,0,0); ctx.clearRect(0,0,cv.width,cv.height);
-  renderTask=V.pageObj.render({canvasContext:ctx,viewport:vp,transform:dpr!==1?[dpr,0,0,dpr,0,0]:null});
-  try{ await renderTask.promise; }catch(e){}
-  $('#zLabel').textContent=Math.round(V.zoom*100)+'%';
-  $('#pgLabel').textContent=V.page+' / '+d.pdf.numPages;
+  if(renderP){ try{ await renderP; }catch(e){} }
+  if(gen!==paintGen) return;                          /* a newer paint took over */
+  const win=pageWindow();
+  const s=deviceScale(win.w,win.h); V.dscale=s;
+  const bw=Math.max(1,Math.round(win.w*s)), bh=Math.max(1,Math.round(win.h*s));
+  if(cv.width!==bw||cv.height!==bh){ cv.width=bw; cv.height=bh; }
+  cv.style.left=win.x0+'px'; cv.style.top=win.y0+'px';
+  cv.style.width=win.w+'px'; cv.style.height=win.h+'px';
+  let task;
+  /* render the full-page viewport but shifted so only the window lands on canvas */
+  try{
+    task=V.pageObj.render({canvasContext:ctx,viewport:V.vp,
+      transform:[s,0,0,s,-win.x0*s,-win.y0*s]});
+  }catch(e){ if(gen===paintGen) scheduleRepaint(true); return; }
+  renderTask=task; renderP=task.promise;
+  try{ await task.promise; }
+  catch(e){ if(gen===paintGen) scheduleRepaint(true); return; }
+  if(gen!==paintGen) return;
+  renderTask=null; renderP=null;
+  V.win=win;
+  syncZoomUI();
   drawOverlay();
+}
+/* repaint the window after scrolling out of it, and after a viewport resize */
+let winT=null;
+function scheduleRepaint(force){
+  clearTimeout(winT);
+  winT=setTimeout(()=>{ if(V.vp&&(force||needRepaint())) paintPage(); },90);
+}
+viewport.addEventListener('scroll',()=>{ if(V.vp&&needRepaint()) scheduleRepaint(); },{passive:true});
+window.addEventListener('resize',()=>{ if(V.vp) scheduleRepaint(true); });
+function syncZoomUI(){
+  $('#zLabel').textContent=Math.round(V.zoom*100)+'%';
+  const d=FILES[V.docId];
+  $('#pgLabel').textContent=V.page+' / '+(d?d.pdf.numPages:'—');
+  const mx=maxZoom();
+  $('#zIn').style.opacity=V.zoom>=mx-1e-4?.35:1;
+  $('#zOut').style.opacity=V.zoom<=MIN_ZOOM+1e-4?.35:1;
+}
+async function renderPage(){
+  if(!await ensurePage()) return;
+  V.zoom=clampZoom(V.zoom);
+  resizeStage(); await paintPage();
 }
 
 /* ---- scale ---- */
@@ -700,6 +803,23 @@ function chip(x,y,txt,col,anchor){
   return '<g><rect x="'+cx.toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h+'" rx="2" fill="#171512" stroke="'+col+'" stroke-opacity=".7"/>'
     +'<text x="'+(cx+w/2).toFixed(1)+'" y="'+(y+4).toFixed(1)+'" fill="'+col+'" font-family="IBM Plex Mono,monospace" font-size="10.5" text-anchor="middle">'+esc(txt)+'</text></g>';
 }
+/* greedy wrap for text boxes; honours the author's own line breaks */
+function wrapText(s,cols){
+  const out=[];
+  String(s||'').split('\n').forEach(para=>{
+    if(!para){ out.push(''); return; }
+    let line='';
+    para.split(/\s+/).forEach(w=>{
+      if(!line){ line=w; return; }
+      if((line+' '+w).length<=cols) line+=' '+w;
+      else { out.push(line); line=w; }
+    });
+    /* a single word longer than the box gets hard-broken rather than clipped */
+    while(line.length>cols){ out.push(line.slice(0,cols)); line=line.slice(cols); }
+    out.push(line);
+  });
+  return out.slice(0,60);
+}
 function tick(a,b,at){ // drafting slash tick perpendicular-ish at endpoint
   const ang=Math.atan2(b[1]-a[1],b[0]-a[0])+Math.PI/4, L=6;
   return '<line x1="'+(at[0]-Math.cos(ang)*L).toFixed(1)+'" y1="'+(at[1]-Math.sin(ang)*L).toFixed(1)+'" x2="'+(at[0]+Math.cos(ang)*L).toFixed(1)+'" y2="'+(at[1]+Math.sin(ang)*L).toFixed(1)+'"/>';
@@ -718,6 +838,10 @@ function drawAnn(a,selected,isDraft){
   if(selected&&pts.length){
     const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
     g+='<rect x="'+(Math.min(...xs)-9)+'" y="'+(Math.min(...ys)-9)+'" width="'+(Math.max(...xs)-Math.min(...xs)+18)+'" height="'+(Math.max(...ys)-Math.min(...ys)+18)+'" fill="none" stroke="#F2A93B" stroke-dasharray="3 3" stroke-width="1"/>';
+    /* draggable handles — one per vertex, so a committed markup can be reshaped */
+    if(!isDraft&&a.type!=='ink'&&!(a.type==='line'&&a.free))
+      g+=pts.map(p=>'<rect x="'+(p[0]-4.5).toFixed(1)+'" y="'+(p[1]-4.5).toFixed(1)+'" width="9" height="9" '
+        +'fill="#F2A93B" stroke="#20170A" stroke-width="1.2"/>').join('');
   }
   if(a.type==='line'||a.type==='cal'){
     const dash=a.type==='cal'?' stroke-dasharray="7 4"':'';
@@ -758,6 +882,31 @@ function drawAnn(a,selected,isDraft){
     const w=Math.abs(pts[1][0]-pts[0][0]),h=Math.abs(pts[1][1]-pts[0][1]);
     g+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" fill="'+col+'" fill-opacity=".08" stroke="'+col+'" stroke-width="1.6"/>';
     if(a.text) g+=chip(x+w/2,y-10,a.text.slice(0,28),col);
+  }
+  if(a.type==='text'||a.type==='tbox'){
+    const fs=Math.max(4,(a.size||11)*V.zoom);          /* text is anchored to the sheet, so it scales */
+    const lh=fs*1.25;
+    if(a.type==='tbox'){
+      const x=Math.min(pts[0][0],pts[1][0]),y=Math.min(pts[0][1],pts[1][1]);
+      const w=Math.abs(pts[1][0]-pts[0][0]),h=Math.abs(pts[1][1]-pts[0][1]);
+      /* wrap on sheet dimensions, not screen pixels, so line breaks hold at any zoom */
+      const wPt=Math.abs(a.pts[1][0]-a.pts[0][0]), sz=a.size||11;
+      const lines=wrapText(a.text||'',Math.max(1,Math.floor((wPt-sz*.8)/(sz*.55))));
+      g+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2" '
+        +'fill="#171512" fill-opacity="'+(a.fill===false?0:.9)+'" stroke="'+col+'" stroke-width="1.4"/>';
+      g+='<clipPath id="cp_'+a.id+'"><rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'"/></clipPath>';
+      g+='<g clip-path="url(#cp_'+a.id+')">'+lines.map((l,i)=>
+        '<text x="'+(x+fs*.4).toFixed(1)+'" y="'+(y+lh*(i+.9)).toFixed(1)+'" fill="'+col
+        +'" font-family="Archivo,sans-serif" font-size="'+fs.toFixed(1)+'">'+esc(l)+'</text>').join('')+'</g>';
+      if(!String(a.text||'').trim()) g+=chip(x+w/2,y+h/2,'empty — double-click to edit',col);
+    }else{
+      const [x,y]=pts[0];
+      const lines=String(a.text||'').split('\n').slice(0,40);
+      g+=lines.map((l,i)=>'<text x="'+x.toFixed(1)+'" y="'+(y+lh*i).toFixed(1)+'" fill="'+col
+        +'" font-family="Archivo,sans-serif" font-size="'+fs.toFixed(1)+'" '
+        +'stroke="#141210" stroke-width="'+(fs*.18).toFixed(2)+'" paint-order="stroke">'+esc(l)+'</text>').join('');
+      if(!lines.length||!String(a.text||'').trim()) g+=chip(x,y,'empty text',col);
+    }
   }
   if(a.type==='note'){
     const [x,y]=pts[0];
@@ -805,10 +954,16 @@ function hitTest(sx,sy,tol){
     const pts=annPts(a).map(sp);
     if(a.type==='line'||a.type==='cal'||a.type==='ink'){
       for(let i=1;i<pts.length;i++) if(distSeg([sx,sy],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
-    }else if(a.type==='box'){
+    }else if(a.type==='box'||a.type==='tbox'){
       const x1=Math.min(pts[0][0],pts[1][0]),x2=Math.max(pts[0][0],pts[1][0]);
       const y1=Math.min(pts[0][1],pts[1][1]),y2=Math.max(pts[0][1],pts[1][1]);
       if(sx>x1-tol&&sx<x2+tol&&sy>y1-tol&&sy<y2+tol) return a;
+    }else if(a.type==='text'){
+      const fs=Math.max(4,(a.size||11)*V.zoom), lh=fs*1.25;
+      const lines=String(a.text||'').split('\n');
+      const w=Math.max(24,Math.max(...lines.map(l=>l.length))*fs*.55);
+      const [x,y]=pts[0];
+      if(sx>x-tol&&sx<x+w+tol&&sy>y-fs-tol&&sy<y+lh*(lines.length-1)+fs*.3+tol) return a;
     }else{
       const [x,y]=pts[0];
       if(Math.hypot(sx-x,sy-y)<Math.max(12,tol)) return a;
@@ -836,7 +991,45 @@ function syncUndo(){ const u=$('#btnUndo'),r=$('#btnRedo'); if(u)u.style.opacity
 /* ---- pointer engine: mouse, Apple Pencil, multi-touch ---- */
 const PT=new Map();
 let pan=null, press=null, stroke=null, pinch=null, wz=null, activePen=null, lastPenAt=0;
-let suppressCtx=false, ctxPt=null, CLIP=null;
+let suppressCtx=false, ctxPt=null, CLIP=null, edit=null;
+/* grab points on the selected markup, so a committed markup stays editable */
+function hitHandle(sx,sy,tol){
+  if(!V.sel) return null;
+  const a=P.ann.find(x=>x.id===V.sel);
+  if(!a||a.doc!==V.docId||a.page!==V.page) return null;
+  if(a.type==='ink'||(a.type==='line'&&a.free)) return null;   /* freehand moves as a whole */
+  const pts=a.pts.map(sp), r=Math.max(10,tol);
+  for(let i=0;i<pts.length;i++) if(Math.hypot(sx-pts[i][0],sy-pts[i][1])<r) return {a,i};
+  return null;
+}
+/* apply an in-progress drag of a markup or one of its vertices */
+function editMove(e){
+  const p=toPt(e), a=edit.a;
+  if(!edit.did){
+    if(Math.hypot(e.clientX-edit.cx,e.clientY-edit.cy)<3) return;
+    snap(); edit.did=true;                                     /* one undo entry per drag */
+  }
+  if(edit.mode==='move'){
+    const dx=p[0]-edit.last[0], dy=p[1]-edit.last[1];
+    a.pts=a.pts.map(q=>q.length>2?[q[0]+dx,q[1]+dy,q[2]]:[q[0]+dx,q[1]+dy]);
+  }else{
+    const nb=a.pts[edit.i-1]||a.pts[edit.i+1];
+    a.pts[edit.i]=(e.shiftKey&&nb)?ortho(nb,p,true):p;
+  }
+  edit.last=p;
+  drawOverlay(); liveEditLen(a);
+}
+function liveEditLen(a){
+  if(a.type!=='line') { $('#stCoord').textContent='—'; return; }
+  const L=annLen(a); $('#stCoord').textContent='Length: '+(L==null?'—':fmtLen(L));
+}
+function endEdit(){
+  const ed=edit; edit=null;
+  if(!ed||!ed.did) return;
+  drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); stats();
+  if(V.sel===ed.a.id) showInspector(ed.a);
+  markDirty();
+}
 const coarse=!!(window.matchMedia&&(matchMedia('(pointer:coarse)').matches||matchMedia('(hover:none)').matches));
 V.fingerDraws=!coarse; V.color=COLORS[0]; V.width=2;
 
@@ -857,7 +1050,9 @@ function setTool(t){
     line:'Dimension — drag to trace a curved run, or tap each corner',
     poly:'Poly length — click each corner, ⏎ or double-click to finish, or close the loop',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
-    note:'Note — tap to place',link:'Link — tap to place, then pick the shop drawing'};
+    text:'Text — tap to place a note on the sheet',
+    tbox:'Text box — drag a box, the text wraps inside it',
+    note:'Callout note — tap to place',link:'Link — tap to place, then pick the shop drawing'};
   $('#stTool').textContent=names[t]; V.draft=null; stroke=null; press=null; drawOverlay(); syncDrawbar();
 }
 $$('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
@@ -887,8 +1082,17 @@ stage.addEventListener('pointerdown',e=>{
   const p=toPt(e), sc=toS(e), tol=e.pointerType==='mouse'?7:16;
 
   if(V.tool==='pan'||!isDrawInput(e)){                    /* finger always pans while a draw tool is live */
-    if(V.tool==='pan'){ const h=hitTest(sc[0],sc[1],tol);
-      if(h){ V.sel=h.id; drawOverlay(); showInspector(h); renderAnnList(); return; }
+    if(V.tool==='pan'){
+      /* a handle on the selected markup drags that one vertex... */
+      const hh=hitHandle(sc[0],sc[1],tol);
+      if(hh){ edit={mode:'vertex',a:hh.a,i:hh.i,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
+        return; }
+      /* ...anywhere else on a markup selects it and drags the whole thing */
+      const h=hitTest(sc[0],sc[1],tol);
+      if(h){ if(V.sel!==h.id){ V.sel=h.id; showInspector(h); renderAnnList(); }
+        drawOverlay();
+        edit={mode:'move',a:h,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
+        return; }
       V.sel=null; showInspector(null); drawOverlay(); }
     pan={x:e.clientX,y:e.clientY,l:viewport.scrollLeft,t:viewport.scrollTop};
     viewport.classList.add('drag'); return;
@@ -896,7 +1100,7 @@ stage.addEventListener('pointerdown',e=>{
   press={id:e.pointerId,x0:e.clientX,y0:e.clientY,p0:p,moved:false,vertex:!!V.draft,free:null};
   if(V.tool==='ink'){ snap(); stroke={id:uid('a_'),type:'ink',doc:V.docId,page:V.page,pts:[[p[0],p[1],e.pressure||.5]],color:V.color,w:V.width}; V.draft=stroke; drawOverlay(); }
   else if(V.tool==='erase'){ eraseAt(sc); }
-  else if(V.tool==='box'){ V.draft={id:'d',type:'box',doc:V.docId,page:V.page,pts:[p,p.slice()],color:V.color}; }
+  else if(V.tool==='box'||V.tool==='tbox'){ V.draft={id:'d',type:V.tool,doc:V.docId,page:V.page,pts:[p,p.slice()],color:V.color,size:11,text:''}; }
 },{passive:false});
 
 stage.addEventListener('pointermove',e=>{
@@ -905,8 +1109,14 @@ stage.addEventListener('pointermove',e=>{
   if(e.pointerType==='pen'){ lastPenAt=Date.now();
     if(e.buttons===0){ const sc=toS(e); const d=$('#penDot'); d.classList.add('show'); d.style.left=sc[0]+'px'; d.style.top=sc[1]+'px'; } }
   if(pinch){ movePinch(); return; }
+  if(edit&&edit.id===e.pointerId){ editMove(e); return; }
   if(pan){ pan.d=Math.hypot(e.clientX-pan.x,e.clientY-pan.y);
     viewport.scrollLeft=pan.l-(e.clientX-pan.x); viewport.scrollTop=pan.t-(e.clientY-pan.y); return; }
+  /* hover feedback so it is obvious a markup can be grabbed */
+  if(V.tool==='pan'&&!press&&!edit){
+    const sc=toS(e);
+    stage.style.cursor=hitHandle(sc[0],sc[1],7)?'crosshair':(hitTest(sc[0],sc[1],7)?'move':'');
+  }else stage.style.cursor='';
   const p=toPt(e);
   const evs=(e.getCoalescedEvents&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
 
@@ -916,7 +1126,7 @@ stage.addEventListener('pointermove',e=>{
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>0.9) stroke.pts.push([q[0],q[1],ev.pressure||.5]); });
       drawOverlay(); return; }
     if(V.tool==='erase'){ evs.forEach(ev=>eraseAt(toS(ev))); return; }
-    if(V.tool==='box'&&V.draft){ V.draft.pts[1]=p; drawOverlay(); return; }
+    if((V.tool==='box'||V.tool==='tbox')&&V.draft){ V.draft.pts[1]=p; drawOverlay(); return; }
     if(V.tool==='cal'&&press.moved){
       V.draft={id:'d',type:'cal',doc:V.docId,page:V.page,pts:[press.p0,ortho(press.p0,p,e.shiftKey)],color:'#5AB6DE'};
       drawOverlay(); liveLen(V.draft); return; }
@@ -944,13 +1154,17 @@ function liveLen(d){
 function endPointer(e){
   PT.delete(e.pointerId);
   if(e.pointerType==='pen'){ activePen=null; lastPenAt=Date.now(); }
+  if(edit&&edit.id===e.pointerId){ endEdit(); return; }
   if(pinch){ if(touchPts().length<2) endPinch(); return; }
   if(pan){ if(pan.btn===2&&pan.d>4) suppressCtx=true; pan=null; viewport.classList.remove('drag'); }
   if(!press||e.pointerId!==press.id) return;
   const pr=press, tool=V.tool, p=toPt(e); press=null;
   if(tool==='ink'){ commitInk(); return; }
   if(tool==='erase') return;
-  if(tool==='box'){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
+  if(tool==='box'||tool==='tbox'){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
+  if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
+  if(tool==='link'){ if(!pr.moved) placeLink(p); return; }
+  if(tool==='text'){ if(!pr.moved) placeText(p); return; }
   if(tool==='cal'){
     if(pr.moved&&V.draft){ V.draft.pts=[V.draft.pts[0],V.draft.pts[1],V.draft.pts[1].slice()]; finishDraft(); }
     else tapVertex(p,e);
@@ -963,7 +1177,7 @@ function endPointer(e){
     syncDrawbar(); }
 }
 stage.addEventListener('pointerup',endPointer);
-stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); if(pinch&&touchPts().length<2) endPinch(); press=null; stroke=null; pan=null; if(V.draft&&V.draft.type==='ink'){V.draft=null;drawOverlay();} });
+stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); if(edit) endEdit(); if(pinch&&touchPts().length<2) endPinch(); press=null; stroke=null; pan=null; if(V.draft&&V.draft.type==='ink'){V.draft=null;drawOverlay();} });
 stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot').classList.remove('show'); });
 
 function tapVertex(p,e){
@@ -978,7 +1192,29 @@ function tapVertex(p,e){
   }
   drawOverlay(); liveLen(V.draft);
 }
-stage.addEventListener('dblclick',e=>{ if(V.draft&&V.draft.type==='line'){ e.preventDefault(); finishDraft(); } });
+stage.addEventListener('dblclick',e=>{
+  if(V.draft&&V.draft.type==='line'){ e.preventDefault(); finishDraft(); return; }
+  /* double-click any text-bearing markup to edit it in place */
+  if(V.tool==='pan'){
+    const sc=toS(e), h=hitTest(sc[0],sc[1],9);
+    if(h&&/^(text|tbox|note|box|link)$/.test(h.type)){ e.preventDefault(); editAnnText(h); }
+  }
+});
+/* the shared text editor for every markup that carries words */
+async function editAnnText(a){
+  const sized=a.type==='text'||a.type==='tbox';
+  const fields=[{k:'t',type:a.type==='box'||a.type==='link'?'text':'textarea',label:'Text',val:a.text||''}];
+  if(sized) fields.push({k:'s',type:'num',label:'Size (pt)',val:a.size||11,step:1});
+  if(a.type==='tbox') fields.push({k:'f',type:'check',cap:'Solid background',val:a.fill!==false});
+  const r=await dlg({title:'Edit '+(a.type==='tbox'?'text box':a.type),fields,ok:'Apply'});
+  if(!r) return;
+  snap();
+  a.text=r.t;
+  if(sized) a.size=clamp(+r.s||11,4,96);
+  if(a.type==='tbox') a.fill=!!r.f;
+  drawOverlay(); renderAnnList(); renderLinks(); markDirty();
+  if(V.sel===a.id) showInspector(a);
+}
 
 /* ---- freehand: smooth, simplify, commit ---- */
 function smooth(pts){ if(pts.length<3) return pts;
@@ -1020,25 +1256,32 @@ function zGrab(cx,cy){
   return {s0,pdf:V.vp.convertToPdfPoint(s0[0],s0[1]),k:1,mx:cx,my:cy,bx:r.left,by:r.top};
 }
 function zShow(g,k,mx,my){
-  g.k=clamp(V.zoom*k,.08,8)/V.zoom; g.mx=mx; g.my=my;
+  g.k=clampZoom(V.zoom*k)/V.zoom; g.mx=mx; g.my=my;
   stage.style.transformOrigin='0 0';
   stage.style.transform='translate('+((mx-g.bx)-g.k*g.s0[0]).toFixed(2)+'px,'+((my-g.by)-g.k*g.s0[1]).toFixed(2)+'px) scale('+g.k.toFixed(4)+')';
 }
+/* Drop the preview transform, resize, and re-anchor the scroll in ONE frame —
+   no await in between — then repaint. Awaiting the render first made the view
+   snap back to the old zoom for a frame or two on every wheel notch. */
 async function zCommit(g){
+  const z=clampZoom(V.zoom*g.k);
+  if(Math.abs(z-V.zoom)<1e-4){ stage.style.transform=''; return; }
+  if(!V.pageObj) await ensurePage();
+  V.zoom=z;
   stage.style.transform='';
-  const z=clamp(V.zoom*g.k,.08,8);
-  if(Math.abs(z-V.zoom)<1e-4) return;
-  V.zoom=z; await renderPage();
+  resizeStage();
   const [nx,ny]=V.vp.convertToViewportPoint(g.pdf[0],g.pdf[1]);
   const vr=viewport.getBoundingClientRect();
   viewport.scrollLeft=stage.offsetLeft+nx-(g.mx-vr.left);
   viewport.scrollTop =stage.offsetTop +ny-(g.my-vr.top);
+  drawOverlay(); syncZoomUI();
+  await paintPage();
 }
 function startPinch(){
   const t=touchPts();
   const mx=(t[0].x+t[1].x)/2, my=(t[0].y+t[1].y)/2;
   pinch=zGrab(mx,my); pinch.d0=Math.max(24,Math.hypot(t[0].x-t[1].x,t[0].y-t[1].y));
-  V.draft=null; drawOverlay();
+  V.draft=null; edit=null; drawOverlay();
 }
 function movePinch(){
   const t=touchPts(); if(t.length<2||!pinch) return;
@@ -1100,7 +1343,7 @@ stage.addEventListener('contextmenu',e=>{
   showCtx(e.clientX,e.clientY,h?ctxForAnn(h):ctxForSheet());
 });
 function ctxForAnn(a){
-  const names={line:'Dimension',box:'Area box',note:'Note',link:'Drawing link',cal:'Calibration',ink:'Ink stroke'};
+  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box'};
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   const L=a.type==='line'?annLen(a):null;
   const items=[{hd:names[a.type]+(L!=null?'  ·  '+fmtLen(L):'')}];
@@ -1110,9 +1353,7 @@ function ctxForAnn(a){
   if(canClose(a)) items.push({id:'lp',t:a.closed?'Open loop':'Close loop',fn:()=>{ snap(); a.closed=!a.closed;
     drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
   if(a.type==='link'&&a.target) items.push({id:'op',t:'Open linked drawing',fn:()=>openDoc(a.target.doc,a.target.page,true)});
-  if(a.type==='note'||a.type==='box') items.push({id:'ed',t:'Edit text…',fn:async()=>{
-    const r=await dlg({title:'Edit text',fields:[{k:'t',type:a.type==='note'?'textarea':'text',label:'Text',val:a.text||''}]});
-    if(r){ snap(); a.text=r.t; drawOverlay(); renderAnnList(); markDirty(); } }});
+  if(/^(note|box|text|tbox|link)$/.test(a.type)) items.push({id:'ed',t:'Edit text…',fn:()=>editAnnText(a)});
   items.push({hr:1},
     {id:'cp',t:'Copy markup',k:'⌘C',fn:()=>copyAnn()},
     {id:'du',t:'Duplicate',k:'⌘D',fn:()=>{ V.sel=a.id; pasteAnn(null,a); }});
@@ -1198,6 +1439,21 @@ async function finishDraft(){
     const a={id:uid('a_'),type:'box',doc:d.doc,page:d.page,pts:d.pts,color:d.color,text:''};
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty(); return;
   }
+  if(d.type==='tbox'){
+    const [p0,p1]=d.pts;
+    if(Math.abs(p1[0]-p0[0])*V.zoom<24||Math.abs(p1[1]-p0[1])*V.zoom<16){
+      drawOverlay(); toast('Drag a bigger box for the text'); return; }
+    const r=await dlg({title:'Text box',fields:[
+      {k:'t',type:'textarea',label:'Text',val:''},
+      {k:'s',type:'num',label:'Size (pt)',val:11,step:1},
+      {k:'f',type:'check',cap:'Solid background',val:true}
+    ],ok:'Add',note:'Text wraps to the box. Drag the corner handles later to resize it.'});
+    if(!r){ drawOverlay(); return; }
+    snap();
+    const a={id:uid('a_'),type:'tbox',doc:d.doc,page:d.page,pts:[p0,p1],color:d.color,
+      text:String(r.t||'').replace(/\s+$/,''),size:clamp(+r.s||11,4,96),fill:!!r.f};
+    P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty(); setTool('pan'); return;
+  }
   if(d.type==='cal'){
     const pts=d.pts.slice(0,2), dist=ptLen(pts[0],pts[1]);
     drawOverlay();
@@ -1210,12 +1466,24 @@ async function finishDraft(){
     if(!isFinite(L)||L<=0){ toast('Could not read that length'); return; }
     const ratio=L*72/dist;
     snap();
-    P.ann=P.ann.filter(x=>!(x.type==='cal'&&x.doc===d.doc&&x.page===d.page));
-    P.ann.push({id:uid('a_'),type:'cal',doc:d.doc,page:d.page,pts,color:'#5AB6DE'});
+    /* the calibration line is scaffolding — the scale is what we keep, so the
+       line comes off the drawing as soon as it has done its job */
+    P.ann=P.ann.filter(x=>x.type!=='cal');
     setScale(ratio,r.all);
     toast('Scale set to '+ratioLabel(ratio));
     setTool('line');
   }
+}
+async function placeText(p){
+  const r=await dlg({title:'Text',fields:[
+    {k:'t',type:'textarea',label:'Text',val:''},
+    {k:'s',type:'num',label:'Size (pt)',val:11,step:1,hint:'Sized in sheet points, so it scales with the drawing.'}
+  ],ok:'Place'});
+  if(!r||!String(r.t).trim()) return;
+  snap();
+  const a={id:uid('a_'),type:'text',doc:V.docId,page:V.page,pts:[p],text:String(r.t).replace(/\s+$/,''),
+    size:clamp(+r.s||11,4,96),color:V.color||COLORS[1]};
+  P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty(); setTool('pan');
 }
 async function placeNote(p){
   const r=await dlg({title:'Note',fields:[{k:'t',type:'textarea',label:'Text',val:''}],ok:'Place'});
@@ -1243,7 +1511,7 @@ function showInspector(a){
   const box=$('#inspector');
   if(!a){ box.classList.remove('show'); return; }
   box.classList.add('show');
-  const names={line:'Dimension',box:'Area box',note:'Note',link:'Drawing link',cal:'Calibration line'};
+  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration line',text:'Text',tbox:'Text box'};
   $('#insTitle').textContent=(a.type==='line'&&a.poly?'Poly length':names[a.type])||'Markup';
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   let h='';
@@ -1262,6 +1530,13 @@ function showInspector(a){
          : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
   }
   if(a.type==='box'||a.type==='link') h+='<div class="f"><label>Label</label><input type="text" data-f="text" value="'+esc(a.text||'')+'"></div>';
+  if(a.type==='text'||a.type==='tbox'){
+    h+='<div class="f"><label>Text</label><textarea data-f="text" rows="4">'+esc(a.text||'')+'</textarea></div>';
+    h+='<div class="f"><label>Size (pt)</label><input type="number" min="4" max="96" step="1" data-n="size" value="'+(a.size||11)+'"></div>';
+    if(a.type==='tbox') h+='<div class="f"><label style="display:flex;gap:7px;align-items:center;text-transform:none;letter-spacing:0;font-size:12px;color:var(--txt)">'
+      +'<input type="checkbox" data-b="fill"'+(a.fill!==false?' checked':'')+' style="width:auto"> Solid background</label></div>';
+    h+='<div class="hint">Drag the handles to '+(a.type==='tbox'?'resize the box':'move it')+'.</div>';
+  }
   if(a.type==='ink') h+='<div class="f"><label>Stroke</label><select data-w="w"><option value="1.2"'+(a.w<1.6?' selected':'')+'>Fine</option><option value="2"'+(a.w>=1.6&&a.w<3?' selected':'')+'>Medium</option><option value="3.6"'+(a.w>=3?' selected':'')+'>Bold</option></select></div>';
   if(a.type==='note') h+='<div class="f"><label>Text</label><textarea data-f="text">'+esc(a.text||'')+'</textarea></div>';
   if(a.type==='link'&&a.target){ const d=P.docs.find(x=>x.id===a.target.doc);
@@ -1270,6 +1545,8 @@ function showInspector(a){
   h+='<button class="btn" data-act="del" style="color:var(--flag)">Delete markup</button>';
   const bd=$('#insBody'); bd.innerHTML=h;
   $$('[data-w]',bd).forEach(el=>el.onchange=()=>{ a.w=+el.value; drawOverlay(); markDirty(); });
+  $$('[data-n]',bd).forEach(el=>el.oninput=()=>{ a[el.dataset.n]=clamp(+el.value||11,4,96); drawOverlay(); markDirty(); });
+  $$('[data-b]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.b]=el.checked; drawOverlay(); markDirty(); });
   $$('[data-f]',bd).forEach(el=>el.oninput=()=>{ a[el.dataset.f]=el.value; drawOverlay(); renderAnnList(); markDirty(); });
   $$('.sw',bd).forEach(el=>el.onclick=()=>{ a.color=el.dataset.c; showInspector(a); drawOverlay(); markDirty(); });
   $$('[data-act]',bd).forEach(el=>el.onclick=()=>{
@@ -1307,7 +1584,8 @@ function renderAnnList(){
   list.forEach(a=>{
     const t=a.treat&&P.treat.find(x=>x.id===a.treat);
     const segs=a.type==='line'?annSegs(a).length:0;
-    const label=a.type==='line'?(fmtLen(annLen(a))+(a.poly&&segs>1?'  ·  '+segs+' seg':'')):(a.text||a.type);
+    const label=a.type==='line'?(fmtLen(annLen(a))+(a.poly&&segs>1?'  ·  '+segs+' seg':''))
+      :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
     el.innerHTML='<span class="pill" style="border-color:'+a.color+';color:'+a.color+'">'+kind+'</span>'
@@ -1637,7 +1915,8 @@ $('#btnCsvBom').onclick=()=>{
    drawings after opening and every markup reattaches by name + size. */
 const slug=s=>String(s||'project').replace(/\W+/g,'-').replace(/^-+|-+$/g,'').toLowerCase()||'project';
 const projFileName=()=>slug(P.name)+'.linework.json';
-function projFileText(){ return JSON.stringify(Object.assign({app:'linework',ver:FILE_VER,savedAt:new Date().toISOString()},P),null,1); }
+function projFileText(){ return JSON.stringify(Object.assign(
+  {app:'linework',ver:FILE_VER,appVer:APP_VER,savedAt:new Date().toISOString()},P),null,1); }
 /* Save links the project to a real file when the browser supports it, so
    auto-save can keep writing to it. Otherwise it falls back to a download. */
 async function saveProjectFile(){
@@ -1731,7 +2010,9 @@ $('#togR').onclick=()=>document.body.classList.toggle('ro');
 $('#zIn').onclick=()=>zoomBy(1.25); $('#zOut').onclick=()=>zoomBy(.8); $('#zFit').onclick=()=>fitPage();
 function zoomBy(f){ if(!V.vp) return; flushWheel();
   const r=viewport.getBoundingClientRect(), g=zGrab(r.left+r.width/2,r.top+r.height/2);
-  g.k=clamp(V.zoom*f,.08,8)/V.zoom; zCommit(g); }
+  g.k=clampZoom(V.zoom*f)/V.zoom;
+  if(Math.abs(g.k-1)<1e-4&&f>1) toast('Maximum zoom for this sheet size');
+  zCommit(g); }
 $('#pgPrev').onclick=()=>{ if(V.page>1){V.page--;V.sel=null;showInspector(null);renderPage();renderAnnList();syncScaleUI();} };
 $('#pgNext').onclick=()=>{ const d=FILES[V.docId]; if(d&&V.page<d.pdf.numPages){V.page++;V.sel=null;showInspector(null);renderPage();renderAnnList();syncScaleUI();} };
 $('#scalePreset').onchange=e=>{ const v=+e.target.value; if(!v){return}
@@ -1777,12 +2058,15 @@ document.addEventListener('keydown',e=>{
   if(k==='g') setTool('poly');
   if(k==='b') setTool('box'); if(k==='n') setTool('note'); if(k==='k') setTool('link');
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
+  if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
   if((k==='delete'||k==='backspace')&&V.sel){ const a=P.ann.find(x=>x.id===V.sel);
     if(a){ snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(t=>{if(t.annId===a.id)t.annId=null}); V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); markDirty(); } }
   if(k==='+'||k==='=') zoomBy(1.25); if(k==='-') zoomBy(.8);
   if(k==='arrowright') $('#pgNext').click(); if(k==='arrowleft') $('#pgPrev').click();
 });
 
+$('#verTag').textContent='v'+APP_VER;
+$('#verTag').title='Linework '+APP_VER+'  ·  build '+APP_BUILD+'  ·  project file schema v'+FILE_VER;
 const BLANK_H2=$('#blank').querySelector('h2').textContent;
 const BLANK_P=$('#blank').querySelector('p').textContent;
 function boot(keepDoc){
@@ -1808,6 +2092,7 @@ function boot(keepDoc){
 /* console handle for scripting / debugging the takeoff */
 window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen,openFiles,openDoc,bomData,boot,rdp,smooth,undo,redo,snap,copyAnn,pasteAnn,ctxForAnn,ctxForSheet,wheelZoom,flushWheel,
   saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
+  annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
   render(){boot()}};
 (async()=>{ await loadProject(); boot(); setTool('pan'); })();
 </script>
