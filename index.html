@@ -494,6 +494,19 @@ body.haspen #penFlag{display:inline}
       <div class="tw"><table id="costTbl"></table></div></div>
     <div class="sec"><h3>By zone</h3><div class="tw"><table id="zoneTbl"></table></div></div>
     <div class="sec"><h3>By sheet</h3><div class="tw"><table id="sheetTbl"></table></div></div>
+    <div class="sec"><h3>Alternates <span class="c" id="cAlt">0</span></h3>
+      <div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn" id="btnAlt">Add alternate</button>
+        <div class="hint" style="flex:1 1 100%">Price the same takeoff with a different product. Nothing changes until you press Use.</div>
+      </div>
+      <div class="tw"><table id="altTbl"></table></div></div>
+    <div class="sec"><h3>Changes since baseline</h3>
+      <div class="body" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <button class="btn" id="btnBase">Set baseline</button>
+        <button class="btn" id="btnBaseClear">Clear</button>
+        <div class="hint" id="baseWhen" style="flex:1 1 100%">No baseline set</div>
+      </div>
+      <div class="tw"><table id="baseTbl"></table></div></div>
     <div class="sec"><h3>Drivers placed <span class="c" id="cDrv">0</span></h3>
       <div class="body"><div class="hint">Power supplies placed on the drawing, with what each one feeds, its load against its usable capacity, and the longest home run to a run it serves.</div></div>
       <div class="tw"><table id="drvTbl"></table></div></div>
@@ -503,6 +516,7 @@ body.haspen #penFlag{display:inline}
       <button class="btn" id="btnCsvDrv">Export driver schedule</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
       <button class="btn" id="btnCsvCost">Export cost</button>
+      <button class="btn pri" id="btnXlsx">Export workbook (.xlsx)</button>
       <button class="btn" id="btnPdf">Export marked-up PDF</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
     </div></div>
@@ -562,7 +576,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.17.0';
+const APP_VER='1.18.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -806,6 +820,10 @@ function applyProject(d){
   ['rate','matUp','labFt','labFeed','labEa'].forEach(k=>{ P[k]=Math.max(0,+P[k]||0); });
   P.cur=String(P.cur||'$').slice(0,3);
   P.minOff=Math.max(0,+P.minOff||0);
+  /* alternates and the baseline, added in 1.18 */
+  P.alts=Array.isArray(P.alts)?P.alts.filter(a=>a&&a.id).map(a=>({id:a.id,name:String(a.name||'Alternate'),
+    sub:(a.sub&&typeof a.sub==='object')?a.sub:{}})):[];
+  if(P.base&&!Array.isArray(P.base.treat)) delete P.base;
   if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
   [['fix',['cost']],['ch',['cost','clipCost','capCost','joinCost']],['psu',['cost']]].forEach(([k,fields])=>{
@@ -1820,7 +1838,7 @@ function hitTest(sx,sy,tol){
 /* ---- undo history ---- */
 const HIST=[],FUT=[];
 const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq,
-  fix:P.fix,ch:P.ch,psu:P.psu});
+  fix:P.fix,ch:P.ch,psu:P.psu,alts:P.alts,base:P.base});
 function snap(){ HIST.push(snapshot()); if(HIST.length>60) HIST.shift(); FUT.length=0; syncUndo(); saveHist(); }
 /* Undo depth is a working state, not part of the deliverable, so it rides in
    local storage rather than the project file. */
@@ -1846,6 +1864,8 @@ function restore(j){
   const d=JSON.parse(j);
   P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq;
   if(d.fix) P.fix=d.fix; if(d.ch) P.ch=d.ch; if(d.psu) P.psu=d.psu;
+  P.alts=Array.isArray(d.alts)?d.alts:[];
+  if(d.base) P.base=d.base; else delete P.base;
   invalidateAnns();
   V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks();
   renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty();
@@ -3929,7 +3949,7 @@ function renderBom(){
   $('#bomTbl').innerHTML='<tr>'+thSort('bom','cat','Cat.')+thSort('bom','item','Item')
     +thSort('bom','qty','Qty','n')+thSort('bom','unit','Unit')+'</tr>'
     +bord.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
-  renderRollups(); renderPieces(); renderCost();
+  renderRollups(); renderPieces(); renderCost(); renderAlts(); renderBase();
   wireThSorts();
 }
 function rollTable(el,head,rows){
@@ -4160,6 +4180,22 @@ $('#btnCsvCut').onclick=()=>{
       (r.tot.chLen/12).toFixed(2),r.tot.pieces,r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes]); });
   exportBox(slug(P.name)+'-cutlist.csv',csv(rows));
 };
+$('#btnXlsx').onclick=exportWorkbook;
+$('#btnAlt').onclick=()=>editAlt(null);
+$('#btnBase').onclick=async()=>{
+  const has=!!P.base;
+  const r=await dlg({title:has?'Re-baseline':'Set baseline',fields:[
+    {k:'go',type:'check',cap:has?'Replace the baseline with the takeoff as it stands':'Freeze the takeoff as it stands',val:false}
+  ],ok:has?'Re-baseline':'Set baseline',
+    note:has?('The current baseline is from '+new Date(P.base.at).toLocaleString()
+      +'. Replacing it means changes since then stop being reported.')
+      :'Every later change is then reported against this — added, changed and removed runs, and the cost difference.'});
+  if(!r||!r.go) return;
+  snap(); setBaseline(); renderBase(); markDirty();
+  toast('Baseline set — '+P.base.treat.length+' treatment'+(P.base.treat.length===1?'':'s'));
+};
+$('#btnBaseClear').onclick=()=>{ if(!P.base) return toast('No baseline to clear');
+  snap(); delete P.base; renderBase(); markDirty(); toast('Baseline cleared'); };
 $('#btnCsvCost').onclick=()=>{
   const c=costTotals();
   const rows=[['Category','Item','Qty','Unit','Rate','Total','Note']];
@@ -4176,6 +4212,364 @@ $('#btnCsvBom').onclick=()=>{
   const rows=[['Category','Item','Qty','Unit','Note']].concat(bomData().map(r=>[r[0],r[1],r[3],r[2],r[4]]));
   exportBox(slug(P.name)+'-bom.csv',csv(rows));
 };
+
+/* ============================================================
+   Alternates, the change-order baseline, and a real workbook
+   ============================================================ */
+/* ---- alternates ----
+   "What if we used the other tape?" is a question about the whole job, not one
+   treatment. An alternate is a set of product substitutions, priced against the
+   base without touching it. */
+const ALT_CATS=[{v:'fix',t:'LED product',key:'fixId'},{v:'ch',t:'Channel',key:'chId'},
+  {v:'psu',t:'Power supply',key:'psuId'}];
+const altKey=cat=>(ALT_CATS.find(c=>c.v===cat)||{}).key;
+function withAlt(alt,fn){
+  if(!alt||!alt.sub) return fn();
+  const undo=[];
+  P.treat.forEach(t=>{
+    ALT_CATS.forEach(c=>{
+      const map=alt.sub[c.v]; if(!map) return;
+      const to=map[t[c.key]];
+      if(to&&P[c.v].some(x=>x.id===to)){ undo.push([t,c.key,t[c.key]]); t[c.key]=to; }
+    });
+  });
+  try{ return fn(); }
+  finally{ undo.forEach(([t,k,v])=>{ t[k]=v; }); }
+}
+function altSummary(alt){
+  return withAlt(alt,()=>{
+    let ledFt=0,chFt=0,watts=0,psu=0,feeds=0;
+    P.treat.forEach(t=>{ const r=calc(t); if(r.L<=0) return;
+      ledFt+=r.tot.cut/12; chFt+=r.tot.chLen/12; watts+=r.tot.watts; psu+=r.psuQty; feeds+=r.tot.feeds; });
+    const c=costTotals();
+    const nest=nestData();
+    const bought=nest.reduce((s,g)=>s+g.bought,0), used=nest.reduce((s,g)=>s+g.used,0);
+    return {ledFt,chFt,watts,psu,feeds,mat:c.mat,labour:c.labour,total:c.total,
+      unpriced:c.unpriced,yield:bought?used/bought:null};
+  });
+}
+function altRows(){
+  const base=altSummary(null);
+  const rows=[{id:'',name:'Base',sum:base,base:true}];
+  (P.alts||[]).forEach(a=>rows.push({id:a.id,name:a.name||'Alternate',sum:altSummary(a),alt:a}));
+  rows.forEach(r=>{ r.delta=r.base?0:r.sum.total-base.total; });
+  return rows;
+}
+function altLabel(a){
+  const bits=[];
+  ALT_CATS.forEach(c=>{
+    const map=(a.sub||{})[c.v]||{};
+    Object.keys(map).forEach(from=>{
+      const f=P[c.v].find(x=>x.id===from), t=P[c.v].find(x=>x.id===map[from]);
+      if(f&&t) bits.push(f.name+' → '+t.name);
+    });
+  });
+  return bits.join('; ')||'no substitutions yet';
+}
+async function editAlt(alt){
+  const isNew=!alt;
+  const inUse=cat=>{
+    const key=altKey(cat);
+    const ids=new Set(P.treat.map(t=>t[key]));
+    return P[cat].filter(x=>ids.has(x.id));
+  };
+  const cat0=ALT_CATS.find(c=>inUse(c.v).length)||ALT_CATS[0];
+  const from0=inUse(cat0.v);
+  if(!from0.length){ toast('Add a treatment first — an alternate substitutes a product it uses'); return; }
+  const r=await dlg({title:isNew?'New alternate':'Add a substitution',fields:[
+    {k:'name',label:'Alternate name',val:alt?alt.name:'Alternate '+((P.alts||[]).length+1)},
+    {k:'cat',type:'select',label:'Category',opts:ALT_CATS.map(c=>({v:c.v,t:c.t})),val:cat0.v},
+    {k:'from',type:'select',label:'Replace (must be one the job uses)',
+      opts:from0.map(x=>({v:x.id,t:x.name})),val:from0[0].id},
+    {k:'to',type:'select',label:'With',opts:P[cat0.v].map(x=>({v:x.id,t:x.name})),val:P[cat0.v][0].id}
+  ],ok:isNew?'Create':'Add',
+    note:'Substitutions are priced against the base without changing it. The category list is fixed when this dialog opens — reopen it to substitute in another category.'});
+  if(!r) return;
+  if(r.from===r.to){ toast('That substitutes a product for itself'); return; }
+  if(!P[r.cat].some(x=>x.id===r.from)||!P[r.cat].some(x=>x.id===r.to)){ toast('Pick products from the same category'); return; }
+  snap();
+  P.alts=P.alts||[];
+  const a=alt||{id:uid('alt_'),name:'',sub:{}};
+  a.name=String(r.name||'Alternate').trim()||'Alternate';
+  a.sub=a.sub||{}; a.sub[r.cat]=a.sub[r.cat]||{};
+  a.sub[r.cat][r.from]=r.to;
+  if(isNew) P.alts.push(a);
+  renderAlts(); markDirty();
+  toast(isNew?'Alternate created':'Substitution added');
+}
+function applyAlt(a){
+  const n=[];
+  ALT_CATS.forEach(c=>{
+    const map=(a.sub||{})[c.v]||{};
+    P.treat.forEach(t=>{ const to=map[t[c.key]]; if(to&&P[c.v].some(x=>x.id===to)){ t[c.key]=to; n.push(t.id); } });
+  });
+  return n.length;
+}
+function renderAlts(){
+  const el=$('#altTbl'); if(!el) return;
+  const rows=altRows();
+  const cnt=$('#cAlt'); if(cnt) cnt.textContent=Math.max(0,rows.length-1);
+  if(rows.length<2){
+    el.innerHTML='<tr><td class="hint" style="padding:12px">No alternates. Add one to price the same takeoff with a different product.</td></tr>';
+    return;
+  }
+  el.innerHTML='<tr><th>Option</th><th class="n">LED</th><th class="n">Load</th><th class="n">Supplies</th>'
+    +'<th class="n">Material</th><th class="n">Total</th><th class="n">vs base</th><th></th></tr>'
+    +rows.map(r=>'<tr'+(r.base?' class="tot"':'')+'><td>'+esc(r.name)
+      +(r.alt?'<div class="hint">'+esc(altLabel(r.alt))+'</div>':'')+'</td>'
+      +'<td class="n">'+fmtRun(r.sum.ledFt*12)+'</td>'
+      +'<td class="n">'+r.sum.watts.toFixed(0)+' W</td>'
+      +'<td class="n">'+r.sum.psu+'</td>'
+      +'<td class="n">'+money(r.sum.mat)+'</td>'
+      +'<td class="n">'+money(r.sum.total)+'</td>'
+      +'<td class="n"'+(r.delta<0?' style="color:var(--ok,#8FC46A)"':(r.delta>0?' style="color:var(--flag)"':''))+'>'
+      +(r.base?'—':(r.delta>0?'+':'')+money(r.delta))+'</td>'
+      +'<td>'+(r.alt?'<button class="btn sm" data-alt-add="'+r.id+'">+</button>'
+        +'<button class="btn sm" data-alt-use="'+r.id+'">Use</button>'
+        +'<button class="btn sm ghost" data-alt-del="'+r.id+'" style="color:var(--flag)">✕</button>':'')+'</td></tr>').join('')
+    +(rows.some(r=>r.sum.unpriced)?'<tr><td colspan="8" class="hint">Unpriced items are excluded from every column, so a comparison between two half-priced options is not a comparison.</td></tr>':'');
+  $$('[data-alt-add]',el).forEach(b=>b.onclick=()=>editAlt((P.alts||[]).find(x=>x.id===b.dataset.altAdd)));
+  $$('[data-alt-del]',el).forEach(b=>b.onclick=()=>{ snap();
+    P.alts=(P.alts||[]).filter(x=>x.id!==b.dataset.altDel); renderAlts(); markDirty(); });
+  $$('[data-alt-use]',el).forEach(b=>b.onclick=async()=>{
+    const a=(P.alts||[]).find(x=>x.id===b.dataset.altUse); if(!a) return;
+    const r=await dlg({title:'Use '+a.name,fields:[{k:'go',type:'check',cap:'Switch the job to these products',val:false}],
+      ok:'Apply',note:altLabel(a)+'. Every treatment using the old product moves to the new one. Undo puts it back.'});
+    if(!r||!r.go) return;
+    snap();
+    const n=applyAlt(a);
+    renderTreatments(); renderBom(); renderAlts(); stats(); markDirty();
+    toast(n?('Switched '+n+' treatment'+(n===1?'':'s')+' to '+a.name):'Nothing in the job uses those products');
+  });
+}
+
+/* ---- the change-order baseline ----
+   A takeoff drifts. Freeze one and every later question — what was added, what
+   grew — has an answer instead of an argument. */
+function setBaseline(){
+  P.base={at:new Date().toISOString(),appVer:APP_VER,
+    treat:P.treat.map(t=>{ const r=calc(t);
+      return {id:t.id,tag:tagOf(t),type:t.type||'',zone:t.zone||'',name:t.name||'',qty:r.qty,
+        len:r.L,cut:r.tot.cut,watts:r.tot.watts}; }),
+    counts:countTotals().map(c=>({grp:c.grp,n:c.n})),
+    total:costTotals().total};
+}
+function baseDiff(){
+  const b=P.base;
+  if(!b||!Array.isArray(b.treat)) return null;
+  const was=new Map(b.treat.map(x=>[x.id,x]));
+  const added=[],changed=[],removed=[],same=[];
+  P.treat.forEach(t=>{
+    const r=calc(t), now={tag:tagOf(t),cut:r.tot.cut,len:r.L,qty:r.qty,watts:r.tot.watts};
+    const old=was.get(t.id);
+    if(!old){ added.push({tag:now.tag,now,delta:now.cut}); return; }
+    was.delete(t.id);
+    const d=now.cut-old.cut;
+    /* an eighth of an inch is not a change order */
+    if(Math.abs(d)>0.125||now.qty!==old.qty||now.tag!==old.tag)
+      changed.push({tag:now.tag,wasTag:old.tag,was:old,now,delta:d});
+    else same.push(now.tag);
+  });
+  was.forEach(old=>removed.push({tag:old.tag,was:old,delta:-old.cut}));
+  const net=added.concat(changed,removed).reduce((s,x)=>s+x.delta,0);
+  const nowTotal=costTotals().total;
+  const wasLed=b.treat.reduce((s,x)=>s+(+x.cut||0),0);
+  const nowLed=P.treat.reduce((s,t)=>s+calc(t).tot.cut,0);
+  return {at:b.at,added,changed,removed,same,net,wasLed,nowLed,
+    wasTotal:+b.total||0,nowTotal,costDelta:nowTotal-(+b.total||0),
+    counts:(b.counts||[]).map(c=>{ const now=countTotals().find(x=>x.grp===c.grp);
+      return {grp:c.grp,was:c.n,now:now?now.n:0,delta:(now?now.n:0)-c.n}; })
+      .concat(countTotals().filter(c=>!(b.counts||[]).some(x=>x.grp===c.grp))
+        .map(c=>({grp:c.grp,was:0,now:c.n,delta:c.n})))
+      .filter(c=>c.delta!==0)};
+}
+function renderBase(){
+  const el=$('#baseTbl'); if(!el) return;
+  const d=baseDiff();
+  const btn=$('#btnBase'); if(btn) btn.textContent=P.base?'Re-baseline':'Set baseline';
+  const when=$('#baseWhen');
+  if(when) when.textContent=P.base?('Baselined '+new Date(P.base.at).toLocaleString()+' · '+P.base.treat.length+' treatments'):'No baseline set';
+  if(!d){ el.innerHTML='<tr><td class="hint" style="padding:12px">Set a baseline when the takeoff is issued. Everything after that is measured against it.</td></tr>'; return; }
+  const row=(kind,x)=>'<tr><td><span class="pill">'+kind+'</span></td>'
+    +'<td>'+esc(x.tag)+(x.wasTag&&x.wasTag!==x.tag?'<div class="hint">was '+esc(x.wasTag)+'</div>':'')+'</td>'
+    +'<td class="n">'+(x.was?fmtRun(x.was.cut):'—')+'</td>'
+    +'<td class="n">'+(x.now?fmtRun(x.now.cut):'—')+'</td>'
+    +'<td class="n"'+(x.delta>0?' style="color:var(--flag)"':(x.delta<0?' style="color:var(--ok,#8FC46A)"':''))+'>'
+    +(x.delta>0?'+':'')+fmtRun(x.delta)+'</td></tr>';
+  const body=d.added.map(x=>row('added',x)).join('')+d.changed.map(x=>row('changed',x)).join('')
+    +d.removed.map(x=>row('removed',x)).join('');
+  el.innerHTML='<tr><th></th><th>Tag</th><th class="n">Was</th><th class="n">Now</th><th class="n">Δ</th></tr>'
+    +(body||'<tr><td colspan="5" class="hint">Nothing has changed since the baseline.</td></tr>')
+    +d.counts.map(c=>'<tr><td><span class="pill">count</span></td><td>'+esc(c.grp)+'</td>'
+      +'<td class="n">'+c.was+'</td><td class="n">'+c.now+'</td>'
+      +'<td class="n"'+(c.delta>0?' style="color:var(--flag)"':'')+'>'+(c.delta>0?'+':'')+c.delta+'</td></tr>').join('')
+    +'<tr class="tot"><td colspan="2">Net LED · '+d.added.length+' added, '+d.changed.length
+    +' changed, '+d.removed.length+' removed</td><td class="n">'+fmtRun(d.wasLed)+'</td>'
+    +'<td class="n">'+fmtRun(d.nowLed)+'</td><td class="n">'+(d.net>0?'+':'')+fmtRun(d.net)+'</td></tr>'
+    +(d.wasTotal>0?'<tr class="tot"><td colspan="4">Cost then '+money(d.wasTotal)+' → now '+money(d.nowTotal)+'</td>'
+      +'<td class="n">'+(d.costDelta>0?'+':'')+money(d.costDelta)+'</td></tr>':'');
+}
+
+/* ---- a real workbook ----
+   CSV loses the tabs, the number formats and anything that looks like a date, so
+   this writes an actual .xlsx: a stored (uncompressed) zip of the minimum
+   OOXML parts. No library, and it opens in Excel, Numbers and Sheets. */
+const CRC_T=(()=>{ const t=new Uint32Array(256);
+  for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+  return t; })();
+function crc32(u8){ let c=0xFFFFFFFF;
+  for(let i=0;i<u8.length;i++) c=CRC_T[(c^u8[i])&0xFF]^(c>>>8);
+  return (c^0xFFFFFFFF)>>>0; }
+function zipStore(files){
+  const enc=new TextEncoder(), chunks=[], dir=[];
+  let off=0;
+  const now=new Date();
+  const dosT=((now.getHours()&31)<<11)|((now.getMinutes()&63)<<5)|((now.getSeconds()/2)&31);
+  const dosD=(((now.getFullYear()-1980)&127)<<9)|(((now.getMonth()+1)&15)<<5)|(now.getDate()&31);
+  const u16=v=>[v&255,(v>>8)&255], u32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+  files.forEach(f=>{
+    const name=enc.encode(f.name), data=f.data instanceof Uint8Array?f.data:enc.encode(f.data);
+    const crc=crc32(data);
+    const head=new Uint8Array([...u32(0x04034b50),...u16(20),...u16(0),...u16(0),...u16(dosT),...u16(dosD),
+      ...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0)]);
+    chunks.push(head,name,data);
+    dir.push({name,crc,size:data.length,off});
+    off+=head.length+name.length+data.length;
+  });
+  const cd=[];
+  let cdLen=0;
+  dir.forEach(e=>{
+    const h=new Uint8Array([...u32(0x02014b50),...u16(20),...u16(20),...u16(0),...u16(0),...u16(dosT),...u16(dosD),
+      ...u32(e.crc),...u32(e.size),...u32(e.size),...u16(e.name.length),...u16(0),...u16(0),...u16(0),...u16(0),
+      ...u32(0),...u32(e.off)]);
+    cd.push(h,e.name); cdLen+=h.length+e.name.length;
+  });
+  const end=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(dir.length),...u16(dir.length),
+    ...u32(cdLen),...u32(off),...u16(0)]);
+  return new Blob([...chunks,...cd,end],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+const xe=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
+function colName(i){ let s=''; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26; } return s; }
+const isNum=v=>typeof v==='number'?isFinite(v)
+  :(typeof v==='string'&&v!==''&&/^-?\d+(\.\d+)?$/.test(v.trim()));
+function sheetXml(rows){
+  const body=rows.map((r,ri)=>'<row r="'+(ri+1)+'">'+r.map((v,ci)=>{
+    const ref=colName(ci)+(ri+1);
+    if(v==null||v==='') return '';
+    if(isNum(v)) return '<c r="'+ref+'"><v>'+(+v)+'</v></c>';
+    return '<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+xe(v)+'</t></is></c>';
+  }).join('')+'</row>').join('');
+  return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'
+    +body+'</sheetData></worksheet>';
+}
+const sheetSafe=n=>String(n||'Sheet').replace(/[\[\]:*?\/\\]/g,'-').slice(0,31)||'Sheet';
+function xlsx(sheets){
+  sheets=sheets.filter(s=>s&&Array.isArray(s.rows));
+  if(!sheets.length) sheets=[{name:'Empty',rows:[['Nothing to export']]}];
+  const names=[]; sheets.forEach(s=>{
+    let n=sheetSafe(s.name), i=2;
+    while(names.includes(n)){ n=sheetSafe(s.name).slice(0,28)+' '+(i++); }
+    names.push(n);
+  });
+  const files=[
+    {name:'[Content_Types].xml',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+      +'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+      +'<Default Extension="xml" ContentType="application/xml"/>'
+      +'<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+      +sheets.map((s,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')
+      +'</Types>'},
+    {name:'_rels/.rels',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>'
+      +'</Relationships>'},
+    {name:'xl/workbook.xml',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+      +'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'
+      +names.map((n,i)=>'<sheet name="'+xe(n)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')
+      +'</sheets></workbook>'},
+    {name:'xl/_rels/workbook.xml.rels',data:'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+      +names.map((n,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')
+      +'</Relationships>'}
+  ];
+  sheets.forEach((s,i)=>files.push({name:'xl/worksheets/sheet'+(i+1)+'.xml',data:sheetXml(s.rows)}));
+  return zipStore(files);
+}
+/* every table the app can produce, as one workbook */
+function workbookSheets(){
+  const S=[];
+  S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Channel',
+    'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
+    'Channel ft','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']].concat(
+    P.treat.map(t=>{ const r=calc(t);
+      return [tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',
+        t.detail||'',r.f.name,r.kind,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
+        +(r.cut/12).toFixed(3),+r.cut.toFixed(2),r.inc>0?+(r.inc/12).toFixed(4):'any',r.inc>0?r.units:'',
+        +r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',+(r.tot.chLen/12).toFixed(3),r.tot.pieces,
+        r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes||'']; }))});
+  S.push({name:'BOM',rows:[['Category','Item','Qty','Unit','Note']].concat(
+    bomData().map(r=>[r[0],r[1],isNum(r[3])?+r[3]:r[3],r[2],r[4]]))});
+  const c=costTotals();
+  S.push({name:'Cost',rows:[['Category','Item','Qty','Unit','Rate','Total','Note']].concat(
+    c.rows.map(r=>[r.cat,r.item,+r.qty.toFixed(3),r.unit,r.rate>0?+r.rate.toFixed(2):'',
+      r.rate>0?+r.total.toFixed(2):'',r.unpriced?'NO RATE SET':r.note]),
+    [[],['','Material','','','',+c.mat.toFixed(2),''],
+     ['','Markup','',(+P.matUp||0)+'%','',+c.markup.toFixed(2),''],
+     ['','Labour',+c.hours.toFixed(2),'h',+c.rate.toFixed(2),+c.labour.toFixed(2),''],
+     ['','Total','','','',+c.total.toFixed(2),c.perFt!=null?(c.perFt.toFixed(2)+'/ft'):'']])});
+  S.push({name:'Pieces',rows:[['Mark','Piece','Of','Tag','Zone','Detail','Run','Kind','Item','Cut ft','Cut in','Note','Locked']]
+    .concat(pieceData().map(r=>[r.mark,r.seq,r.of,r.tag,r.zone,r.detail||'',r.run,r.kind,r.item,
+      +(r.len/12).toFixed(3),+r.len.toFixed(2),r.note,r.locked?'yes':'no']))});
+  const nest=[];
+  nestData().forEach(g=>g.bins.forEach((b,i)=>nest.push([g.name,g.scope||'whole job',+(g.stock/12).toFixed(3),i+1,
+    b.cuts.map(x=>(x/12).toFixed(3)).join(' + '),+(b.left/12).toFixed(3),
+    (g.minOff>0&&b.left>=g.minOff)?'yes':'no',+(g.yield*100).toFixed(1)])));
+  S.push({name:'Nesting',rows:[['Channel','Scope','Stock ft','Stock #','Cuts ft','Off-cut ft','Re-usable','Yield %']].concat(nest)});
+  const roll=[['Grouping','Key','Runs','LED ft','Channel ft','Watts','Feeds','Supplies']];
+  rollup(t=>t.zone||'(no zone)').forEach(v=>roll.push(['Zone',v.label,v.runs,+(v.led/12).toFixed(2),
+    +(v.ch/12).toFixed(2),+v.watts.toFixed(1),v.feeds,v.psu]));
+  rollup(t=>t.docId||'(none)',t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)'))
+    .forEach(v=>roll.push(['Sheet',v.label,v.runs,+(v.led/12).toFixed(2),
+      +(v.ch/12).toFixed(2),+v.watts.toFixed(1),v.feeds,v.psu]));
+  S.push({name:'Rollups',rows:roll});
+  const cnt=countTotals();
+  if(cnt.length) S.push({name:'Counts',rows:[['Group','Symbol','Count','Rate each','Total','Sheets']]
+    .concat(cnt.map(x=>{ const rate=+((P.cntRate||{})[x.grp])||0;
+      return [x.grp,x.sym,x.n,rate||'',rate?+(rate*x.n).toFixed(2):'',x.sheets]; }))});
+  const drv=driverRows();
+  if(drv.length) S.push({name:'Drivers',rows:[['Mark','Supply','Sheet','Connected W','Usable W','% used','Home run ft','Runs','Flags']]
+    .concat(drv.map(r=>[r.name,r.supply,r.sheet,+r.watts.toFixed(1),+r.cap.toFixed(1),
+      +(r.pct*100).toFixed(0),+(r.home/12).toFixed(2),r.serves,r.warn.join(' | ')]))});
+  const alts=altRows();
+  if(alts.length>1) S.push({name:'Alternates',rows:[['Option','Substitutions','LED ft','Watts','Supplies','Material','Labour','Total','vs base']]
+    .concat(alts.map(r=>[r.name,r.alt?altLabel(r.alt):'—',+r.sum.ledFt.toFixed(2),+r.sum.watts.toFixed(0),
+      r.sum.psu,+r.sum.mat.toFixed(2),+r.sum.labour.toFixed(2),+r.sum.total.toFixed(2),
+      r.base?'':+r.delta.toFixed(2)]))});
+  const d=baseDiff();
+  if(d) S.push({name:'Changes',rows:[['State','Tag','Was ft','Now ft','Delta ft']]
+    .concat(d.added.map(x=>['added',x.tag,'',+(x.now.cut/12).toFixed(2),+(x.delta/12).toFixed(2)]),
+      d.changed.map(x=>['changed',x.tag,+(x.was.cut/12).toFixed(2),+(x.now.cut/12).toFixed(2),+(x.delta/12).toFixed(2)]),
+      d.removed.map(x=>['removed',x.tag,+(x.was.cut/12).toFixed(2),'',+(x.delta/12).toFixed(2)]),
+      [[],['Net LED','',+(d.wasLed/12).toFixed(2),+(d.nowLed/12).toFixed(2),+(d.net/12).toFixed(2)],
+       ['Cost','',+d.wasTotal.toFixed(2),+d.nowTotal.toFixed(2),+d.costDelta.toFixed(2)]])});
+  S.push({name:'Project',rows:[
+    ['Project',P.name||''],['Job number',P.no||''],['Units',P.units],
+    ['Waste %',+P.waste||0],['Load ceiling %',+P.load||80],
+    ['Labour rate',+P.rate||0],['Hours per LED ft',+P.labFt||0],['Hours per feed',+P.labFeed||0],
+    ['Material markup %',+P.matUp||0],['Nesting scope',P.nestBy||'job'],
+    ['Minimum off-cut in',+P.minOff||0],
+    ['Sheets',P.docs.length],['Markups',P.ann.length],['Treatments',P.treat.length],
+    ['Linework version',APP_VER],['Exported',new Date().toISOString()]]});
+  return S;
+}
+function exportWorkbook(){
+  try{
+    downloadBlob(slug(P.name)+'-takeoff.xlsx',xlsx(workbookSheets()));
+    toast('Exported '+slug(P.name)+'-takeoff.xlsx');
+  }catch(e){ toast('Could not build the workbook: '+(e&&e.message||'unknown')); }
+}
 
 /* ---- comparing two revisions of a sheet ----
    Both pages are rendered at the same scale and diffed in blocks. Blocks that
@@ -4827,6 +5221,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
+  withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
+  setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   cloudPath,nextRev,driverLoad,driverRows,placeDriver,nearestPtOn,driverLabel,
   compareSheets,compareRevisions,cloudRects,readTitleblock,scanTitleblocks,sheetLabel,
   countTotals,countsOf,countIndex,placeCount,countSyms:CNT_SYMS,
