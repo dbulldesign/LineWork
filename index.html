@@ -375,6 +375,7 @@ body.haspen #penFlag{display:inline}
       <button class="btn" id="btnCsvCut">Export cut list</button>
       <button class="btn" id="btnCsvZone">Export zone rollup</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
+      <button class="btn" id="btnPdf">Export marked-up PDF</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
     </div></div>
     <div class="sec"><h3>Project file</h3><div class="body">
@@ -422,7 +423,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.9.0';
+const APP_VER='1.10.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -970,7 +971,12 @@ const COLORS=['#E4694F','#F2A93B','#5AB6DE','#8FC46A','#C77BD6'];
 const sp=p=>V.vp.convertToViewportPoint(p[0],p[1]);
 /* Measurement labels are the thing you read off the sheet, so they are sized to
    be legible at a glance rather than to stay out of the way. */
-const CHIP_FS=16, CHIP_H=Math.round(CHIP_FS*1.62);
+/* Label and stroke sizes are in screen pixels, which is right on screen and far
+   too small on a full-sheet export — these multipliers let the exporter scale
+   them to the bitmap it is producing. */
+const CHIP_BASE=16;
+let CHIP_FS=CHIP_BASE, CHIP_H=Math.round(CHIP_BASE*1.62), W_MUL=1;
+function setDrawScale(m){ CHIP_FS=CHIP_BASE*m; CHIP_H=Math.round(CHIP_FS*1.62); W_MUL=m; }
 const chipW=txt=>String(txt).length*CHIP_FS*.62+CHIP_FS;
 function chip(x,y,txt,col,anchor){
   const w=chipW(txt), h=CHIP_H;
@@ -1009,7 +1015,7 @@ function drawOverlay(){
   ov.innerHTML=s;
 }
 function drawAnn(a,selected,isDraft){
-  const col=a.color||'#E4694F', pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a);
+  const col=a.color||'#E4694F', pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
   let g='<g opacity="'+o+'">';
   if(selected&&pts.length){
     const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
@@ -2535,6 +2541,117 @@ function download(name,text,mime){
   a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(u),4000);
 }
+function downloadBlob(name,blob){
+  const u=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
+/* ---- marked-up sheet export ----
+   Renders a page and its markups to a bitmap, then wraps the JPEG in a minimal
+   PDF — one page per sheet page. Enough for a submittal set without pulling in
+   a PDF writing library. */
+const b64bytes=b64=>{ const bin=atob(b64); const u=new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) u[i]=bin.charCodeAt(i); return u; };
+
+/* Build the overlay SVG for a page at an arbitrary scale by borrowing the live
+   draw code with the viewport temporarily pointed at the export scale. */
+function overlaySvgFor(pageObj,doc,pg,scale){
+  const keep={vp:V.vp,zoom:V.zoom,docId:V.docId,page:V.page,sel:V.sel,draft:V.draft};
+  const vp=pageObj.getViewport({scale});
+  V.vp=vp; V.zoom=scale; V.docId=doc; V.page=pg; V.sel=null; V.draft=null;
+  /* size labels and strokes for the bitmap, not for a screen */
+  setDrawScale(clamp(vp.width/1100,1,5));
+  let body='';
+  try{
+    for(const a of P.ann.filter(x=>x.doc===doc&&x.page===pg&&!x.hidden)) body+=drawAnn(a,false);
+  }finally{ setDrawScale(1); Object.assign(V,keep); invalidateAnns(); }
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="'+vp.width+'" height="'+vp.height
+    +'" viewBox="0 0 '+vp.width+' '+vp.height+'">'+body+'</svg>';
+}
+function svgToImage(svg){
+  return new Promise((res,rej)=>{
+    const b=new Blob([svg],{type:'image/svg+xml;charset=utf-8'}), u=URL.createObjectURL(b);
+    const img=new Image();
+    img.onload=()=>{ res(img); setTimeout(()=>URL.revokeObjectURL(u),2000); };
+    img.onerror=()=>{ URL.revokeObjectURL(u); rej(new Error('overlay')); };
+    img.src=u;
+  });
+}
+async function sheetBitmap(docId,pg,scale){
+  const d=FILES[docId]; if(!d) throw new Error('not loaded');
+  const pageObj=await d.pdf.getPage(pg);
+  const vp=pageObj.getViewport({scale});
+  const c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(vp.width)); c.height=Math.max(1,Math.round(vp.height));
+  const cx=c.getContext('2d');
+  cx.fillStyle='#fff'; cx.fillRect(0,0,c.width,c.height);
+  await pageObj.render({canvasContext:cx,viewport:vp}).promise;
+  try{
+    const img=await svgToImage(overlaySvgFor(pageObj,docId,pg,scale));
+    cx.drawImage(img,0,0,c.width,c.height);
+  }catch(e){ /* markups could not rasterise — still export the sheet */ }
+  return {canvas:c,ptW:pageObj.getViewport({scale:1}).width,ptH:pageObj.getViewport({scale:1}).height};
+}
+/* minimal single-image-per-page PDF */
+function jpegPdf(pages){
+  const enc=new TextEncoder(), parts=[]; let len=0;
+  const put=u=>{ parts.push(u); len+=u.length; };
+  const txt=t=>put(enc.encode(t));
+  const offs={};
+  const obj=(n,body,bytes)=>{
+    offs[n]=len;
+    txt(n+' 0 obj\n'+body);
+    if(bytes){ txt('\nstream\n'); put(bytes); txt('\nendstream'); }
+    txt('\nendobj\n');
+  };
+  txt('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  const kids=pages.map((_,i)=>(3+i*3)+' 0 R').join(' ');
+  obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2,'<< /Type /Pages /Kids ['+kids+'] /Count '+pages.length+' >>');
+  pages.forEach((p,i)=>{
+    const pn=3+i*3, cn=pn+1, im=pn+2;
+    const W=p.ptW.toFixed(2), H=p.ptH.toFixed(2);
+    obj(pn,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+W+' '+H+'] '
+      +'/Resources << /XObject << /Im0 '+im+' 0 R >> >> /Contents '+cn+' 0 R >>');
+    const content='q '+W+' 0 0 '+H+' 0 0 cm /Im0 Do Q';
+    obj(cn,'<< /Length '+content.length+' >>',enc.encode(content));
+    obj(im,'<< /Type /XObject /Subtype /Image /Width '+p.w+' /Height '+p.h
+      +' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+p.jpeg.length+' >>',p.jpeg);
+  });
+  const xref=len;
+  const n=2+pages.length*3;
+  txt('xref\n0 '+(n+1)+'\n0000000000 65535 f \n');
+  for(let i=1;i<=n;i++) txt(String(offs[i]||0).padStart(10,'0')+' 00000 n \n');
+  txt('trailer\n<< /Size '+(n+1)+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF\n');
+  return new Blob(parts,{type:'application/pdf'});
+}
+async function exportSheetPdf(){
+  if(!V.docId||!FILES[V.docId]){ toast('Open a drawing first'); return; }
+  const d=P.docs.find(x=>x.id===V.docId), n=FILES[V.docId].pdf.numPages;
+  const r=await dlg({title:'Export marked-up sheet',fields:[
+    {k:'scope',type:'select',label:'Pages',opts:[{v:'cur',t:'This page only'},
+      {v:'all',t:'All '+n+' page'+(n===1?'':'s')+' of this sheet'}],val:'cur'},
+    {k:'dpi',type:'select',label:'Resolution',opts:[
+      {v:'1.5',t:'Draft · 108 dpi'},{v:'2',t:'Standard · 144 dpi'},{v:'3',t:'Fine · 216 dpi'}],val:'2'},
+    {k:'q',type:'select',label:'Image quality',opts:[{v:'0.8',t:'Smaller file'},{v:'0.92',t:'Better quality'}],val:'0.92'}
+  ],ok:'Export',note:'Markups are burned into the image, so the result is a flat PDF anyone can open.'});
+  if(!r) return;
+  const scale=+r.dpi||2, q=+r.q||.92;
+  const pages=r.scope==='all'?Array.from({length:n},(_,i)=>i+1):[V.page];
+  toast('Rendering '+pages.length+' page'+(pages.length===1?'':'s')+'…');
+  try{
+    const out=[];
+    for(const pg of pages){
+      const b=await sheetBitmap(V.docId,pg,scale);
+      const jpeg=b64bytes(b.canvas.toDataURL('image/jpeg',q).split(',')[1]);
+      out.push({jpeg,w:b.canvas.width,h:b.canvas.height,ptW:b.ptW,ptH:b.ptH});
+    }
+    const name=slug(P.name)+'-'+slug((d&&d.name||'sheet').replace(/\.pdf$/i,''))
+      +(pages.length>1?'':'-p'+V.page)+'-markup.pdf';
+    downloadBlob(name,jpegPdf(out));
+    toast('Exported '+name);
+  }catch(e){ toast('Could not export: '+(e&&e.message||'unknown')); }
+}
 async function exportBox(name,text){
   await dlg({title:'Export — '+name,fields:[{k:'x',type:'textarea',label:'Preview',val:text.slice(0,4000)}],ok:'Download',cancel:'Close'})
     .then(r=>{ if(!r) return; try{
@@ -2628,6 +2745,7 @@ async function openProjectFile(file){
   boot(); setTool('pan'); saveProject();
   toast('Opened '+file.name+(P.docs.length?' — re-import the drawings to see markups':''));
 }
+$('#btnPdf').onclick=exportSheetPdf;
 $('#btnCsvPieces').onclick=()=>{
   const rows=[['Tag','Type','Zone','Run','Kind','Item','Cut length (ft)','Cut length (in)','Note','Locked']];
   pieceData().forEach(r=>rows.push([r.tag,r.type,r.zone,r.run,r.kind,r.item,
@@ -2816,7 +2934,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   fmtRun,fmtFtIn,chipFontSize:CHIP_FS,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
-  arcOf,arcPts,annPts,dupAcross,
+  arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
   render(){boot()}};
 (async()=>{ await loadProject(); loadHist(); boot(); setTool('pan');
   if(!PDF_OK) toast('The PDF engine did not load — check vendor/pdf.min.js');
