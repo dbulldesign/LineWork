@@ -351,6 +351,10 @@ body.haspen #penFlag{display:inline}
   <div class="sec">
     <h3>Sheets <span class="c" id="cSheets">0</span></h3>
     <div id="sheetList"></div>
+    <div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn sm" id="btnTitles" title="Read sheet numbers and names from the titleblocks">Read titleblocks</button>
+      <button class="btn sm" id="btnCompare" title="Compare this sheet against another revision of it">Compare revisions…</button>
+    </div>
     <div class="empty" id="sheetEmpty">No drawings loaded. Import a plan, elevation, or millwork shop drawing to begin.</div>
   </div>
   <div class="sec">
@@ -385,6 +389,8 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="poly" title="Poly length — click each corner, per-segment lengths (G)"><svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg></button>
     <button class="tool" data-tool="area" title="Region — trace a room for its area, perimeter and cove run (R)"><svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg></button>
     <button class="tool" data-tool="count" title="Count — stamp and tally a symbol (M)"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg></button>
+    <button class="tool" data-tool="cloud" title="Revision cloud with a delta (Q)"><svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg></button>
+    <button class="tool" data-tool="driver" title="Place a power supply / driver (D)"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="1"/><path d="M7 8V5M17 8V5M6 12.5h4M14 12.5h4"/></svg></button>
     <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
     <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
     <button class="tool" data-tool="erase" title="Erase markups (E)"><svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg></button>
@@ -479,9 +485,13 @@ body.haspen #penFlag{display:inline}
     <div class="sec"><h3>Bill of materials</h3><div class="tw"><table id="bomTbl"></table></div></div>
     <div class="sec"><h3>By zone</h3><div class="tw"><table id="zoneTbl"></table></div></div>
     <div class="sec"><h3>By sheet</h3><div class="tw"><table id="sheetTbl"></table></div></div>
+    <div class="sec"><h3>Drivers placed <span class="c" id="cDrv">0</span></h3>
+      <div class="body"><div class="hint">Power supplies placed on the drawing, with what each one feeds, its load against its usable capacity, and the longest home run to a run it serves.</div></div>
+      <div class="tw"><table id="drvTbl"></table></div></div>
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn" id="btnCsvCut">Export cut list</button>
       <button class="btn" id="btnCsvZone">Export zone rollup</button>
+      <button class="btn" id="btnCsvDrv">Export driver schedule</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
       <button class="btn" id="btnPdf">Export marked-up PDF</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
@@ -542,7 +552,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.15.0';
+const APP_VER='1.16.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -752,6 +762,7 @@ function applyProject(d){
     t.feedOv=+t.feedOv>0?Math.round(+t.feedOv):0;
     t.cutLock=+t.cutLock>0?+t.cutLock:0;
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
+    t.detail=String(t.detail||'').toUpperCase();
     delete t.roundDefault;
   });
   P.name=String(P.name||'Untitled Project'); P.no=String(P.no||'');
@@ -768,9 +779,19 @@ function applyProject(d){
   P.ann.forEach(a=>{
     if(a.type==='area'){ a.off=Math.max(0,+a.off||0); if(!Array.isArray(a.pts)) a.pts=[]; }
     if(a.type==='count'){ a.grp=String(a.grp||'COUNT').toUpperCase(); a.sym=String(a.sym||'●').slice(0,2); }
+    if(a.type==='cloud'){ a.rev=String(a.rev||'1').slice(0,6); a.text=String(a.text||''); }
+    if(a.type==='driver'){
+      a.name=String(a.name||'PS').toUpperCase();
+      a.serves=Array.isArray(a.serves)?a.serves.filter(id=>typeof id==='string'):[];
+      if(!P.psu.some(x=>x.id===a.psuId)) a.psuId=P.psu[0].id;
+    }
   });
   P.ann=P.ann.filter(a=>a&&Array.isArray(a.pts)&&a.pts.length&&
-    !(a.type==='area'&&a.pts.length<3));
+    !((a.type==='area'||a.type==='cloud')&&a.pts.length<3));
+  /* a driver cannot feed a treatment that has been deleted */
+  const tids=new Set(P.treat.map(t=>t.id));
+  P.ann.forEach(a=>{ if(a.type==='driver') a.serves=a.serves.filter(id=>tids.has(id)); });
+  P.maxHome=Math.max(0,+P.maxHome||0)||240;
   P.panels=Object.assign({left:true,right:true,swap:false},P.panels);
   if(typeof P.width==='number') V.width=clamp(P.width,.5,12);
   if(typeof P.fingerDraws==='boolean') V.fingerDraws=P.fingerDraws;
@@ -846,6 +867,12 @@ async function openFiles(list){
         P.docs.push(rec);
       }else{ toast('Relinked '+f.name+' — markups restored'); }
       FILES[rec.id]={pdf};
+      /* read the titleblock once, on import — cheap, and it saves retyping */
+      if(!rec.sheetNo&&!rec.title){
+        const tb=await readTitleblock(pdf,1);
+        if(tb&&!tb.none){ rec.sheetNo=tb.no||''; rec.title=tb.title||''; }
+        else rec.noText=true;
+      }
       if(!firstNew) firstNew=rec.id;
     }catch(e){ toast('Could not read '+f.name); }
   }
@@ -854,11 +881,74 @@ async function openFiles(list){
   else if(firstNew) renderSheets();
 }
 
+/* ---- reading the titleblock ----
+   Sheet numbers are typed into a titleblock, and a vector PDF still carries that
+   text, so there is no reason to retype them. This reads the text layer — it is
+   not OCR, so a scanned drawing has nothing to find and says so. */
+const SHEET_NO=/^[A-Z]{1,3}[- .]?\d{1,3}(?:\.\d{1,2})?[A-Z]?$/;
+async function readTitleblock(pdf,pg){
+  try{
+    const page=await pdf.getPage(pg||1);
+    const vp=page.getViewport({scale:1});
+    const tc=await page.getTextContent();
+    const items=(tc.items||[]).filter(i=>i.str&&i.str.trim()).map(i=>({
+      s:i.str.trim(),
+      x:i.transform[4], y:i.transform[5],
+      h:Math.abs(i.transform[3])||i.height||8
+    }));
+    if(!items.length) return {none:true};
+    /* the titleblock is the bottom-right corner of an architectural sheet */
+    const inBlock=items.filter(i=>i.x>vp.width*0.55&&i.y<vp.height*0.42);
+    const pool=inBlock.length>2?inBlock:items;
+    let no=null;
+    pool.forEach(i=>{
+      /* the number is often set on its own, but "SHEET A-101" is just as common,
+         so look at each word as well as the whole run of text */
+      const toks=[i.s.replace(/\s+/g,' ').trim()].concat(i.s.split(/\s+/));
+      toks.forEach(t=>{
+        const tok=t.trim().toUpperCase();
+        if(!tok||!SHEET_NO.test(tok)) return;
+        if(!no||i.h>no.h||(Math.abs(i.h-no.h)<0.5&&i.y<no.y)) no={s:tok,h:i.h,y:i.y};
+      });
+    });
+    let title=null;
+    pool.filter(i=>i.s.length>3&&!SHEET_NO.test(i.s.toUpperCase())&&!/^\d+$/.test(i.s))
+      .forEach(i=>{ if(!title||i.h>title.h||(Math.abs(i.h-title.h)<0.3&&i.s.length>title.s.length)) title={s:i.s,h:i.h}; });
+    return {no:no?no.s:'',title:title?title.s.slice(0,60):'',words:items.length};
+  }catch(e){ return {none:true}; }
+}
+function sheetLabel(d){
+  if(!d) return '—';
+  const base=d.name.replace(/\.pdf$/i,'');
+  return d.sheetNo? d.sheetNo+(d.title?' · '+d.title:'') : base;
+}
+async function scanTitleblocks(quiet){
+  let found=0, blank=0;
+  for(const d of P.docs){
+    const f=FILES[d.id]; if(!f) continue;
+    const r=await readTitleblock(f.pdf,1);
+    if(r.none||(!r.no&&!r.title)){ blank++; d.noText=!!r.none; continue; }
+    d.sheetNo=r.no||d.sheetNo||''; d.title=r.title||d.title||''; d.noText=false;
+    if(d.sheetNo||d.title) found++;
+  }
+  renderSheets(); syncTbSheet(); markDirty();
+  if(!quiet) toast(found?('Read '+found+' titleblock'+(found===1?'':'s')
+    +(blank?' — '+blank+' sheet'+(blank===1?'':'s')+' had no text to read':''))
+    :'No titleblock text found — these look like scanned drawings');
+  return {found,blank};
+}
+function syncTbSheet(){
+  const d=P.docs.find(x=>x.id===V.docId);
+  const el=$('#tbSheet');
+  if(!el) return;
+  el.textContent=d?sheetLabel(d):'—';
+  el.title=d?(d.name+(d.sheetNo?'  ·  sheet '+d.sheetNo:'')+(d.title?'  ·  '+d.title:'')):'';
+}
 async function openDoc(id,page=1,fit=false){
   if(!FILES[id]){ toast('Re-import this PDF to view it — markups are still saved'); renderSheets(); return; }
   V.docId=id; V.page=clamp(page,1,FILES[id].pdf.numPages); V.sel=null;
   const d=P.docs.find(x=>x.id===id);
-  $('#tbSheet').textContent=d?d.name:'—';
+  syncTbSheet();
   $('#blank').style.display='none'; stage.style.display='';
   if(fit) await fitPage(); else await renderPage();
   renderSheets(); renderAnnList(); renderLinks(); syncScaleUI();
@@ -1537,6 +1627,42 @@ function drawAnn(a,selected,isDraft){
       g+=chip(cx,cy+CHIP_H*.6,'P '+fmtRun(m.perim)+(m.off>0?'  ·  cove '+fmtRun(m.cove):''),col,null,a,'sub');
     }
   }
+  if(a.type==='cloud'){
+    const ring=annPts(a).map(sp);
+    g+='<path d="'+cloudPath(ring,10*W_MUL)+'" fill="'+col+'" fill-opacity=".06" stroke="'+col
+      +'" stroke-width="'+W.toFixed(2)+'" stroke-linejoin="round"/>';
+    /* the delta is what a reviewer looks for, so it sits at the first corner */
+    const [dx,dy]=ring[0], R=11*W_MUL;
+    g+='<path d="M'+dx.toFixed(1)+' '+(dy-R).toFixed(1)+' L'+(dx+R*.92).toFixed(1)+' '+(dy+R*.72).toFixed(1)
+      +' L'+(dx-R*.92).toFixed(1)+' '+(dy+R*.72).toFixed(1)+' Z" fill="'+OVL+'" fill-opacity=".92" stroke="'+col
+      +'" stroke-width="'+W.toFixed(2)+'"/>'
+      +'<text x="'+dx.toFixed(1)+'" y="'+(dy+R*.42).toFixed(1)+'" fill="'+col
+      +'" font-family="Helvetica Neue,Helvetica,Arial,sans-serif" font-weight="700" font-size="'+(R*.95).toFixed(1)
+      +'" text-anchor="middle">'+esc(String(a.rev||'1').slice(0,3))+'</text>';
+    if(a.text){
+      const xs=ring.map(p=>p[0]), ys=ring.map(p=>p[1]);
+      g+=chip((Math.min(...xs)+Math.max(...xs))/2,Math.min(...ys)-CHIP_H*.8,
+        String(a.text).slice(0,40),col,null,a,'total');
+    }
+  }
+  if(a.type==='driver'){
+    const [x,y]=pts[0], w=26*W_MUL, h=16*W_MUL;
+    const d0=driverLoad(a);
+    const over=d0.cap>0&&d0.watts>d0.cap;
+    const c2=over?'#E4694F':col;
+    /* dashed leaders to what it feeds — a driver with nothing assigned looks it */
+    (d0.links||[]).forEach(L=>{
+      const q=sp(L.at);
+      g+='<line x1="'+x.toFixed(1)+'" y1="'+y.toFixed(1)+'" x2="'+q[0].toFixed(1)+'" y2="'+q[1].toFixed(1)
+        +'" stroke="'+c2+'" stroke-width="'+(W*.7).toFixed(2)+'" stroke-opacity=".5" stroke-dasharray="5 4"/>';
+    });
+    g+='<rect x="'+(x-w/2).toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)
+      +'" rx="'+(2*W_MUL).toFixed(1)+'" fill="'+OVL+'" fill-opacity=".92" stroke="'+c2+'" stroke-width="'+W.toFixed(2)+'"/>'
+      +'<text x="'+x.toFixed(1)+'" y="'+(y+h*.28).toFixed(1)+'" fill="'+c2
+      +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="700" font-size="'+(h*.72).toFixed(1)
+      +'" text-anchor="middle">'+esc(a.name||'PS')+'</text>';
+    g+=chip(x,y+h/2+CHIP_H*.7,driverLabel(a,d0),c2,null,a,'total');
+  }
   if(a.type==='count'){
     const [x,y]=pts[0], R=8*W_MUL;
     g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+R.toFixed(1)+'" fill="'+OVL
@@ -1594,7 +1720,8 @@ function drawAnn(a,selected,isDraft){
     const [x,y]=pts[0], t=a.target&&P.docs.find(d=>d.id===a.target.doc);
     g+='<path d="M'+x+' '+(y-9)+' l9 9 -9 9 -9 -9 z" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
     g+='<path d="M'+(x-3.5)+' '+y+' h7" stroke="'+col+'" stroke-width="'+(W*.95).toFixed(2)+'"/>';
-    g+=chip(x,y-20,(t?t.name.replace(/\.pdf$/i,''):'missing')+' p'+(a.target?a.target.page:'?'),col);
+    g+=chip(x,y-20,(a.detail?a.detail+'  ·  ':'')+(t?t.name.replace(/\.pdf$/i,''):'missing')
+      +' p'+(a.target?a.target.page:'?'),col);
   }
   return g+'</g>';
 }
@@ -1825,6 +1952,7 @@ const isLineTool=t=>t==='line'||t==='poly';
 const isMeasureTool=t=>isLineTool(t)||t==='arc'||t==='area';
 /* tools that build a vertex-by-vertex draft */
 const isTapTool=t=>t==='poly'||t==='area'||t==='cloud';
+const isPolyDraft=d=>!!d&&(d.type==='line'||d.type==='cal'||d.type==='area'||d.type==='cloud');
 function setTool(t){
   V.tool=t; $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   viewport.classList.toggle('pan',t==='pan'); viewport.classList.toggle('draw',t!=='pan');
@@ -1834,6 +1962,8 @@ function setTool(t){
     arc:'Arc length — click the start, a point along the curve, then the end',
     area:'Region — click each corner of the room, ⏎ to close it',
     count:'Count — click to stamp one, and it tallies into the BOM',
+    cloud:'Revision cloud — click around what changed, ⏎ to close it',
+    driver:'Driver — tap to place a power supply, then assign what it feeds',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
     text:'Text — tap to place a note on the sheet',
     tbox:'Text box — drag a box, the text wraps inside it',
@@ -1949,7 +2079,7 @@ stage.addEventListener('pointermove',e=>{
     if((V.arcN||1)<2) V.draft.pts[2]=p;
     drawOverlay(); liveLen(V.draft); return;
   }
-  if(V.draft&&!press&&(V.draft.type==='line'||V.draft.type==='cal'||V.draft.type==='area')){   /* hover preview between taps */
+  if(V.draft&&!press&&isPolyDraft(V.draft)){   /* hover preview between taps */
     const n=V.draft.pts.length;
     V.draft.pts[n-1]=snapAt(p)||ortho(V.draft.pts[n-2],p,e.shiftKey);
     drawOverlay(); liveLen(V.draft); return; }
@@ -1977,7 +2107,8 @@ function endPointer(e){
   if(tool==='erase') return;
   if(tool==='box'||tool==='tbox'){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
   if(tool==='count'){ if(!pr.moved) placeCount(p); return; }
-  if(tool==='area'){ tapVertex(p,e); syncDrawbar(); return; }
+  if(tool==='driver'){ if(!pr.moved) placeDriver(p); return; }
+  if(tool==='area'||tool==='cloud'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
   if(tool==='link'){ if(!pr.moved) placeLink(p); return; }
   if(tool==='text'){ if(!pr.moved) placeText(p); return; }
@@ -2006,7 +2137,7 @@ function tapVertex(p,e){
     const prev=V.draft.pts[V.draft.pts.length-2];
     if(prev&&ptLen(prev,p)<0.6&&ptLen(prev,raw)>=0.6){ p=raw; V.snapHit=null; }
   }
-  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
+  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':V.tool==='cloud'?'cloud':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
     color:V.tool==='cal'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined,
     off:V.tool==='area'?(+P.areaOff||0):undefined};
   else{
@@ -2044,7 +2175,7 @@ function tapArc(p){
   drawOverlay(); liveLen(V.draft);
 }
 stage.addEventListener('dblclick',e=>{
-  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area')){ e.preventDefault(); finishDraft(); return; }
+  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area'||V.draft.type==='cloud')){ e.preventDefault(); finishDraft(); return; }
   if(V.tool==='pan'){
     const sc=toS(e), h=hitTest(sc[0],sc[1],9);
     /* double-click any text-bearing markup to edit it in place */
@@ -2188,7 +2319,7 @@ stage.addEventListener('contextmenu',e=>{
   e.preventDefault();
   if(pan){ pan=null; viewport.classList.remove('drag'); }
   if(suppressCtx){ suppressCtx=false; return; }
-  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area')&&V.draft.pts.length>2){ finishDraft(); return; }
+  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area'||V.draft.type==='cloud')&&V.draft.pts.length>2){ finishDraft(); return; }
   if(V.draft){ V.draft=null; drawOverlay(); syncDrawbar(); return; }
   const sc=toS(e); ctxPt=toPt(e);
   const h=hitTest(sc[0],sc[1],10);
@@ -2201,7 +2332,7 @@ stage.addEventListener('contextmenu',e=>{
    quite match. Works on runs and on regions. */
 const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
-  area:'Region',count:'Count',cloud:'Revision cloud'};
+  area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver'};
 async function offsetAnn(a){
   if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
   const k=inPerPt();
@@ -2318,7 +2449,7 @@ window.addEventListener('blur',closeCtx);
 
 /* ---- in-progress run bar + ink controls ---- */
 function syncDrawbar(){
-  const d=V.draft, on=d&&(d.type==='line'||d.type==='cal'||d.type==='area')&&d.pts.length>=2&&!press;
+  const d=V.draft, on=isPolyDraft(d)&&d.pts.length>=2&&!press;
   $('#drawbar').classList.toggle('show',!!on);
   /* closing needs 3 committed vertices — the last point is the live cursor */
   const canLoop=!!on&&d.type==='line'&&d.pts.length>3;
@@ -2379,6 +2510,21 @@ async function finishDraft(){
     snap();
     const a={id:uid('a_'),type:'area',doc:d.doc,page:d.page,pts,color:d.color,w:d.w||V.width,
       off:+d.off||0,text:''};
+    P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+    return;
+  }
+  if(d.type==='cloud'){
+    let pts=d.pts.slice(0,-1);
+    pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
+    if(pts.length<3){ drawOverlay(); toast('A cloud needs at least three corners'); return; }
+    const r=await dlg({title:'Revision cloud',fields:[
+      {k:'rev',label:'Revision',val:nextRev(),ph:'1'},
+      {k:'t',label:'What changed (optional)',val:'',ph:'Cove relocated 6" east'}
+    ],ok:'Add cloud'});
+    if(!r){ drawOverlay(); return; }
+    snap();
+    const a={id:uid('a_'),type:'cloud',doc:d.doc,page:d.page,pts,color:d.color||'#E4694F',
+      w:d.w||V.width,rev:String(r.rev||'1').trim()||'1',text:String(r.t||'').trim()};
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
   }
@@ -2485,6 +2631,122 @@ async function placeCount(p){
   drawOverlay(); renderAnnList(); renderBom(); markDirty();
   $('#stCoord').textContent=V.cntGrp+': '+countsOf(V.cntGrp).length;
 }
+/* ---- revision clouds ----
+   Quadratic bumps rather than SVG arcs: the bulge direction is then simply
+   "away from the centroid", with no arc-flag reasoning to get wrong. */
+function cloudPath(ring,r){
+  if(!ring||ring.length<2) return '';
+  const cx=ring.reduce((s,p)=>s+p[0],0)/ring.length, cy=ring.reduce((s,p)=>s+p[1],0)/ring.length;
+  let d='M'+ring[0][0].toFixed(1)+' '+ring[0][1].toFixed(1);
+  for(let i=1;i<ring.length;i++){
+    const a=ring[i-1], b=ring[i];
+    const dx=b[0]-a[0], dy=b[1]-a[1], L=Math.hypot(dx,dy);
+    if(L<1e-6) continue;
+    const k=Math.max(1,Math.round(L/(r*2)));
+    let nx=dy/L, ny=-dx/L;
+    const mx=(a[0]+b[0])/2, my=(a[1]+b[1])/2;
+    if((mx-cx)*nx+(my-cy)*ny<0){ nx=-nx; ny=-ny; }        /* bulge outward */
+    for(let j=0;j<k;j++){
+      const t0=j/k, t1=(j+1)/k;
+      const p0=[a[0]+dx*t0,a[1]+dy*t0], p1=[a[0]+dx*t1,a[1]+dy*t1];
+      const bulge=Math.min(r*1.5,L/k*.9);
+      const c=[(p0[0]+p1[0])/2+nx*bulge,(p0[1]+p1[1])/2+ny*bulge];
+      d+=' Q'+c[0].toFixed(1)+' '+c[1].toFixed(1)+' '+p1[0].toFixed(1)+' '+p1[1].toFixed(1);
+    }
+  }
+  return d+' Z';
+}
+const nextRev=()=>{
+  let hi=0;
+  P.ann.forEach(a=>{ if(a.type==='cloud'){ const n=parseInt(a.rev,10); if(isFinite(n)) hi=Math.max(hi,n); } });
+  return String(hi+1);
+};
+/* ---- drivers ----
+   A takeoff says how many supplies are needed; a driver layout says where they
+   go and how far the feed has to run to get there. */
+function closestOnSeg(p,a,b){
+  const dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy;
+  let t=L2?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2:0; t=clamp(t,0,1);
+  const q=[a[0]+t*dx,a[1]+t*dy];
+  return {pt:q,d:Math.hypot(p[0]-q[0],p[1]-q[1])};
+}
+function nearestPtOn(an,p){
+  const pts=annPts(an);
+  if(!pts||!pts.length) return null;
+  if(pts.length===1) return {pt:pts[0].slice(),d:ptLen(p,pts[0])};
+  let best=null;
+  for(let i=1;i<pts.length;i++){
+    const c=closestOnSeg(p,pts[i-1],pts[i]);
+    if(!best||c.d<best.d) best=c;
+  }
+  return best;
+}
+function driverLoad(a){
+  const ps=P.psu.find(x=>x.id===a.psuId)||P.psu[0]||{name:'—',watts:0};
+  const serves=Array.isArray(a.serves)?a.serves:[];
+  const lf=clamp((+P.load||80)/100,.4,1);
+  const cap=ps.watts>0?ps.watts*lf:0;
+  const k=inPerPt()||0;
+  let watts=0, home=0; const links=[], missing=[];
+  serves.forEach(id=>{
+    const t=P.treat.find(x=>x.id===id);
+    if(!t){ missing.push(id); return; }
+    watts+=calc(t).tot.watts;
+    const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+    if(an&&an.doc===a.doc&&an.page===a.page){
+      const near=nearestPtOn(an,a.pts[0]);
+      if(near){ const L=near.d*k; links.push({at:near.pt,tag:tagOf(t),len:L}); home=Math.max(home,L); }
+    }
+  });
+  const maxHome=+P.maxHome>0?+P.maxHome:240;
+  const w=[];
+  if(!serves.length) w.push('Nothing assigned to this driver yet.');
+  if(cap>0&&watts>cap) w.push('Over capacity: '+watts.toFixed(0)+' W on a '+ps.watts+' W supply at a '
+    +Math.round(P.load)+'% ceiling ('+cap.toFixed(0)+' W usable).');
+  if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this driver carries '+watts.toFixed(0)+' W.');
+  if(home>maxHome) w.push('Longest home run is '+fmtRun(home)+' — over the '+fmtRun(maxHome)+' limit set in Settings.');
+  if(links.length<serves.length-missing.length) w.push('Some assigned runs are on another sheet, so their home run is not measured.');
+  return {ps,cap,watts,links,home,maxHome,serves:serves.length,warn:w,
+    pct:cap>0?watts/cap:0,over:cap>0&&watts>cap};
+}
+const driverLabel=(a,d)=>(d.ps.watts>0?d.watts.toFixed(0)+' / '+Math.round(d.cap)+' W':d.watts.toFixed(0)+' W')
+  +(d.home>0?'  ·  '+fmtRun(d.home):'')+(d.serves?'  ·  '+d.serves+' run'+(d.serves===1?'':'s'):'  ·  unassigned');
+function driverName(){
+  let hi=0;
+  P.ann.forEach(a=>{ if(a.type==='driver'){ const m=/(\d+)$/.exec(String(a.name||'')); if(m) hi=Math.max(hi,+m[1]); } });
+  return 'PS-'+(hi+1);
+}
+/* the supply a new driver starts on: whatever the treatments already use, since
+   that is almost always the one being laid out */
+function commonPsu(){
+  const c={};
+  P.treat.forEach(t=>{ if(t.psuId) c[t.psuId]=(c[t.psuId]||0)+1; });
+  const best=Object.keys(c).sort((a,b)=>c[b]-c[a])[0];
+  return (best&&P.psu.some(x=>x.id===best))?best:((P.psu[1]||P.psu[0]||{}).id);
+}
+async function placeDriver(p){
+  if(!P.psu.length){ toast('Add a power supply to the library first'); return; }
+  const r=await dlg({title:'Place a driver',fields:[
+    {k:'name',label:'Mark',val:driverName(),ph:'PS-1'},
+    {k:'psu',type:'select',label:'Supply',opts:P.psu.map(x=>({v:x.id,t:x.name})),val:V.drvPsu||commonPsu()},
+    {k:'keep',type:'check',cap:'Keep placing drivers',val:true}
+  ],ok:'Place',note:'Assign the runs it feeds in the inspector — load and the longest home run are then checked for you.'});
+  if(!r){ setTool('pan'); return; }
+  V.drvPsu=r.psu;
+  snap();
+  const a={id:uid('a_'),type:'driver',doc:V.docId,page:V.page,pts:[p],name:String(r.name||driverName()).toUpperCase(),
+    psuId:r.psu||commonPsu(),serves:[],color:'#5AB6DE',w:V.width};
+  P.ann.push(a); invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty();
+  if(!r.keep) setTool('pan');
+}
+function driverRows(){
+  return P.ann.filter(a=>a.type==='driver').map(a=>{
+    const d=driverLoad(a), doc=P.docs.find(x=>x.id===a.doc);
+    return {a,name:a.name||'PS',supply:d.ps.name,watts:d.watts,cap:d.cap,pct:d.pct,home:d.home,
+      serves:d.serves,warn:d.warn,sheet:(doc?doc.name.replace(/\.pdf$/i,''):'—')+' p'+a.page};
+  }).sort((x,y)=>String(x.name).localeCompare(String(y.name),undefined,{numeric:true}));
+}
 async function placeNote(p){
   const r=await dlg({title:'Note',fields:[{k:'t',type:'textarea',label:'Text',val:''}],ok:'Place'});
   if(!r||!r.t.trim()) return;
@@ -2498,11 +2760,14 @@ async function placeLink(p){
   const r=await dlg({title:'Link a shop drawing',fields:[
     {k:'doc',type:'select',label:'Target drawing',opts:others.map(d=>({v:d.id,t:d.name})),val:others[0].id},
     {k:'pg',type:'num',label:'Page',val:1,step:1},
+    {k:'det',label:'Detail reference',val:'',ph:'3/A-501',
+      hint:'The detail that shows how this run is mounted. It follows the treatment into the cut list.'},
     {k:'t',label:'Callout text (optional)',val:''}
   ],ok:'Place link'});
   if(!r) return;
   snap();
-  const a={id:uid('a_'),type:'link',doc:V.docId,page:V.page,pts:[p],color:'#C77BD6',w:V.width,text:r.t,target:{doc:r.doc,page:Math.max(1,+r.pg||1)}};
+  const a={id:uid('a_'),type:'link',doc:V.docId,page:V.page,pts:[p],color:'#C77BD6',w:V.width,text:r.t,
+    detail:String(r.det||'').trim().toUpperCase(),target:{doc:r.doc,page:Math.max(1,+r.pg||1)}};
   P.ann.push(a); drawOverlay(); renderLinks(); renderAnnList(); markDirty(); setTool('pan');
 }
 
@@ -2591,6 +2856,32 @@ function showInspector(a){
          : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
     h+='<div class="hint">A treatment linked to a region orders the cove run, not the perimeter.</div>';
   }
+  if(a.type==='cloud'){
+    h+='<div class="f"><label>Revision</label><input type="text" data-f="rev" value="'+esc(a.rev||'1')+'"></div>';
+    h+='<div class="f"><label>What changed</label><textarea data-f="text" rows="3">'+esc(a.text||'')+'</textarea></div>';
+    h+='<div class="kv"><span>Corners</span><b>'+a.pts.length+'</b></div>';
+    h+='<div class="hint">Drag the handles to reshape it; the delta sits on the first corner.</div>';
+  }
+  if(a.type==='driver'){
+    const d=driverLoad(a);
+    h+='<div class="f"><label>Mark</label><input type="text" class="up" data-up="name" value="'+esc(a.name||'')+'" placeholder="PS-1"></div>';
+    h+='<div class="f"><label>Supply</label><select data-f2="psuId">'
+      +P.psu.map(x=>'<option value="'+x.id+'"'+(x.id===a.psuId?' selected':'')+'>'+esc(x.name)+'</option>').join('')
+      +'</select></div>';
+    h+='<div class="kv"><span>Connected load</span><b class="hi"'+(d.over?' style="color:var(--flag)"':'')+'>'
+      +d.watts.toFixed(0)+' W</b></div>';
+    h+='<div class="kv"><span>Usable capacity</span><b>'+(d.cap>0?Math.round(d.cap)+' W at '+Math.round(P.load)+'%':'—')+'</b></div>';
+    h+='<div class="kv"><span>Longest home run</span><b>'+(d.home>0?fmtLen(d.home):'—')+'</b></div>';
+    const list=P.treat.slice().sort((x,y)=>tagOf(x).localeCompare(tagOf(y),undefined,{numeric:true}));
+    h+='<div class="f"><label>Feeds these runs</label>'+(list.length?'<div class="seglist">'+list.map(t=>{
+      const on=(a.serves||[]).includes(t.id), r=calc(t);
+      const here=t.annId&&P.ann.find(x=>x.id===t.annId&&x.doc===a.doc&&x.page===a.page);
+      return '<label class="kv" style="cursor:pointer"><span><input type="checkbox" data-srv="'+t.id+'"'
+        +(on?' checked':'')+' style="width:auto;margin-right:6px">'+esc(tagOf(t))+(here?'':' <i style="color:var(--faint)">other sheet</i>')
+        +'</span><b>'+r.tot.watts.toFixed(0)+' W</b></label>';
+    }).join('')+'</div>':'<div class="hint">No treatments yet.</div>')+'</div>';
+    h+=d.warn.map(w=>'<div class="note"><span>▲</span><span>'+esc(w)+'</span></div>').join('');
+  }
   if(a.type==='count'){
     const n=countsOf(a.grp).length;
     h+='<div class="kv"><span>This stamp</span><b class="hi">'+esc(a.grp||'COUNT')+' '+countIndex(a)+'</b></div>';
@@ -2603,6 +2894,12 @@ function showInspector(a){
     h+='<div class="hint">Renaming the group here moves only this stamp. Counts tally into the BOM.</div>';
   }
   if(a.type==='box'||a.type==='link') h+='<div class="f"><label>Label</label><input type="text" data-f="text" value="'+esc(a.text||'')+'"></div>';
+  if(a.type==='link'){
+    h+='<div class="f"><label>Detail reference</label><input type="text" class="up" data-up="detail" value="'
+      +esc(a.detail||'')+'" placeholder="3/A-501"></div>';
+    const cands=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
+    if(cands.length) h+='<button class="btn" data-act="det">Apply this detail to '+(V.sel&&P.treat.find(t=>t.annId===V.sel)?'its':'the')+' treatments on this page</button>';
+  }
   if(a.type==='text'||a.type==='tbox'){
     h+='<div class="f"><label>Text</label><textarea data-f="text" rows="4">'+esc(a.text||'')+'</textarea></div>';
     h+='<div class="f"><label>Size (pt)</label><input type="number" min="4" max="96" step="1" data-n="size" value="'+(a.size||11)+'"></div>';
@@ -2634,7 +2931,14 @@ function showInspector(a){
     a[el.dataset.len]=(isFinite(v)&&v>=0)?v:0;
     drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
   });
-  $$('[data-f2]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.f2]=el.value; drawOverlay(); renderAnnList(); markDirty(); });
+  $$('[data-f2]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.f2]=el.value; drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty(); });
+  $$('[data-srv]',bd).forEach(el=>el.onchange=()=>{
+    snap();
+    a.serves=Array.isArray(a.serves)?a.serves:[];
+    const id=el.dataset.srv;
+    a.serves=el.checked?a.serves.concat([id]).filter((v,i,l)=>l.indexOf(v)===i):a.serves.filter(x=>x!==id);
+    drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty();
+  });
   $$('[data-up]',bd).forEach(el=>el.oninput=()=>{
     const up=el.value.toUpperCase();
     if(el.value!==up){ const c=el.selectionStart; el.value=up; try{el.setSelectionRange(c,c)}catch(_){} }
@@ -2647,6 +2951,14 @@ function showInspector(a){
     if(act==='open'&&a.target){ openDoc(a.target.doc,a.target.page); }
     if(act==='mk') treatFromAnn(a);
     if(act==='off') offsetAnn(a);
+    if(act==='det'){
+      const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
+      if(!list.length){ toast('No treatments on this page'); return; }
+      snap();
+      list.forEach(t=>{ t.detail=a.detail||''; if(a.target) t.shop=a.target.doc; });
+      renderTreatments(); renderBom(); markDirty();
+      toast('Detail '+(a.detail||'cleared')+' applied to '+list.length+' treatment'+(list.length===1?'':'s'));
+    }
     if(act==='cnt'){ V.cntGrp=a.grp||'COUNT'; V.cntSym=a.sym||'●'; setTool('count');
       toast('Counting '+V.cntGrp+' — click to stamp'); }
     if(act==='go'){ $$('.tab').find(x=>x.dataset.pane==='pTreat').click(); openTreat(a.treat); }
@@ -2688,7 +3000,8 @@ function renderCodeKey(){
    Notes and text get in the way while measuring, so each kind can be hidden.
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
-  ['box','Boxes'],['text','Text'],['tbox','Text boxes'],['note','Notes'],['link','Links'],['ink','Ink']];
+  ['cloud','Revision clouds'],['driver','Drivers'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
+  ['note','Notes'],['link','Links'],['ink','Ink']];
 const layerOn=type=>!(P.hide&&P.hide[type]);
 const annVisible=a=>layerOn(a.type)&&!a.hidden;
 function renderLayers(){
@@ -2714,7 +3027,7 @@ function renderLayers(){
 const SORTS={
   ann:[{v:'order',t:'Order drawn'},{v:'type',t:'Kind'},{v:'len',t:'Length'},{v:'tag',t:'Treatment tag'}],
   treat:[{v:'order',t:'Order added'},{v:'tag',t:'Tag'},{v:'type',t:'TYPE'},{v:'zone',t:'Zone #'},
-         {v:'len',t:'Length'},{v:'room',t:'Room'},{v:'sheet',t:'Sheet'}],
+         {v:'len',t:'Length'},{v:'room',t:'Room'},{v:'sheet',t:'Sheet'},{v:'detail',t:'Detail'}],
   lib:[{v:'order',t:'Order added'},{v:'name',t:'Name'},{v:'kind',t:'Kind'}],
 };
 function sortState(key){ P.sort=P.sort||{}; return P.sort[key]||{by:'order',dir:1}; }
@@ -2772,8 +3085,13 @@ function renderSheets(){
     const loaded=!!FILES[d.id], n=P.ann.filter(a=>a.doc===d.id&&a.type!=='cal').length;
     const el=document.createElement('div');
     el.className='item'+(d.id===V.docId?' on':'');
-    el.innerHTML='<div style="flex:1;min-width:0"><div class="t">'+esc(d.name.replace(/\.pdf$/i,''))+'</div>'
-      +'<div class="s">'+d.pages+' pg · '+n+' markup'+(n===1?'':'s')+(loaded?'':' · <span style="color:var(--flag)">re-import</span>')+'</div></div>'
+    el.innerHTML='<div style="flex:1;min-width:0"><div class="t">'
+      +(d.sheetNo?'<b style="color:var(--amber)">'+esc(d.sheetNo)+'</b>  ':'')
+      +esc(d.title||d.name.replace(/\.pdf$/i,''))+'</div>'
+      +'<div class="s">'+d.pages+' pg · '+n+' markup'+(n===1?'':'s')
+      +(d.sheetNo||d.title?' · '+esc(d.name.replace(/\.pdf$/i,'').slice(0,18)):'')
+      +(d.noText?' · <span style="color:var(--faint)">no text layer</span>':'')
+      +(loaded?'':' · <span style="color:var(--flag)">re-import</span>')+'</div></div>'
       +'<span class="pill '+d.kind+'" data-kind="'+d.id+'" title="Click to switch plan/shop">'+d.kind+'</span>';
     el.onclick=e=>{ if(e.target.dataset.kind){ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); return; } openDoc(d.id,1,true); };
     h.appendChild(el);
@@ -2801,6 +3119,8 @@ function renderAnnList(){
       :a.type==='arc'?fmtLen(annLen(a))
       :a.type==='area'?(m=>m?fmtArea(m.area)+'  ·  P '+fmtRun(m.perim):'region')(areaMetrics(a))
       :a.type==='count'?((a.grp||'COUNT')+' '+countIndex(a))
+      :a.type==='cloud'?('rev '+(a.rev||'1')+(a.text?'  ·  '+a.text:''))
+      :a.type==='driver'?((a.name||'PS')+'  ·  '+driverLabel(a,driverLoad(a)))
       :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
@@ -2823,7 +3143,8 @@ function renderLinks(){
     const el=document.createElement('div'); el.className='item';
     el.innerHTML='<span class="pill shop">link</span><div style="flex:1;min-width:0">'
       +'<div class="t">'+esc(tgt?tgt.name.replace(/\.pdf$/i,''):'missing drawing')+' · p'+a.target.page+'</div>'
-      +'<div class="s">from '+esc(src?src.name.slice(0,16):'?')+' p'+a.page+(a.text?' · '+esc(a.text.slice(0,18)):'')+'</div></div>';
+      +'<div class="s">'+(a.detail?esc(a.detail)+' · ':'')+'from '+esc(src?src.name.slice(0,16):'?')+' p'+a.page
+      +(a.text?' · '+esc(a.text.slice(0,18)):'')+'</div></div>';
     el.onclick=()=>openDoc(a.target.doc,a.target.page,true);
     h.appendChild(el);
   });
@@ -2904,7 +3225,7 @@ function newTreat(annId){
   snap();
   const t={id:uid('t_'),tag:'L-'+pad(P.seq++),type:'',zone:'',name:'New treatment',room:'',docId:V.docId,page:V.page,
     annId:annId||null,manual:0,qty:1,feedOv:0,cutLock:0,fixId:P.fix[0].id,chId:P.ch[0].id,psuId:P.psu[1]?P.psu[1].id:P.psu[0].id,
-    round:'',clip:'',shop:'',notes:''};
+    round:'',clip:'',shop:'',detail:'',notes:''};
   P.treat.push(t); markDirty(); return t;
 }
 function treatFromAnn(a){
@@ -2921,7 +3242,7 @@ function openTreat(id,focus){
 function treatMatch(t,q){
   if(!q) return true;
   const r=calc(t), d=P.docs.find(x=>x.id===t.docId);
-  const hay=[tagOf(t),t.type,t.zone,t.name,t.room,t.notes,r.f.name,r.c.name,r.ps.name,d&&d.name]
+  const hay=[tagOf(t),t.type,t.zone,t.name,t.room,t.detail,t.notes,r.f.name,r.c.name,r.ps.name,d&&d.name]
     .filter(Boolean).join(' ').toLowerCase();
   /* every whitespace-separated term must appear, so "cove z2" narrows */
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
@@ -2937,6 +3258,7 @@ function renderTreatments(){
     if(st.by==='zone') return t.zone||'\uffff';
     if(st.by==='len') return lenOf(t)||0;
     if(st.by==='room') return t.room||'\uffff';
+    if(st.by==='detail') return t.detail||'\uffff';
     if(st.by==='sheet') return ((P.docs.find(d=>d.id===t.docId)||{}).name||'\uffff')+' p'+(t.page||1);
     return 0;
   };
@@ -2989,7 +3311,10 @@ function renderTreatments(){
         +'<div class="f"><label>Clip spacing</label><input type="text" data-t="clip" value="'+(t.clip||'')+'" placeholder="'+esc(fmtLen(r.c.clip))+'"></div>'
       +'</div>'
       +'<div class="f" style="margin-top:8px"><label>Power supply</label><select data-t="psuId">'+psOpts+'</select></div>'
-      +'<div class="f" style="margin-top:8px"><label>Millwork / shop drawing</label><select data-t="shop">'+shopOpts+'</select></div>'
+      +'<div class="grid2" style="margin-top:8px">'
+        +'<div class="f"><label>Millwork / shop drawing</label><select data-t="shop">'+shopOpts+'</select></div>'
+        +'<div class="f"><label>Detail reference</label><input type="text" class="up" data-t="detail" value="'+esc(t.detail||'')+'" placeholder="3/A-501"></div>'
+      +'</div>'
       +'<div class="f" style="margin-top:8px"><label>Notes</label><textarea data-t="notes">'+esc(t.notes||'')+'</textarea></div>'
       +'<div id="out_'+t.id+'">'+outHtml(r,t)+'</div>'
       +'<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">'
@@ -3022,7 +3347,7 @@ function renderTreatments(){
         if(k==='len'){ const v=parseLen(inp.value); t.manual=isFinite(v)?v:0; }
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
-        else if(k==='type'||k==='zone'){          /* type and zone are always capitals */
+        else if(k==='type'||k==='zone'||k==='detail'){   /* type, zone and detail refs are capitals */
           const up=inp.value.toUpperCase();
           if(inp.value!==up){ const c=inp.selectionStart; inp.value=up; try{inp.setSelectionRange(c,c)}catch(_){}}
           t[k]=up;
@@ -3041,7 +3366,9 @@ function renderTreatments(){
     });
     $$('[data-a]',el).forEach(b=>b.onclick=async()=>{
       const a=b.dataset.a;
-      if(a==='del'){ snap(); if(t.annId){const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat;} P.treat=P.treat.filter(x=>x.id!==t.id); renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty(); }
+      if(a==='del'){ snap(); if(t.annId){const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat;}
+        P.ann.forEach(x=>{ if(x.type==='driver'&&Array.isArray(x.serves)) x.serves=x.serves.filter(id=>id!==t.id); });
+        P.treat=P.treat.filter(x=>x.id!==t.id); renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty(); }
       if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t); P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
       if(a==='across') await dupAcross(t);
       if(a==='loc'){ const an=P.ann.find(x=>x.id===t.annId);
@@ -3408,14 +3735,14 @@ function renderBom(){
     c.innerHTML='<tr><td class="hint" style="padding:14px">Nothing measured yet.</td></tr>';
   }else{
   let h='<tr>'+thSort('cut','tag','Tag')+thSort('cut','type','Type')+thSort('cut','zone','Zone')
-    +thSort('cut','room','Location')+thSort('cut','prod','Product')+thSort('cut','qty','Runs','n')
+    +thSort('cut','room','Location')+thSort('cut','detail','Detail')+thSort('cut','prod','Product')+thSort('cut','qty','Runs','n')
     +thSort('cut','L','Field','n')+thSort('cut','cut','Cut','n')+thSort('cut','w','W','n')
     +thSort('cut','feeds','Feeds','n')+'</tr>';
   let tl=0,tw=0,tf=0;
   const cst=sortState('cut');
   const ckey=t=>{ const r=calc(t);
     return {tag:tagOf(t),type:t.type||'\uffff',zone:t.zone||'\uffff',room:t.room||t.name||'\uffff',
-      prod:r.f.name,qty:r.qty,L:r.L,cut:r.tot.cut,w:r.tot.watts,feeds:r.tot.feeds}[cst.by];
+      detail:t.detail||'\uffff',prod:r.f.name,qty:r.qty,L:r.L,cut:r.tot.cut,w:r.tot.watts,feeds:r.tot.feeds}[cst.by];
   };
   (cst.by==='order'?P.treat:sortBy(P.treat,ckey,cst)).forEach(t=>{
     const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts; tf+=r.tot.feeds;
@@ -3423,12 +3750,13 @@ function renderBom(){
       +'<td>'+(t.type?'<span class="typ">'+esc(t.type)+'</span>':'<span class="hint">—</span>')+'</td>'
       +'<td>'+(t.zone?'<span class="typ">'+esc(t.zone)+'</span>':'<span class="hint">—</span>')+'</td>'
       +'<td>'+esc(t.room||t.name||'—')+'<div class="hint">'+esc((P.docs.find(d=>d.id===t.docId)||{}).name||'')+'</div></td>'
+      +'<td>'+(t.detail?'<span class="typ">'+esc(t.detail)+'</span>':'<span class="hint">—</span>')+'</td>'
       +'<td>'+esc(r.f.name)+'<div class="hint">'+esc(r.c.name)+' · cut to length</div></td>'
       +'<td class="n">'+r.qty+'</td><td class="n">'+fmtRun(r.L)+'</td>'
       +'<td class="n" style="color:var(--amber)">'+fmtRun(r.cut)+'</td>'
       +'<td class="n">'+r.tot.watts.toFixed(0)+'</td><td class="n">'+r.tot.feeds+(r.feedSet?'*':'')+'</td></tr>';
   });
-  h+='<tr class="tot"><td colspan="6">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
+  h+='<tr class="tot"><td colspan="7">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
   c.innerHTML=h;
   }
   const rows=bomData();
@@ -3459,7 +3787,25 @@ function rollTable(el,head,rows){
     +'</td><td class="n">'+tot.feeds+'</td><td class="n">'+tot.psu+'</td></tr>';
   el.innerHTML=h;
 }
+function renderDrivers(){
+  const rows=driverRows(), el=$('#drvTbl');
+  const c=$('#cDrv'); if(c) c.textContent=rows.length;
+  if(!el) return;
+  if(!rows.length){ el.innerHTML='<tr><td class="hint" style="padding:12px">No drivers placed. Use the driver tool (D) to lay them out.</td></tr>'; return; }
+  const need=P.treat.reduce((s,t)=>s+calc(t).psuQty,0);
+  el.innerHTML='<tr><th>Mark</th><th>Supply</th><th class="n">Load</th><th class="n">Usable</th>'
+    +'<th class="n">%</th><th class="n">Home run</th><th class="n">Runs</th><th>Sheet</th></tr>'
+    +rows.map(r=>'<tr><td><span class="tag">'+esc(r.name)+'</span></td><td>'+esc(r.supply)
+      +(r.warn.length?'<div class="hint" style="color:var(--flag)">'+esc(r.warn[0])+'</div>':'')+'</td>'
+      +'<td class="n">'+r.watts.toFixed(0)+' W</td><td class="n">'+(r.cap>0?Math.round(r.cap)+' W':'—')+'</td>'
+      +'<td class="n"'+(r.pct>1?' style="color:var(--flag)"':'')+'>'+(r.cap>0?(r.pct*100).toFixed(0)+'%':'—')+'</td>'
+      +'<td class="n">'+(r.home>0?fmtRun(r.home):'—')+'</td><td class="n">'+r.serves+'</td>'
+      +'<td class="hint">'+esc(r.sheet)+'</td></tr>').join('')
+    +'<tr class="tot"><td colspan="2">'+rows.length+' placed · takeoff calls for '+need+'</td>'
+    +'<td class="n">'+rows.reduce((s,r)=>s+r.watts,0).toFixed(0)+' W</td><td colspan="5"></td></tr>';
+}
 function renderRollups(){
+  renderDrivers();
   rollTable($('#zoneTbl'),'Zone',rollup(t=>t.zone||'(no zone)'));
   rollTable($('#sheetTbl'),'Sheet',rollup(t=>t.docId||'(none)',
     t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)').replace(/\.pdf$/i,'')));
@@ -3626,12 +3972,12 @@ async function exportBox(name,text){
     }catch(e){ toast('Download blocked — copy the text instead'); } });
 }
 $('#btnCsvCut').onclick=()=>{
-  const rows=[['Tag','Type','Zone','Name','Location','Sheet','Product','Kind','Channel','Runs',
+  const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
     'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
-    rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',r.f.name,r.kind,
+    rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
       r.c.name+' (cut to length)',r.qty,
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
@@ -3643,6 +3989,134 @@ $('#btnCsvBom').onclick=()=>{
   const rows=[['Category','Item','Qty','Unit','Note']].concat(bomData().map(r=>[r[0],r[1],r[3],r[2],r[4]]));
   exportBox(slug(P.name)+'-bom.csv',csv(rows));
 };
+
+/* ---- comparing two revisions of a sheet ----
+   Both pages are rendered at the same scale and diffed in blocks. Blocks that
+   changed are clustered into rectangles, which can then be clouded in one go.
+   It works on what is drawn, so it catches a moved cove as readily as new text,
+   and it is honest about what it cannot do: different page sizes are refused
+   rather than compared at a stretch. */
+const CMP_BLOCK=10;              /* px per block at the compare scale */
+const CMP_TOL=28;                /* per-channel difference that counts as a change */
+async function pageGray(docId,pg,scale){
+  const d=FILES[docId]; if(!d) throw new Error('not loaded');
+  const pageObj=await d.pdf.getPage(pg);
+  const vp=pageObj.getViewport({scale});
+  const c=document.createElement('canvas');
+  c.width=Math.max(1,Math.round(vp.width)); c.height=Math.max(1,Math.round(vp.height));
+  const cx=c.getContext('2d',{willReadFrequently:true});
+  cx.fillStyle='#fff'; cx.fillRect(0,0,c.width,c.height);
+  await pageObj.render({canvasContext:cx,viewport:vp}).promise;
+  const px=cx.getImageData(0,0,c.width,c.height).data;
+  const g=new Uint8Array(c.width*c.height);
+  for(let i=0,j=0;i<px.length;i+=4,j++) g[j]=(px[i]*299+px[i+1]*587+px[i+2]*114)/1000;
+  return {g,w:c.width,h:c.height,ptW:pageObj.getViewport({scale:1}).width,
+    ptH:pageObj.getViewport({scale:1}).height};
+}
+/* changed blocks -> merged rectangles, in the *second* page's PDF points */
+function clusterBlocks(mark,bw,bh,scale){
+  const seen=new Uint8Array(bw*bh), out=[];
+  for(let i=0;i<bw*bh;i++){
+    if(!mark[i]||seen[i]) continue;
+    const q=[i]; seen[i]=1;
+    let x0=i%bw,x1=x0,y0=(i/bw)|0,y1=y0,n=0;
+    while(q.length){
+      const c=q.pop(), cx=c%bw, cy=(c/bw)|0; n++;
+      if(cx<x0)x0=cx; if(cx>x1)x1=cx; if(cy<y0)y0=cy; if(cy>y1)y1=cy;
+      /* a 2-block reach bridges the gaps inside one revised detail */
+      for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=2;dx++){
+        const nx=cx+dx, ny=cy+dy;
+        if(nx<0||ny<0||nx>=bw||ny>=bh) continue;
+        const k=ny*bw+nx;
+        if(mark[k]&&!seen[k]){ seen[k]=1; q.push(k); }
+      }
+    }
+    if(n<3) continue;                          /* specks are noise, not revisions */
+    out.push({n,
+      x:(x0*CMP_BLOCK)/scale, y:(y0*CMP_BLOCK)/scale,
+      w:((x1-x0+1)*CMP_BLOCK)/scale, h:((y1-y0+1)*CMP_BLOCK)/scale});
+  }
+  return out.sort((a,b)=>b.n-a.n);
+}
+async function compareSheets(aDoc,aPg,bDoc,bPg){
+  const scale=1.5;
+  const A=await pageGray(aDoc,aPg,scale), B=await pageGray(bDoc,bPg,scale);
+  if(Math.abs(A.ptW-B.ptW)>1||Math.abs(A.ptH-B.ptH)>1)
+    throw new Error('Those two pages are different sizes ('+A.ptW.toFixed(0)+'×'+A.ptH.toFixed(0)
+      +' vs '+B.ptW.toFixed(0)+'×'+B.ptH.toFixed(0)+') — compare like for like');
+  const w=Math.min(A.w,B.w), h=Math.min(A.h,B.h);
+  const bw=Math.ceil(w/CMP_BLOCK), bh=Math.ceil(h/CMP_BLOCK);
+  const mark=new Uint8Array(bw*bh);
+  let changed=0;
+  for(let by=0;by<bh;by++) for(let bx=0;bx<bw;bx++){
+    let hits=0, cells=0;
+    const x1=Math.min(w,(bx+1)*CMP_BLOCK), y1=Math.min(h,(by+1)*CMP_BLOCK);
+    for(let y=by*CMP_BLOCK;y<y1;y++){
+      const ra=y*A.w, rb=y*B.w;
+      for(let x=bx*CMP_BLOCK;x<x1;x++){
+        cells++;
+        if(Math.abs(A.g[ra+x]-B.g[rb+x])>CMP_TOL) hits++;
+      }
+    }
+    /* a couple of stray pixels is antialiasing; 4% of a block is a real change */
+    if(cells&&hits/cells>0.04){ mark[by*bw+bx]=1; changed++; }
+  }
+  const rects=clusterBlocks(mark,bw,bh,scale);
+  return {rects,blocks:changed,total:bw*bh,
+    pct:bw*bh?changed/(bw*bh):0,ptW:B.ptW,ptH:B.ptH,scale};
+}
+/* rectangles are in viewport-style coordinates (y down); markups live in PDF
+   user space (y up), so flip as we build the clouds */
+function cloudRects(rects,docId,pg,rev,note,ptH){
+  snap();
+  const made=[];
+  rects.forEach((r,i)=>{
+    const y0=ptH-r.y, y1=ptH-(r.y+r.h);
+    const pad=4;
+    const pts=[[r.x-pad,y0+pad],[r.x+r.w+pad,y0+pad],[r.x+r.w+pad,y1-pad],[r.x-pad,y1-pad]];
+    made.push({id:uid('a_'),type:'cloud',doc:docId,page:pg,pts,color:'#E4694F',w:V.width,
+      rev:String(rev||'1'),text:note||('changed area '+(i+1))});
+  });
+  made.forEach(a=>P.ann.push(a));
+  invalidateAnns();
+  drawOverlay(); renderAnnList(); markDirty();
+  return made.length;
+}
+async function compareRevisions(){
+  if(!V.docId||!FILES[V.docId]){ toast('Open a sheet first'); return; }
+  const loaded=P.docs.filter(d=>FILES[d.id]);
+  const opts=[];
+  loaded.forEach(d=>{
+    const n=Math.max(1,+d.pages||1);
+    for(let pg=1;pg<=n;pg++){
+      if(d.id===V.docId&&pg===V.page) continue;
+      opts.push({v:d.id+'|'+pg,t:sheetLabel(d)+(n>1?' · p'+pg:'')});
+    }
+  });
+  if(!opts.length){ toast('Import the other revision of this sheet first'); return; }
+  const here=P.docs.find(d=>d.id===V.docId);
+  const r=await dlg({title:'Compare revisions',fields:[
+    {k:'old',type:'select',label:'Compare against',opts,val:opts[0].v},
+    {k:'cloud',type:'check',cap:'Cloud what changed',val:true},
+    {k:'rev',label:'Revision number for the clouds',val:nextRev()}
+  ],ok:'Compare',note:'The sheet on screen ('+sheetLabel(here)+' p'+V.page+') is treated as the new revision. '
+    +'Both pages are rendered and diffed — same page size, please.'});
+  if(!r) return;
+  const [od,op]=r.old.split('|');
+  toast('Comparing…');
+  try{
+    const res=await compareSheets(od,+op,V.docId,V.page);
+    V.cmpPtH=res.ptH;
+    V.cmp={rects:res.rects,doc:V.docId,page:V.page};
+    if(!res.rects.length){ toast('No differences found between those two pages'); return; }
+    let n=0;
+    if(r.cloud) n=cloudRects(res.rects,V.docId,V.page,r.rev,'rev '+r.rev,res.ptH);
+    toast(res.rects.length+' changed area'+(res.rects.length===1?'':'s')+' found ('
+      +(res.pct*100).toFixed(1)+'% of the sheet)'+(n?' — '+n+' clouded':''));
+  }catch(e){ toast(e&&e.message||'Could not compare those pages'); }
+}
+$('#btnCompare').onclick=compareRevisions;
+$('#btnTitles').onclick=()=>scanTitleblocks(false);
 
 /* ---- project file: save to disk / open back up ----
    The file carries the whole takeoff — sheets list, calibration, markups,
@@ -3723,6 +4197,14 @@ $('#btnCsvNest').onclick=()=>{
   nestData().forEach(g=>g.bins.forEach((b,i)=>rows.push([g.name,(g.stock/12).toFixed(3),i+1,
     b.cuts.map(c=>(c/12).toFixed(3)).join(' + '),(b.left/12).toFixed(3),(g.yield*100).toFixed(1)])));
   exportBox(slug(P.name)+'-nesting.csv',csv(rows));
+};
+$('#btnCsvDrv').onclick=()=>{
+  const rows=[['Mark','Supply','Sheet','Connected W','Usable W','% of usable','Longest home run (ft)','Runs fed','Runs','Flags']];
+  driverRows().forEach(r=>rows.push([r.name,r.supply,r.sheet,r.watts.toFixed(1),r.cap.toFixed(1),
+    (r.pct*100).toFixed(0),(r.home/12).toFixed(2),r.serves,
+    (r.a.serves||[]).map(id=>{const t=P.treat.find(x=>x.id===id);return t?tagOf(t):'?'}).join(' + '),
+    r.warn.join(' | ')]));
+  exportBox(slug(P.name)+'-drivers.csv',csv(rows));
 };
 $('#btnCsvZone').onclick=()=>{
   const rows=[['Grouping','Key','Runs','LED (ft)','Channel (ft)','Watts','Feed points','Supplies']];
@@ -3910,6 +4392,7 @@ document.addEventListener('keydown',e=>{
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
   if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
   if(k==='r') setTool('area'); if(k==='m') setTool('count');
+  if(k==='q') setTool('cloud'); if(k==='d'&&!(e.metaKey||e.ctrlKey)) setTool('driver');
   if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
   /* the rails get out of the way without reaching for the mouse */
   if(k==='['){ setPanel('left',(P.panels||{}).left===false); }
@@ -4024,6 +4507,9 @@ function settingsHtml(){
   if(setTab==='est') return '<div class="setgrp"><h4>Allowances</h4>'
     +setRow('Material waste','Added to ordered quantities in the BOM.',setNum('waste',P.waste??5,0,50,1,'%'))
     +setRow('Supply load ceiling','Never load a driver past this share of its rating.',setNum('load',P.load??80,40,100,5,'%'))
+    +'</div><div class="setgrp"><h4>Drivers</h4>'
+    +setRow('Longest home run','A placed driver further than this from what it feeds is flagged.',
+      '<input type="text" data-set="maxHome" value="'+esc(fmtLen(+P.maxHome||240))+'">')
     +'</div>';
   if(setTab==='input') return '<div class="setgrp"><h4>Pointer</h4>'
     +setRow('Scroll wheel','Zoom at the cursor, or scroll the sheet.',
@@ -4083,6 +4569,8 @@ function applySetting(el){
     case 'arcDetail': P.arcDetail=val; drawOverlay(); break;
     case 'cntLabels': P.cntLabels=val; drawOverlay(); break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
+    case 'maxHome': { const v=parseLen(val); P.maxHome=(isFinite(v)&&v>0)?v:240;
+      drawOverlay(); renderBom(); break; }
     case 'chipScale': P.chipScale=+val||1; setDrawScale(1); drawOverlay(); break;
     case 'width': V.width=+val; P.width=+val; break;
     case 'waste': P.waste=clamp(+val||0,0,50); $('#waste').value=P.waste; renderBom(); stats(); break;
@@ -4129,6 +4617,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
+  cloudPath,nextRev,driverLoad,driverRows,placeDriver,nearestPtOn,driverLabel,
+  compareSheets,compareRevisions,cloudRects,readTitleblock,scanTitleblocks,sheetLabel,
   countTotals,countsOf,countIndex,placeCount,countSyms:CNT_SYMS,
   openSettings,closeSettings,applySetting,applyPanels,setPanel,offsOf,offFor,setDrawScale,
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
