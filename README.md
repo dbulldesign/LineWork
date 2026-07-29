@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.13.0**
+**Version 1.14.0**
 
 ## What it does
 
@@ -103,7 +103,28 @@ size.
 | `⏎` | finish the current run |
 | `⌘Z` / `⇧⌘Z` | undo / redo |
 | `⌘S` / `⌘O` | save / open project file |
+| `⌘,` | settings |
+| `[` `]` `\` | hide the left rail / the right rail / swap them |
 | `+` `-` | zoom; arrow keys change page |
+
+## Settings
+
+`⌘,` (or the ⚙ in the header) opens a settings page covering the whole
+application, grouped into tabs:
+
+- **View** — theme, which rails show and on which side, automatic markup colours.
+- **Measuring** — units, snapping to the drawing's geometry, and which way a run
+  rounds to a cut point by default.
+- **Labels** — content-aware placement, per-segment poly labels, arc radius
+  readouts, label size, default line weight.
+- **Estimating** — material waste and the supply load ceiling.
+- **Input** — what the scroll wheel does, and whether a finger draws or pans.
+- **Files** — auto-save to the linked file, undo depth, project name and number.
+- **About** — application version, project-file schema, PDF engine and offline
+  status, and what the project currently holds.
+
+Everything is saved with the project, so a job keeps the way you set it up, and
+**Reset to defaults** puts the preferences back without touching the takeoff.
 
 ## Working on a busy sheet
 
@@ -117,6 +138,16 @@ other when two runs sit close together; each steps aside to the nearest clear
 slot. Drag any label to place it yourself and a leader line ties it back to its
 measurement — everything else then avoids where you put it. The setting can be
 turned off if you would rather labels sat exactly where the measurement puts them.
+
+On a poly length, **every label moves independently** — each segment label and
+the run total are dragged and remembered separately, and "Put the labels back"
+in the right-click menu clears them all. The **run total reads differently from
+the segment labels** — filled and heavier, where the segments are outlined — so
+the number you order by never gets mistaken for one of the legs.
+
+Either side panel can be **hidden** (`[` / `]`) and the two can be **swapped**
+(`\`) so the takeoff sits on whichever side you work from. The choice is saved
+with the project.
 
 Runs are editable point by point: double-click a run to break it at that point,
 ⌥-click a handle to remove one, or use the right-click menu for both. The footer carries a running total for the page you are on as well as

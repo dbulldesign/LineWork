@@ -83,8 +83,22 @@ textarea{resize:vertical;min-height:52px}
 
 /* ---------- panels ---------- */
 aside{background:var(--s1);overflow:auto;display:flex;flex-direction:column}
-aside.left{border-right:1px solid var(--line2)}
-aside.right{border-left:1px solid var(--line2)}
+aside.left{border-right:1px solid var(--line2);grid-column:1;grid-row:2}
+aside.right{border-left:1px solid var(--line2);grid-column:3;grid-row:2}
+main{grid-column:2;grid-row:2}
+/* Either rail can be hidden, and the two can trade sides — some estimators want
+   the takeoff under their pen hand. The grid columns collapse so the sheet takes
+   the space rather than leaving a gap. */
+body.hideL .sheet{grid-template-columns:0 1fr 400px}
+body.hideR .sheet{grid-template-columns:260px 1fr 0}
+body.hideL.hideR .sheet{grid-template-columns:0 1fr 0}
+body.hideL aside.left,body.hideR aside.right{display:none}
+body.swap .sheet{grid-template-columns:400px 1fr 260px}
+body.swap aside.left{grid-column:3;border-right:0;border-left:1px solid var(--line2)}
+body.swap aside.right{grid-column:1;border-left:0;border-right:1px solid var(--line2)}
+body.swap.hideL .sheet{grid-template-columns:400px 1fr 0}
+body.swap.hideR .sheet{grid-template-columns:0 1fr 260px}
+body.swap.hideL.hideR .sheet{grid-template-columns:0 1fr 0}
 .sec{border-bottom:1px solid var(--line)}
 .sec>h3{margin:0;padding:9px 12px 8px;font-size:9px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);display:flex;align-items:center;gap:8px;background:var(--s2);border-bottom:1px solid var(--line)}
 .sec>h3 .c{margin-left:auto;font-family:var(--mono);color:var(--faint);letter-spacing:0}
@@ -213,7 +227,32 @@ input.up{text-transform:uppercase}
 .note.ok{color:var(--ok)}
 
 /* modal */
-.scrim{position:fixed;inset:0;background:rgba(8,7,6,.72);display:none;place-items:center;z-index:60;padding:20px}
+.scrim{position:fixed;inset:0;background:rgba(8,7,6,.72);display:none;place-items:center;z-index:70;padding:20px}
+/* the settings sheet sits below a dialog raised from it, or its buttons would be
+   unclickable behind the settings panel */
+#setScrim{z-index:60}
+/* settings: grouped rows, one screen, everything live */
+.setwrap{background:var(--s1);border:1px solid var(--line2);width:min(760px,96vw);max-height:92vh;
+  display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.6);border-radius:3px}
+.sethd{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid var(--line2)}
+.sethd b{font-size:14px;letter-spacing:-.01em}
+.sethd .hint{margin-left:auto;font-family:var(--mono);font-size:10px}
+.setnav{display:flex;gap:4px;padding:8px 12px 0;flex-wrap:wrap;border-bottom:1px solid var(--line)}
+.setnav button{background:none;border:1px solid transparent;border-bottom:0;color:var(--dim);
+  padding:5px 10px;cursor:pointer;font-size:11.5px;border-radius:2px 2px 0 0}
+.setnav button.on{color:var(--amber);border-color:var(--line2);background:var(--s2)}
+.setbody{overflow:auto;padding:6px 0 12px}
+.setgrp{padding:10px 14px 4px}
+.setgrp h4{margin:0 0 2px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.setrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px dotted var(--line)}
+.setrow:last-child{border-bottom:0}
+.setrow .lab{flex:1 1 auto;min-width:0}
+.setrow .lab b{display:block;font-size:12.5px;font-weight:500;color:var(--txt)}
+.setrow .lab span{display:block;font-size:11px;color:var(--faint);margin-top:1px}
+.setrow .ctl{flex:0 0 auto;display:flex;align-items:center;gap:6px}
+.setrow .ctl select,.setrow .ctl input[type=text],.setrow .ctl input[type=number]{width:150px}
+.setrow .ctl input[type=range]{width:150px}
+.setrow .val{font-family:var(--mono);font-size:11px;color:var(--dim);min-width:52px;text-align:right}
 .scrim.show{display:grid}
 .dlg{background:var(--s1);border:1px solid var(--line2);width:min(460px,100%);max-height:86vh;overflow:auto;box-shadow:0 24px 70px rgba(0,0,0,.6)}
 .dlg h3{margin:0;padding:12px 16px;font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line);background:var(--s2)}
@@ -222,15 +261,18 @@ input.up{text-transform:uppercase}
 .toast{position:fixed;left:50%;bottom:44px;transform:translate(-50%,14px);background:var(--s3);border:1px solid var(--line2);border-left:2px solid var(--amber);padding:9px 15px;font-size:12px;opacity:0;transition:.22s;pointer-events:none;z-index:80;border-radius:2px}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
-.mobtog{display:none}
+.mobtog{display:inline-flex}
 @media(max-width:1080px){
   .sheet{grid-template-columns:1fr}
   aside{position:fixed;top:0;bottom:0;width:300px;z-index:40;transform:translateX(-100%);transition:.2s;box-shadow:0 0 40px rgba(0,0,0,.6)}
-  aside.left{left:0}
-  aside.right{right:0;width:340px;transform:translateX(100%)}
-  body.lo aside.left{transform:none}
-  body.ro aside.right{transform:none}
-  .mobtog{display:inline-flex}
+  aside.left{left:0;grid-column:1}
+  aside.right{right:0;width:340px;transform:translateX(100%);grid-column:1}
+  body.swap aside.left{left:auto;right:0;transform:translateX(100%)}
+  body.swap aside.right{right:auto;left:0;transform:translateX(-100%)}
+  /* on a narrow screen the rails overlay the sheet, so "hidden" is the default */
+  body:not(.hideL) aside.left{transform:none}
+  body:not(.hideR) aside.right{transform:none}
+  body.hideL aside.left,body.hideR aside.right{display:block}
   header.tb{overflow-x:auto}
 }
 /* ---------- context menu ---------- */
@@ -293,13 +335,15 @@ body.haspen #penFlag{display:inline}
   <div class="cell" style="min-width:88px"><label>Units</label><button class="btn sm ghost" id="unitBtn" style="padding:1px 6px">IMPERIAL</button></div>
   <div class="grow"></div>
   <div class="acts">
-    <button class="btn mobtog" id="togL">Sheets</button>
+    <button class="btn mobtog" id="togL" title="Show or hide the sheets rail">Sheets</button>
     <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
     <button class="btn pri" id="btnOpen">Import PDF</button>
     <button class="btn" id="btnTheme" title="Light or dark">☀︎</button>
     <button class="btn" id="btnSave" title="Save project file (⌘S)">Save</button>
     <button class="btn" id="btnProj">Project</button>
-    <button class="btn mobtog" id="togR">Takeoff</button>
+    <button class="btn" id="btnSet" title="Settings">⚙</button>
+    <button class="btn mobtog" id="togR" title="Show or hide the takeoff rail">Takeoff</button>
+    <button class="btn mobtog" id="togSwap" title="Swap the two rails over">⇄</button>
   </div>
 </header>
 
@@ -478,6 +522,16 @@ body.haspen #penFlag{display:inline}
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div class="toast" id="toast"></div>
+<div class="scrim" id="setScrim"><div class="setwrap">
+  <div class="sethd">
+    <b>Settings</b>
+    <span class="hint" id="setVer"></span>
+    <button class="btn sm" id="setReset">Reset to defaults</button>
+    <button class="btn sm pri" id="setClose">Done</button>
+  </div>
+  <div class="setnav" id="setNav"></div>
+  <div class="setbody" id="setBody"></div>
+</div></div>
 
 <script>
 /* ============================================================
@@ -486,7 +540,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.13.0';
+const APP_VER='1.14.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -696,6 +750,7 @@ function applyProject(d){
     t.feedOv=+t.feedOv>0?Math.round(+t.feedOv):0;
     t.cutLock=+t.cutLock>0?+t.cutLock:0;
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
+    delete t.roundDefault;
   });
   P.name=String(P.name||'Untitled Project'); P.no=String(P.no||'');
   if(P.units!=='metric') P.units='imperial';
@@ -705,6 +760,10 @@ function applyProject(d){
   P.treat.forEach(t=>{ const m=/^L-(\d+)$/.exec(String(t.tag||'')); if(m) hi=Math.max(hi,+m[1]); });
   P.seq=Math.max(1,+P.seq||1,hi+1); P.waste=+P.waste||0; P.load=+P.load||80;
   if(typeof d.scrollZoom!=='boolean') P.scrollZoom=pref;
+  P.chipScale=clamp(+P.chipScale||1,.5,3);
+  P.panels=Object.assign({left:true,right:true,swap:false},P.panels);
+  if(typeof P.width==='number') V.width=clamp(P.width,.5,12);
+  if(typeof P.fingerDraws==='boolean') V.fingerDraws=P.fingerDraws;
   delete P.savedAt; delete P.app; delete P.ver; delete P.appVer;
   return P;
 }
@@ -1141,7 +1200,12 @@ const sp=p=>V.vp.convertToViewportPoint(p[0],p[1]);
    them to the bitmap it is producing. */
 const CHIP_BASE=16;
 let CHIP_FS=CHIP_BASE, CHIP_H=Math.round(CHIP_BASE*1.62), W_MUL=1;
-function setDrawScale(m){ CHIP_FS=CHIP_BASE*m; CHIP_H=Math.round(CHIP_FS*1.62); W_MUL=m; }
+/* the label-size preference multiplies the base; the exporter multiplies again
+   for the bitmap it is producing */
+function setDrawScale(m){
+  const user=clamp(+((typeof P!=='undefined'&&P.chipScale)||1),.5,3);
+  CHIP_FS=CHIP_BASE*m*user; CHIP_H=Math.round(CHIP_FS*1.62); W_MUL=m;
+}
 const chipW=txt=>String(txt).length*CHIP_FS*.62+CHIP_FS;
 /* the sheet is white in light mode, so label backgrounds flip with the theme */
 let OVL='#171512';
@@ -1160,17 +1224,36 @@ function chip(x,y,txt,col,anchor,owner,role){
 }
 const chipBox=r=>{
   const x1=r.anchor==='l'?r.x+8:r.x-r.w/2;
-  return {x1,y1:r.y-r.h/2,x2:x1+r.w,y2:r.y+r.h/2};
+  const h=r.role==='total'?r.h*1.12:r.h;
+  return {x1,y1:r.y-h/2,x2:x1+r.w,y2:r.y+h/2};
 };
+/* per-role label offsets, so a poly's segment labels move independently */
+const offsOf=a=>{
+  if(!a) return null;
+  if(a.lblOff&&!a.lblOffs){ a.lblOffs={total:a.lblOff.slice()}; delete a.lblOff; }  /* migrate */
+  return a.lblOffs||null;
+};
+const offFor=(a,role)=>{ const o=offsOf(a); return o&&o[role]?o[role]:null; };
+function setOff(a,role,v){
+  offsOf(a);
+  if(!v){ if(a.lblOffs){ delete a.lblOffs[role]; if(!Object.keys(a.lblOffs).length) delete a.lblOffs; } return; }
+  a.lblOffs=a.lblOffs||{}; a.lblOffs[role]=v;
+}
 function chipSvg(r){
   const b=chipBox(r);
-  return '<g'+(r.owner?' data-lbl="'+r.owner.id+'"':'')+'>'
+  /* the run total is the number that matters, so it is filled and the segment
+     labels are outlined — they should not read as equals */
+  const tot=r.role==='total';
+  const fs=tot?CHIP_FS*1.06:CHIP_FS;
+  return '<g'+(r.owner?' data-lbl="'+r.owner.id+'" data-role="'+r.role+'"':'')+'>'
     +'<rect x="'+b.x1.toFixed(1)+'" y="'+b.y1.toFixed(1)+'" width="'+r.w.toFixed(1)+'" height="'+r.h.toFixed(1)
-    +'" rx="2.5" fill="'+OVL+'" fill-opacity=".95" stroke="'+r.col+'" stroke-opacity="'+(r.manual?'1':'.8')+'"'
+    +'" rx="'+(tot?3.5:2.5)+'" fill="'+(tot?r.col:OVL)+'" fill-opacity="'+(tot?'.95':'.95')+'"'
+    +' stroke="'+(tot?r.col:r.col)+'" stroke-width="'+(tot?2:1)+'" stroke-opacity="'+(r.manual?'1':(tot?'1':'.75'))+'"'
     +(r.manual?' stroke-dasharray="4 2"':'')+'/>'
-    +'<text x="'+(b.x1+r.w/2).toFixed(1)+'" y="'+(r.y+CHIP_FS*.37).toFixed(1)+'" fill="'+r.col
-    +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="600" font-size="'+CHIP_FS
-    +'" text-anchor="middle">'+esc(r.txt)+'</text></g>';
+    +'<text x="'+(b.x1+r.w/2).toFixed(1)+'" y="'+(r.y+fs*.37).toFixed(1)+'" fill="'+(tot?OVL:r.col)
+    +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="'+(tot?'700':'500')
+    +'" font-size="'+fs.toFixed(1)+'" text-anchor="middle"'+(tot?' letter-spacing=".2"':'')
+    +'>'+esc(r.txt)+'</text></g>';
 }
 /* leader line back to the measurement when a label has been moved away */
 function chipLeader(r){
@@ -1184,7 +1267,7 @@ function layoutChips(q){
   const smart=P.smart!==false;
   q.forEach(r=>{
     r.ax=r.x; r.ay=r.y;                       /* where the label belongs */
-    const off=r.owner&&r.role==='total'&&r.owner.lblOff;
+    const off=r.owner?offFor(r.owner,r.role):null;
     if(off){ r.x+=off[0]*V.zoom; r.y+=off[1]*V.zoom; r.manual=true; }
   });
   const placed=q.filter(r=>r.manual).map(chipBox);
@@ -1204,7 +1287,9 @@ function layoutChips(q){
       placed.push(best);
     });
   }
-  LAST_CHIPS=q.filter(r=>r.owner&&r.role==='total').map(r=>({box:chipBox(r),a:r.owner}));
+  /* every owned label can be grabbed — the total, each segment, and the arc's
+     radius readout. Later chips sit on top, so hit-test in reverse. */
+  LAST_CHIPS=q.filter(r=>r.owner).map(r=>({box:chipBox(r),a:r.owner,role:r.role}));
   return q.map(r=>(r.manual?chipLeader(r):'')+chipSvg(r)).join('');
 }
 function withChips(fn){
@@ -1287,14 +1372,14 @@ function drawAnn(a,selected,isDraft){
     if(a.type==='line'&&!a.free&&pts.length>2)
       g+=pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)+'" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
     /* per-segment lengths — every segment on a poly, skipping ones too short to label */
-    if(!a.free&&(a.poly||pts.length<=8)&&(pts.length>2||isDraft)){
-      annSegs(a).forEach(sg=>{
+    if(P.segLabels!==false&&!a.free&&(a.poly||pts.length<=8)&&(pts.length>2||isDraft)){
+      annSegs(a).forEach((sg,si)=>{
         const A=sp(sg.a),B=sp(sg.b), px=Math.hypot(B[0]-A[0],B[1]-A[1]);
         /* full label if it fits the segment, else decimal feet alone, else nothing */
         let lbl=sg.len==null?'—':fmtLen(sg.len);
         if(px<chipW(lbl)*.85) lbl=sg.len==null?'—':fmtRun(sg.len);
         if(px<chipW(lbl)*.85) return;
-        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg');
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si);
       });
     }
     const tot=annLen(a);
@@ -1320,7 +1405,8 @@ function drawAnn(a,selected,isDraft){
     if(g0){
       const rr=inPerPt()?fmtRun(g0.r*inPerPt()):'—';
       g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,null,a,'total');
-      g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col,null,a,'sub');
+      if(P.arcDetail!==false)
+        g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col,null,a,'sub');
     }
   }
   if(a.type==='ink'){
@@ -1539,7 +1625,7 @@ function editMove(e){
   if(edit.mode==='label'){
     /* offset kept in zoom-independent units so the label stays put as you zoom */
     const dx=(e.clientX-edit.cx)/Math.max(V.zoom,.01), dy=(e.clientY-edit.cy)/Math.max(V.zoom,.01);
-    a.lblOff=[edit.base[0]+dx,edit.base[1]+dy];
+    setOff(a,edit.role,[edit.base[0]+dx,edit.base[1]+dy]);
     drawOverlay();
     return;
   }
@@ -1633,8 +1719,8 @@ stage.addEventListener('pointerdown',e=>{
       if(lc){
         if(V.sel!==lc.a.id){ V.sel=lc.a.id; showInspector(lc.a); renderAnnList(); }
         drawOverlay();
-        edit={mode:'label',a:lc.a,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false,
-          base:(lc.a.lblOff||[0,0]).slice(),sx:sc[0],sy:sc[1]};
+        edit={mode:'label',a:lc.a,role:lc.role,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false,
+          base:(offFor(lc.a,lc.role)||[0,0]).slice(),sx:sc[0],sy:sc[1]};
         return;
       }
       /* a handle on the selected markup drags that one vertex... */
@@ -1971,8 +2057,8 @@ function ctxForAnn(a){
       items.push({id:'dp',t:'Delete this point ('+(vi+1)+' of '+a.pts.length+')',fn:()=>delPointFrom(a,vi)});
     if(vi<0&&sc) items.push({id:'ap',t:'Add a point here',fn:()=>addPointTo(a,ctxPt,sc[0],sc[1])});
   }
-  if(a.lblOff) items.push({id:'lr',t:'Put the label back',fn:()=>{
-    snap(); delete a.lblOff; drawOverlay(); markDirty(); }});
+  if(offsOf(a)) items.push({id:'lr',t:'Put the labels back',fn:()=>{
+    snap(); delete a.lblOffs; delete a.lblOff; drawOverlay(); markDirty(); }});
   items.push({id:'hd',t:a.hidden?'Show this markup':'Hide this markup',fn:()=>{
     snap(); a.hidden=!a.hidden;
     if(a.hidden&&V.sel===a.id){ V.sel=null; showInspector(null); }
@@ -2456,7 +2542,7 @@ function calc(t){
   /* Only the LED product carries a cut increment — tape, fixtures and neon.
      Fixtures cannot be cut, so they round up to whole units by default. */
   const kind=f.kind||'tape', fixed=kind==='fixture';
-  const mode=t.round||(fixed?'up':'down');
+  const mode=t.round||P.round||(fixed?'up':'down');
   /* the three cut points the run can land on, for the picker in Calculated */
   const opts=inc>0?{
     near:Math.round(L/inc)*inc,
@@ -3412,6 +3498,7 @@ function applyTheme(){
   syncOvl(); drawOverlay();
 }
 $('#btnTheme').onclick=()=>{ P.theme=P.theme==='light'?'dark':'light'; applyTheme(); markDirty(); };
+$('#btnSet').onclick=openSettings;
 $('#calNagGo').onclick=()=>{ setTool('cal'); toast('Drag along a dimension you can read on the sheet'); };
 function syncSmartBtn(){
   const b=$('#btnSmart'); if(!b) return;
@@ -3434,8 +3521,26 @@ $('#btnAddTreat').onclick=()=>{ const t=newTreat(null);
   renderTreatments(); renderBom(); openTreat(t.id,true); };
 $('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'));
   if(!a){toast('Select a dimension or arc on the drawing first');return;} treatFromAnn(a); };
-$('#togL').onclick=()=>document.body.classList.toggle('lo');
-$('#togR').onclick=()=>document.body.classList.toggle('ro');
+/* panel visibility and which side each rail sits on, remembered per project */
+function applyPanels(){
+  const p=P.panels||{};
+  document.body.classList.toggle('hideL',p.left===false);
+  document.body.classList.toggle('hideR',p.right===false);
+  document.body.classList.toggle('swap',p.swap===true);
+  const set=(id,on,label)=>{ const b=$(id); if(!b) return;
+    b.classList.toggle('pri',on); b.title=(on?'Hide ':'Show ')+label; };
+  set('#togL',p.left!==false,'the sheets rail');
+  set('#togR',p.right!==false,'the takeoff rail');
+  const sw=$('#togSwap');
+  if(sw){ sw.classList.toggle('pri',p.swap===true);
+    sw.title=p.swap?'Sheets on the right, takeoff on the left — click to swap back'
+                   :'Swap the rails over'; }
+  if(V.vp) scheduleRepaint(true);          /* the viewport changed width */
+}
+function setPanel(k,v){ P.panels=Object.assign({left:true,right:true,swap:false},P.panels); P.panels[k]=v; applyPanels(); markDirty(); }
+$('#togL').onclick=()=>setPanel('left',(P.panels||{}).left===false);
+$('#togR').onclick=()=>setPanel('right',(P.panels||{}).right===false);
+$('#togSwap').onclick=()=>setPanel('swap',!(P.panels||{}).swap);
 $('#zIn').onclick=()=>zoomBy(1.25); $('#zOut').onclick=()=>zoomBy(.8); $('#zFit').onclick=()=>fitPage();
 function zoomBy(f){ if(!V.vp) return; flushWheel();
   const r=viewport.getBoundingClientRect(), g=zGrab(r.left+r.width/2,r.top+r.height/2);
@@ -3488,6 +3593,11 @@ document.addEventListener('keydown',e=>{
   if(k==='b') setTool('box'); if(k==='n') setTool('note'); if(k==='k') setTool('link');
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
   if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
+  if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
+  /* the rails get out of the way without reaching for the mouse */
+  if(k==='['){ setPanel('left',(P.panels||{}).left===false); }
+  if(k===']'){ setPanel('right',(P.panels||{}).right===false); }
+  if(k==='\\'){ setPanel('swap',!(P.panels||{}).swap); }
   if((k==='delete'||k==='backspace')&&V.sel){ const a=P.ann.find(x=>x.id===V.sel);
     if(a){ snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(t=>{if(t.annId===a.id)t.annId=null}); V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); markDirty(); } }
   if(k==='+'||k==='=') zoomBy(1.25); if(k==='-') zoomBy(.8);
@@ -3508,7 +3618,8 @@ function boot(keepDoc){
     +'</optgroup><optgroup label="Metric">'+SCALES.slice(13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')+'</optgroup>';
   $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
   $('#btnFinger').style.display=coarse?'':'none';
-  applyTheme();
+  setDrawScale(1);
+  applyTheme(); applyPanels();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(V.vp) drawOverlay();      /* markups are state too — keep the sheet in step */
@@ -3520,16 +3631,180 @@ function boot(keepDoc){
     $('#blank').querySelector('p').textContent=BLANK_P;
   }
 }
+/* ============================================================
+   H) settings
+   ============================================================
+   Every adjustable behaviour in one place, described in the terms of the job
+   rather than the code. Changes apply immediately and save with the project. */
+const SET_DEFAULTS={
+  units:'imperial', snap:true, smart:true, theme:'dark', code:'off',
+  waste:5, load:80, scrollZoom:true, fingerDraws:null, chipScale:1,
+  width:1.8, round:'', segLabels:true, arcDetail:true, autoFile:true,
+  panels:{left:true,right:true,swap:false},
+};
+const SET_TABS=[
+  {k:'view',t:'View'},{k:'measure',t:'Measuring'},{k:'labels',t:'Labels'},
+  {k:'est',t:'Estimating'},{k:'input',t:'Input'},{k:'files',t:'Files'},{k:'about',t:'About'}];
+let setTab='view';
+
+/* one row builder for every control type, so the page stays consistent */
+function setRow(label,hint,ctl){
+  return '<div class="setrow"><div class="lab"><b>'+esc(label)+'</b>'
+    +(hint?'<span>'+esc(hint)+'</span>':'')+'</div><div class="ctl">'+ctl+'</div></div>';
+}
+const setSel=(k,opts,val)=>'<select data-set="'+k+'">'+opts.map(o=>
+  '<option value="'+esc(o.v)+'"'+(String(o.v)===String(val)?' selected':'')+'>'+esc(o.t)+'</option>').join('')+'</select>';
+const setChk=(k,on,cap)=>'<label style="display:flex;gap:7px;align-items:center;font-size:12px;color:var(--txt)">'
+  +'<input type="checkbox" data-set="'+k+'"'+(on?' checked':'')+' style="width:auto"> '+esc(cap||'')+'</label>';
+const setNum=(k,val,min,max,step,suffix)=>'<input type="number" data-set="'+k+'" value="'+esc(val)
+  +'" min="'+min+'" max="'+max+'" step="'+(step||1)+'">'+(suffix?'<span class="val">'+esc(suffix)+'</span>':'');
+const setRange=(k,val,min,max,step,fmt)=>'<input type="range" data-set="'+k+'" value="'+esc(val)
+  +'" min="'+min+'" max="'+max+'" step="'+step+'"><span class="val" data-val="'+k+'">'+esc(fmt)+'</span>';
+
+function settingsHtml(){
+  const p=Object.assign({left:true,right:true,swap:false},P.panels);
+  if(setTab==='view') return '<div class="setgrp"><h4>Screen</h4>'
+    +setRow('Theme','Dark for the office, light for print and bright site conditions.',
+      setSel('theme',[{v:'dark',t:'Dark'},{v:'light',t:'Light'}],P.theme==='light'?'light':'dark'))
+    +setRow('Sheets rail','The list of drawings, markups and links.',
+      setChk('panelLeft',p.left!==false,p.left!==false?'Shown':'Hidden'))
+    +setRow('Takeoff rail','Treatments, library, cut list and pieces.',
+      setChk('panelRight',p.right!==false,p.right!==false?'Shown':'Hidden'))
+    +setRow('Swap the rails over','Put the takeoff under your pen hand.',
+      setChk('panelSwap',p.swap===true,p.swap?'Takeoff on the left':'Takeoff on the right'))
+    +'</div><div class="setgrp"><h4>Colour</h4>'
+    +setRow('Colour markups by','Derived colours beat colouring a busy sheet by hand.',
+      setSel('code',CODE_MODES,P.code||'off'))
+    +'</div>';
+  if(setTab==='measure') return '<div class="setgrp"><h4>Units</h4>'
+    +setRow('Units','Imperial reads as decimal feet with inches alongside.',
+      setSel('units',[{v:'imperial',t:'Imperial — feet and inches'},{v:'metric',t:'Metric — mm and m'}],P.units))
+    +'</div><div class="setgrp"><h4>Accuracy</h4>'
+    +setRow('Snap to the drawing','Measurements land on the drawing\u2019s own corners and endpoints.',
+      setChk('snap',P.snap!==false,SNAP.grid?SNAP.n+' points on this page':'On'))
+    +setRow('Default cut rounding','Which way a run rounds to the product\u2019s cut increment.',
+      setSel('round',[{v:'',t:'Automatic — up for fixtures, down for tape'},
+        {v:'down',t:'Always round down'},{v:'near',t:'Always nearest'},{v:'up',t:'Always round up'}],P.round||''))
+    +'</div>';
+  if(setTab==='labels') return '<div class="setgrp"><h4>Placement</h4>'
+    +setRow('Content-aware labels','Labels step aside instead of stacking on each other.',
+      setChk('smart',P.smart!==false,P.smart!==false?'On':'Off'))
+    +setRow('Per-segment labels','Show each leg of a poly run, not just the total.',
+      setChk('segLabels',P.segLabels!==false,P.segLabels!==false?'Shown':'Total only'))
+    +setRow('Arc radius and angle','Second label under an arc with its radius and included angle.',
+      setChk('arcDetail',P.arcDetail!==false,P.arcDetail!==false?'Shown':'Hidden'))
+    +'</div><div class="setgrp"><h4>Size</h4>'
+    +setRow('Label size','Bigger reads better across a room; smaller crowds less.',
+      setRange('chipScale',P.chipScale||1,0.7,2,0.05,Math.round((P.chipScale||1)*100)+'%'))
+    +setRow('Default line weight','Applied to new markups. Existing ones keep theirs.',
+      setSel('width',WEIGHTS.map(w=>({v:w.v,t:w.t+' · '+w.v})),V.width))
+    +'</div>';
+  if(setTab==='est') return '<div class="setgrp"><h4>Allowances</h4>'
+    +setRow('Material waste','Added to ordered quantities in the BOM.',setNum('waste',P.waste??5,0,50,1,'%'))
+    +setRow('Supply load ceiling','Never load a driver past this share of its rating.',setNum('load',P.load??80,40,100,5,'%'))
+    +'</div>';
+  if(setTab==='input') return '<div class="setgrp"><h4>Pointer</h4>'
+    +setRow('Scroll wheel','Zoom at the cursor, or scroll the sheet.',
+      setSel('scrollZoom',[{v:'1',t:'Zooms at the cursor'},{v:'0',t:'Scrolls the sheet'}],P.scrollZoom===false?'0':'1'))
+    +setRow('One finger','On a tablet: draw with your finger, or reserve it for panning.',
+      setSel('fingerDraws',[{v:'1',t:'Draws'},{v:'0',t:'Pans — draw with the Pencil'}],V.fingerDraws?'1':'0'))
+    +'</div>';
+  if(setTab==='files') return '<div class="setgrp"><h4>Saving</h4>'
+    +setRow('Auto-save to the linked file','Every change also writes to the project file you picked.',
+      setChk('autoFile',autoFile,FH?('Writing to '+FH.name):'No file linked yet'))
+    +setRow('Undo depth','How many steps are kept. They survive a reload.',
+      '<span class="val">'+HIST.length+' of 60 used</span>')
+    +'</div><div class="setgrp"><h4>This project</h4>'
+    +setRow('Project name','',('<input type="text" data-set="name" value="'+esc(P.name||'')+'">'))
+    +setRow('Job number','',('<input type="text" data-set="no" value="'+esc(P.no||'')+'">'))
+    +'</div>';
+  return '<div class="setgrp"><h4>Linework</h4>'
+    +setRow('Version',APP_BUILD+' build','<span class="val">'+APP_VER+'</span>')
+    +setRow('Project file schema','Older files load and are brought forward.','<span class="val">v'+FILE_VER+'</span>')
+    +setRow('PDF engine',PDF_OK?'Vendored, works offline':'Not loaded','<span class="val">'+(PDF_OK?'pdf.js':'missing')+'</span>')
+    +setRow('Offline','Installed copies open without a network.',
+      '<span class="val">'+('serviceWorker' in navigator?'available':'no')+'</span>')
+    +setRow('Sheets in this project','','<span class="val">'+P.docs.length+'</span>')
+    +setRow('Markups / treatments','','<span class="val">'+P.ann.length+' / '+P.treat.length+'</span>')
+    +'</div>';
+}
+function renderSettings(){
+  $('#setVer').textContent='v'+APP_VER;
+  $('#setNav').innerHTML=SET_TABS.map(t=>'<button data-tab="'+t.k+'"'+(t.k===setTab?' class="on"':'')+'>'+esc(t.t)+'</button>').join('');
+  $$('#setNav button').forEach(b=>b.onclick=()=>{ setTab=b.dataset.tab; renderSettings(); });
+  const body=$('#setBody');
+  body.innerHTML=settingsHtml();
+  $$('[data-set]',body).forEach(el=>{
+    const ev=el.type==='range'?'input':(el.tagName==='SELECT'||el.type==='checkbox'?'change':'input');
+    el.addEventListener(ev,()=>applySetting(el));
+    if(el.type==='range') el.addEventListener('input',()=>{
+      const v=$('[data-val="'+el.dataset.set+'"]'); if(v) v.textContent=Math.round(el.value*100)+'%';
+    });
+  });
+}
+function applySetting(el){
+  const k=el.dataset.set;
+  const val=el.type==='checkbox'?el.checked:el.value;
+  switch(k){
+    case 'theme': P.theme=val; applyTheme(); break;
+    case 'panelLeft': setPanel('left',val); break;
+    case 'panelRight': setPanel('right',val); break;
+    case 'panelSwap': setPanel('swap',val); break;
+    case 'code': P.code=val; renderCodeKey(); drawOverlay(); renderAnnList(); break;
+    case 'units': P.units=val; $('#unitBtn').textContent=P.units.toUpperCase();
+      syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderLib(); renderBom(); stats(); break;
+    case 'snap': P.snap=val; syncSnapBtn(); if(val&&!SNAP.grid) buildSnap(); break;
+    case 'round': P.round=val; P.treat.forEach(t=>{ if(!t.round) t.roundDefault=val; });
+      renderTreatments(); renderBom(); stats(); break;
+    case 'smart': P.smart=val; syncSmartBtn(); drawOverlay(); break;
+    case 'segLabels': P.segLabels=val; drawOverlay(); break;
+    case 'arcDetail': P.arcDetail=val; drawOverlay(); break;
+    case 'chipScale': P.chipScale=+val||1; setDrawScale(1); drawOverlay(); break;
+    case 'width': V.width=+val; P.width=+val; break;
+    case 'waste': P.waste=clamp(+val||0,0,50); $('#waste').value=P.waste; renderBom(); stats(); break;
+    case 'load': P.load=clamp(+val||80,40,100); $('#loadF').value=P.load; renderTreatments(); renderBom(); stats(); break;
+    case 'scrollZoom': P.scrollZoom=val==='1'; syncScrollBtn(); break;
+    case 'fingerDraws': V.fingerDraws=val==='1'; P.fingerDraws=V.fingerDraws;
+      $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans'; break;
+    case 'autoFile': autoFile=val; syncFileBtn(); break;
+    case 'name': P.name=val; $('#projName').value=val; break;
+    case 'no': P.no=val; $('#projNo').value=val; break;
+  }
+  markDirty();
+  /* redraw the page so labels like "12 points on this page" stay true */
+  if(/^(snap|units|panel)/.test(k)) renderSettings();
+}
+function openSettings(){ $('#setScrim').classList.add('show'); renderSettings(); }
+function closeSettings(){ $('#setScrim').classList.remove('show'); }
+$('#setClose').onclick=closeSettings;
+$('#setScrim').onclick=e=>{ if(e.target===$('#setScrim')) closeSettings(); };
+$('#setReset').onclick=async()=>{
+  const r=await dlg({title:'Reset settings',fields:[
+    {k:'go',type:'check',cap:'Put every setting back to its default',val:false}
+  ],ok:'Reset',note:'Your sheets, markups, treatments and libraries are untouched — only preferences change.'});
+  if(!r||!r.go) return;
+  snap();
+  Object.assign(P,{units:'imperial',snap:true,smart:true,theme:'dark',code:'off',waste:5,load:80,
+    scrollZoom:true,chipScale:1,segLabels:true,arcDetail:true,round:'',
+    panels:{left:true,right:true,swap:false}});
+  V.width=1.8; V.fingerDraws=!coarse; autoFile=true;
+  applyTheme(); applyPanels(); setDrawScale(1);
+  boot(); renderSettings();
+  toast('Settings reset');
+};
+
 /* console handle for scripting / debugging the takeoff */
 window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen,openFiles,openDoc,bomData,boot,rdp,smooth,undo,redo,snap,copyAnn,pasteAnn,ctxForAnn,ctxForSheet,wheelZoom,flushWheel,
   saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
   annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
-  fmtRun,fmtFtIn,chipFontSize:CHIP_FS,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
+  fmtRun,fmtFtIn,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
+  get chipFontSize(){return CHIP_FS}, get chipHeight(){return CHIP_H},
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
+  openSettings,closeSettings,applySetting,applyPanels,setPanel,offsOf,offFor,setDrawScale,
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
   render(){boot()}};
