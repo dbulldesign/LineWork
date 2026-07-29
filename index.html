@@ -574,6 +574,8 @@ body.haspen #penFlag{display:inline}
       <input type="file" id="libInput" accept=".json,application/json" hidden>
       <button class="btn" id="btnLibSave">Save library file</button>
       <button class="btn" id="btnLibOpen">Import library</button>
+      <button class="btn" id="btnLibSeed">Load QTL starter library</button>
+      <button class="btn" id="btnLibCheck">Check every cutsheet link</button>
       <div id="libSort" style="flex:1 1 100%"></div>
     </div><div class="hint" style="padding:0 12px 10px">Keep your company's products in one file and load it into every project.</div></div>
     <div class="sec"><div class="empty">Seeded with generic placeholder products. Replace the cut increment, watts per foot, maximum feed run, and stock lengths with the values from your actual manufacturer's cut sheet before issuing anything.</div></div>
@@ -680,7 +682,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.22.0';
+const APP_VER='1.23.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -824,37 +826,94 @@ const SCALES=[
 ];
 const ratioLabel=r=>{ const hit=SCALES.find(s=>Math.abs(s[1]-r)<0.02); return hit?hit[0]:'1:'+r.toFixed(1); };
 
-/* ---- seeded library (generic placeholders — replace with real cut-sheet data) ---- */
+/* ---- the seeded library ----
+   Real QTL products, named from their own catalogue pages, each carrying the link
+   to that page. Only figures stated on those pages are filled in; anything else
+   is left at zero and the item is marked unverified, which the library shows and
+   the calculator warns about. A blank that says it is blank is safe; a plausible
+   number nobody checked is not. Use "Read specs" on an item to have the app take
+   volts, watts per foot, cut increment and maximum run out of the cutsheet PDF.
+
+   Sources: qtl.lighting/products/linear-led-strips, /power-supplies,
+   /q-cap-flexible-led-fixtures, /led-profiles. */
+const QTL='https://www.qtl.lighting/products/';
 /* kind drives how a run is broken down. Tape, neon and fixtures all come in cut
    increments; channel (below) does not — it is cut to whatever length is needed. */
 const KINDS=[{v:'tape',t:'LED tape'},{v:'fixture',t:'Fixture'},{v:'neon',t:'Neon flex'}];
 const DEF_FIX=[
- {id:'F1',name:'Tape · 24V · standard output',kind:'tape',volts:24,wft:3.0,cut:2,feed:196.85,note:'Constant-voltage driver'},
- {id:'F2',name:'Tape · 24V · high output',kind:'tape',volts:24,wft:6.0,cut:2,feed:196.85,note:''},
- {id:'F3',name:'Tape · 24V · extra high output',kind:'tape',volts:24,wft:9.6,cut:4,feed:157.48,note:'Heat sink required'},
- {id:'F4',name:'Neon flex · 24V · top bend',kind:'neon',volts:24,wft:4.4,cut:3.94,feed:196.85,note:'100 mm cut increment'},
- {id:'F5',name:'Neon flex · 24V · side bend',kind:'neon',volts:24,wft:4.4,cut:3.94,feed:196.85,note:'100 mm cut increment'},
- {id:'F6',name:'Neon flex · 120V line voltage',kind:'neon',volts:120,wft:3.0,cut:39.37,feed:1200,note:'1 m cut increment'},
- {id:'F7',name:'Linear fixture · 4 ft joinable',kind:'fixture',volts:24,wft:4.5,cut:48,feed:384,note:'Fixed length — round up to whole fixtures'},
- {id:'F8',name:'Linear fixture · 2 ft joinable',kind:'fixture',volts:24,wft:4.5,cut:24,feed:384,note:'Fixed length — round up to whole fixtures'}
+ /* Static white strips. The number after the slash is watts per foot; the cut
+    point and lumens per foot are as stated on each product page. */
+ {id:'F_SW2415',name:'SW24/1.5 · static white',kind:'tape',volts:24,wft:1.5,cut:1,feed:0,lm:172,
+  sheet:QTL+'linear-led-strips-sw2415/',verified:false,note:'172 lm/ft at 3000K · 6 diodes per 1" cut point'},
+ {id:'F_SW2430',name:'SW24/3.0 · static white',kind:'tape',volts:24,wft:3.0,cut:1,feed:0,lm:300,
+  sheet:QTL+'linear-led-strips-sw2430/',verified:false,note:'300 lm/ft at 3000K · 6 diodes per 1" cut point'},
+ {id:'F_SW2440',name:'SW24/4.0 · static white',kind:'tape',volts:24,wft:4.0,cut:1,feed:0,lm:373,
+  sheet:QTL+'linear-led-strips-sw2440/',verified:false,note:'373 lm/ft at 3000K · 6 diodes per 1" cut point'},
+ {id:'F_SW2450',name:'SW24/5.0 · static white',kind:'tape',volts:24,wft:5.0,cut:1,feed:0,lm:454,
+  sheet:QTL+'linear-led-strips-sw2450/',verified:false,note:'454 lm/ft at 3000K · 6 diodes per 1" cut point'},
+ /* High-efficacy and dynamic white cut in 2" increments */
+ {id:'F_SWHE2430',name:'SW-HE24/3.0 · high efficacy',kind:'tape',volts:24,wft:3.0,cut:2,feed:0,lm:407,
+  sheet:QTL+'linear-led-strips-sw-he2430/',verified:false,note:'407 lm/ft at 3000K · 8 diodes per 2" cut point'},
+ {id:'F_DWHE2440',name:'DW-HE24/4.0 · dynamic white',kind:'tape',volts:24,wft:4.0,cut:2,feed:0,lm:0,
+  sheet:QTL+'linear-led-strips-dw-he2440/',verified:false,note:'Tunable / warm dim · 14 diodes per 2" cut point'},
+ /* Cut point not stated on the catalogue page — read the cutsheet */
+ {id:'F_SDSW2440',name:'SD-SW24/4.0 · side-emitting',kind:'tape',volts:24,wft:4.0,cut:0,feed:0,lm:379,
+  sheet:QTL+'linear-led-strips-sd-sw2440/',verified:false,note:'379 lm/ft at 3000K · cut point not stated — read the cutsheet'},
+ {id:'F_SDSW2460',name:'SD-SW24/6.0 · side-emitting',kind:'tape',volts:24,wft:6.0,cut:0,feed:0,lm:522,
+  sheet:QTL+'linear-led-strips-sd-sw2460/',verified:false,note:'522 lm/ft at 3000K · cut point not stated — read the cutsheet'},
+ {id:'F_RGBW2460',name:'RGBW24/6.0 · colour changing',kind:'tape',volts:24,wft:6.0,cut:0,feed:0,lm:99,
+  sheet:QTL+'linear-led-strips-rgbw2460/',verified:false,note:'99 lm/ft at 3000K · four channels · cut point not stated'},
+ /* Q-CAP encapsulated flexible fixtures. Field-cuttable Q-CAP is a 4 ft unit for
+    the end of a run, marked at the LED cut point; the rest are made to length. */
+ {id:'F_QCAP_KURV',name:'Q-CAP KURV · side bend',kind:'fixture',volts:24,wft:0,cut:0,feed:0,lm:0,
+  sheet:QTL+'kurv/',verified:false,note:'Encapsulated flexible fixture · wattage per foot from the cutsheet'},
+ {id:'F_QCAP_BOXA',name:'Q-CAP BOXA · 6" bend radius',kind:'fixture',volts:24,wft:0,cut:0,feed:0,lm:0,
+  sheet:QTL+'boxa/',verified:false,note:'Encapsulated flexible fixture · read the cutsheet'},
+ {id:'F_QCAP_ZALA',name:'Q-CAP ZALA',kind:'fixture',volts:24,wft:0,cut:0,feed:0,lm:0,
+  sheet:QTL+'zala-1/',verified:false,note:'Encapsulated flexible fixture · read the cutsheet'},
+ {id:'F_QCAP_LUME',name:'Q-CAP LUME · three-sided',kind:'fixture',volts:24,wft:0,cut:0,feed:0,lm:0,
+  sheet:QTL+'q-cap-flexible-led-fixtures/',verified:false,note:'Three-sided illumination · read the cutsheet'},
+ {id:'F_QCAP_LAND',name:'Q-CAP landscape',kind:'fixture',volts:24,wft:0,cut:0,feed:0,lm:0,
+  sheet:QTL+'q-cap-flexible-landscape-fixtures/',verified:false,note:'Exterior rated · read the cutsheet'}
 ];
 /* Channel is always cut to length on site: stock is only the purchase length, it
    never rounds the run. */
 const DEF_CH=[
- {id:'C1',name:'Recessed extrusion · 2 m',stock:78.74,clip:19.69,note:'Frosted lens'},
- {id:'C2',name:'Surface extrusion · 2 m',stock:78.74,clip:19.69,note:''},
- {id:'C3',name:'45° corner extrusion · 2 m',stock:78.74,clip:15.75,note:''},
- {id:'C4',name:'Plaster-in extrusion · 8 ft',stock:96,clip:24,note:'Mud-in flange'},
- {id:'C5',name:'Neon mounting track · 1 m',stock:39.37,clip:11.81,note:''},
- {id:'C6',name:'No channel — direct mount',stock:0,clip:19.69,note:'Adhesive + clip'}
+ /* QTL aluminium extrusions. Stock lengths are not stated on the catalogue pages,
+    so they are left unset — the BOM says so rather than guessing. */
+ {id:'C_THIN',name:'THIN · thin extrusion',stock:0,clip:0,sheet:QTL+'extrusions-thin/',verified:false,
+  note:'Stock length and clip spacing from the cutsheet'},
+ {id:'C_LATO',name:'LATO · shallow surface or recessed',stock:0,clip:0,sheet:QTL+'extrusions-lato/',verified:false,
+  note:'Shallow flanged profile'},
+ {id:'C_TORQ',name:'TORQ · surface or recessed',stock:0,clip:0,sheet:QTL+'extrusions-torq/',verified:false,note:''},
+ {id:'C_EMBD',name:'EMBD · flanged recessed',stock:0,clip:0,sheet:QTL+'extrusions-embd/',verified:false,
+  note:'Mud-in flange'},
+ {id:'C_WIDE',name:'WIDE · wide profile',stock:0,clip:0,sheet:QTL+'extrusions-wide/',verified:false,note:''},
+ /* A placeholder so a fresh project can produce a cut list, nesting and clip
+    counts before anyone has read a cutsheet. It says what it is. */
+ {id:'C_GEN8',name:'Generic extrusion · 8 ft stock · PLACEHOLDER',stock:96,clip:24,sheet:'',verified:false,
+  note:'Not a real product — replace it with the QTL profile you are using'},
+ {id:'C_NONE',name:'No channel — direct mount',stock:0,clip:19.69,sheet:'',verified:true,note:'Adhesive + clip'}
 ];
 const DEF_PSU=[
- {id:'P1',name:'24V · 60W · Class 2',volts:24,watts:60,c2:true},
- {id:'P2',name:'24V · 96W · Class 2',volts:24,watts:96,c2:true},
- {id:'P3',name:'24V · 150W remote',volts:24,watts:150,c2:false},
- {id:'P4',name:'24V · 320W remote',volts:24,watts:320,c2:false},
- {id:'P5',name:'24V · 100W ELV dimmable',volts:24,watts:100,c2:false},
- {id:'P0',name:'Line voltage — no supply',volts:120,watts:0,c2:false}
+ /* QTL DC power supplies, with the wattages their catalogue pages state */
+ {id:'P_QZLP30',name:'QZLP · 30W · 24VDC · Class 2',volts:24,watts:30,c2:true,
+  sheet:QTL+'led-power-supplies-qzlp/',verified:false,note:'30–60W low-profile driver'},
+ {id:'P_QZLP60',name:'QZLP · 60W · 24VDC · Class 2',volts:24,watts:60,c2:true,
+  sheet:QTL+'led-power-supplies-qzlp/',verified:false,note:''},
+ {id:'P_QZSTICK96',name:'QZ-STICK-PH/0-10V · 96W · Class 2',volts:24,watts:96,c2:true,
+  sheet:QTL+'power-supplies-qz-stick-ph0-10v/',verified:false,note:'0-10V dimming'},
+ {id:'P_QOM80',name:'QOM-PH · 80W · 24VDC',volts:24,watts:80,c2:false,
+  sheet:QTL+'led-power-supplies-qom-ph/',verified:false,note:'Class 2 status not stated — check the cutsheet'},
+ {id:'P_QOM160',name:'QOM-PH · 160W · 24VDC',volts:24,watts:160,c2:false,
+  sheet:QTL+'led-power-supplies-qom-ph/',verified:false,note:''},
+ {id:'P_IQ80',name:'iQ-PH-QD1 · 80W · 24VDC',volts:24,watts:80,c2:false,
+  sheet:QTL+'led-power-supplies-iq-ph-qd1/',verified:false,note:''},
+ {id:'P_QSET96',name:'Q-SET · 96W · Class 2 · pool & spa',volts:24,watts:96,c2:true,
+  sheet:QTL+'q-set-pool-spa-dc-led-power-supplies/',verified:false,note:'Wet location'},
+ {id:'P_QZ',name:'QZ · indoor DC supply',volts:24,watts:0,c2:false,
+  sheet:QTL+'qz-indoor-dc-led-power-supplies/',verified:false,note:'Pick the wattage from the cutsheet'},
+ {id:'P_NONE',name:'Line voltage — no supply',volts:120,watts:0,c2:false,sheet:'',verified:true,note:''}
 ];
 
 /* ---- project state ---- */
@@ -1078,8 +1137,24 @@ function applyProject(d){
   if(P.base&&!Array.isArray(P.base.treat)) delete P.base;
   if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
-  [['fix',['cost']],['ch',['cost','clipCost','capCost','joinCost']],['psu',['cost']]].forEach(([k,fields])=>{
+  [['fix',['cost','lm']],['ch',['cost','clipCost','capCost','joinCost']],['psu',['cost']]].forEach(([k,fields])=>{
     P[k].forEach(o=>fields.forEach(f=>{ o[f]=Math.max(0,+o[f]||0); }));
+  });
+  /* cutsheets, added in 1.23 */
+  ['fix','ch','psu'].forEach(k=>P[k].forEach(o=>{
+    o.sheet=String(o.sheet||'').trim();
+    if(typeof o.verified!=='boolean') o.verified=true;   /* an older item was never claimed to be unchecked */
+    if(o.ok!==true&&o.ok!==false) delete o.ok;
+    if(o.checked&&isNaN(Date.parse(o.checked))) delete o.checked;
+  }));
+  /* a feed limit of 1e9 was the old "unknown" — make it say so */
+  P.fix.forEach(f=>{ if(+f.feed>=1e8) f.feed=0; });
+  /* a treatment naming a product that is not in this file gets the first one */
+  const fixIds=new Set(P.fix.map(x=>x.id)),chIds=new Set(P.ch.map(x=>x.id)),psuIds=new Set(P.psu.map(x=>x.id));
+  P.treat.forEach(t=>{
+    if(!fixIds.has(t.fixId)) t.fixId=P.fix[0].id;
+    if(!chIds.has(t.chId)) t.chId=P.ch[0].id;
+    if(!psuIds.has(t.psuId)) t.psuId=P.psu[0].id;
   });
   P.panels=Object.assign({left:true,right:true,swap:false},P.panels);
   if(typeof P.width==='number') V.width=clamp(P.width,.5,12);
@@ -1104,6 +1179,7 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
       else if(f.type==='textarea') ctl='<textarea data-k="'+f.k+'">'+esc(f.val||'')+'</textarea>';
       else if(f.type==='num') ctl='<input type="number" step="'+(f.step||'any')+'" data-k="'+f.k+'" value="'+esc(f.val??'')+'">';
       else if(f.type==='check') ctl='<label style="display:flex;gap:7px;align-items:center;text-transform:none;letter-spacing:0;font-size:12px;color:var(--txt)"><input type="checkbox" data-k="'+f.k+'" '+(f.val?'checked':'')+' style="width:auto"> '+esc(f.cap||'')+'</label>';
+      else if(f.type==='file') ctl='<input type="file" data-k="'+f.k+'"'+(f.accept?' accept="'+esc(f.accept)+'"':'')+'>';
       else ctl='<input type="text" data-k="'+f.k+'" value="'+esc(f.val??'')+'" placeholder="'+esc(f.ph||'')+'">';
       d.innerHTML=(f.label&&f.type!=='check'?'<label>'+esc(f.label)+'</label>':'')+ctl+(f.hint?'<div class="hint" style="margin-top:4px">'+esc(f.hint)+'</div>':'');
       host.appendChild(d);
@@ -1113,7 +1189,10 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
     const sc=$('#scrim'); sc.classList.add('show');
     const first=b.querySelector('input,select,textarea'); if(first) setTimeout(()=>{first.focus(); if(first.select)first.select();},40);
     const close=v=>{ sc.classList.remove('show'); document.removeEventListener('keydown',key); res(v); };
-    const grab=()=>{ const o={}; $$('[data-k]',b).forEach(el=>{ o[el.dataset.k]= el.type==='checkbox'?el.checked : el.value; }); return o; };
+    const grab=()=>{ const o={}; $$('[data-k]',b).forEach(el=>{
+      o[el.dataset.k]= el.type==='checkbox'?el.checked
+        : el.type==='file'?((el.files&&el.files[0])||null)
+        : el.value; }); return o; };
     $('#dlgOK').onclick=()=>close(grab());
     $('#dlgX').onclick=()=>close(null);
     sc.onclick=e=>{ if(e.target===sc) close(null); };
@@ -4370,6 +4449,11 @@ function calc(t){
   const f=P.fix.find(x=>x.id===t.fixId)||P.fix[0];
   const c=P.ch.find(x=>x.id===t.chId)||P.ch[0];
   const ps=P.psu.find(x=>x.id===t.psuId)||P.psu[0];
+  /* a treatment can outlive the product it named — say which one is being used
+     instead rather than quietly costing something else */
+  const orphan=[!P.fix.some(x=>x.id===t.fixId)&&'LED product',
+    !P.ch.some(x=>x.id===t.chId)&&'channel',
+    !P.psu.some(x=>x.id===t.psuId)&&'power supply'].filter(Boolean);
   const L=lenOf(t), qty=Math.max(1,+t.qty||1), inc=+f.cut||0;
   /* Only the LED product carries a cut increment — tape, fixtures and neon.
      Fixtures cannot be cut, so they round up to whole units by default. */
@@ -4389,15 +4473,19 @@ function calc(t){
   if(!isFinite(cut)||cut<0) cut=0;
   const units=inc>0?Math.round(cut/inc):0;           /* whole tape cuts / fixtures */
   const gap=L-cut, watts=cut/12*f.wft;
-  const autoFeeds=cut>0?Math.max(1,Math.ceil(cut/(f.feed||1e9)-1e-6)):0;
+  /* a product with no feed limit on file cannot be checked for voltage drop —
+     the calculator says so rather than quietly reporting one feed point */
+  const feedKnown=+f.feed>0;
+  const autoFeeds=cut>0?Math.max(1,Math.ceil(cut/(feedKnown?f.feed:1e9)-1e-6)):0;
   const feedSet=+t.feedOv>0, feeds=feedSet?Math.max(1,Math.round(+t.feedOv)):autoFeeds;
   const clipAsked=parseLen(t.clip);
   const clipBad=t.clip!==''&&t.clip!=null&&(!isFinite(clipAsked)||clipAsked<=0);
   /* an absurd spacing quietly produced 2 clips for a 100ft run; clamp and say so */
+  const clipKnown=+c.clip>0||(isFinite(clipAsked)&&clipAsked>0);
   const clipSp=clamp((isFinite(clipAsked)&&clipAsked>0)?clipAsked:(c.clip||20),1,120);
   const clipClamped=isFinite(clipAsked)&&clipAsked>0&&Math.abs(clipSp-clipAsked)>1e-6;
   const stock=+c.stock||0;
-  const clips=stock>0||c.clip? Math.max(2,Math.ceil(L/clipSp+1e-9)+1):0;
+  const clips=clipKnown&&(stock>0||c.clip)? Math.max(2,Math.ceil(L/clipSp+1e-9)+1):0;
   const pieces=stock>0?Math.ceil(L/stock-1e-6):0;
   const full=stock>0?Math.floor(L/stock+1e-9):0;
   const remainder=stock>0?Math.max(0,L-full*stock):0;
@@ -4409,13 +4497,26 @@ function calc(t){
   const w=[];
   if(L<=0) w.push('No length yet — measure it on the drawing or type it in.');
   else if(cut<=0) w.push('Run is shorter than one cut increment of '+fmtLen(inc)+'.');
+  /* the seeded library carries what the catalogue states and no more, so say
+     plainly where a number is missing rather than rounding on a guess */
+  if(L>0&&inc<=0&&kind!=='channel')
+    w.push('No cut increment on '+f.name+' — the run is being ordered to the exact length. Read its cutsheet to set one.');
+  if(L>0&&!feedKnown)
+    w.push('No maximum run per feed on '+f.name+' — feed points cannot be checked. Read its cutsheet to set one.');
+  if(L>0&&!(f.wft>0)) w.push('No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
+  orphan.forEach(kind=>w.push('The '+kind+' this treatment named is not in the library — using '
+    +(kind==='LED product'?f.name:kind==='channel'?c.name:ps.name)+' instead.'));
+  if(f.verified===false) w.push(f.name+' has not been checked against its cutsheet.');
+  if(c.verified===false&&c.id!=='C_NONE') w.push(c.name+' has not been checked against its cutsheet.');
+  if(ps.verified===false&&ps.watts>0) w.push(ps.name+' has not been checked against its cutsheet.');
   if(gap>0.06&&cut>0) w.push('Dark gap of '+fmtLen(gap)+' per run. Decide now which end it lands on.');
   if(gap<-0.06&&cut>0) w.push('Runs '+fmtLen(-gap)+' long per run — rounded up to whole '+(fixed?'fixtures':'cut increments')+'.');
   if(fixed&&mode==='down'&&gap>0.06) w.push('Fixtures cannot be cut down — rounding down leaves this run short. Use Round up.');
   if(feedSet&&feeds<autoFeeds) w.push('Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(f.feed)+' per feed.');
   if(!feedSet&&feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(f.feed)+' per feed. A centre feed usually solves it.');
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
-  if(stock===0&&c.id!=='C6') w.push('No stock length set for this channel.');
+  if(stock===0&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No stock length set for '+c.name+' — read its cutsheet to nest off-cuts.');
+  if(L>0&&!clipKnown&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No clip spacing for '+c.name+' — clips are not being counted.');
   if(t.approved){
     const d=apDrift(t);
     if(d) w.push('Approved at '+fmtLen(t.apLen)+' but the drawing now measures '+fmtLen(lenOf(t))
@@ -4424,7 +4525,7 @@ function calc(t){
   if(clipBad) w.push('Clip spacing "'+t.clip+'" could not be read — using '+fmtLen(clipSp)+'.');
   if(clipClamped) w.push('Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
   if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
-  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,
+  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
@@ -4678,7 +4779,9 @@ function outHtml(r,t){
     ['Total '+kindName+' ordered',fmtRun(r.tot.cut)+(r.inc>0?'  ('+r.tot.units+' ea)':''),true],
     ['Load per run',r.watts.toFixed(1)+' W',false],
     ['Total load',r.tot.watts.toFixed(1)+' W',false],
-    ['Feed points',r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto'),false],
+    ['Feed points',(r.feedKnown||r.feedSet)?(r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto'))
+      :'unknown — no feed limit on file',false],
+    ['Light output',r.f.lm>0?Math.round(r.f.lm*r.tot.cut/12).toLocaleString()+' lm total':'—',false],
     ['Channel length',r.stock||r.c.clip?fmtRun(r.tot.chLen)+' cut to length':'—',false],
     ['Channel pieces',r.stock?r.tot.pieces+' × '+fmtLen(r.stock)+' stock':'—',false],
     ['Off-cut per run',r.stock?(r.remainder>0.05?fmtLen(r.stock-r.remainder)+' waste':'none'):'—',false],
@@ -4703,11 +4806,12 @@ function outHtml(r,t){
       +(r.locked?' — locked; unlock to compare the others again':' — pick one to lock it for this run')+'</span>'
       +cand.map(([k,l,v])=>{
         if(!(v>0)) return '';
-        /* the box that is actually in force. Once locked it is the box that was
-           pressed, since two of them can carry the same length. */
-        const at=r.locked&&t.cutOpt
-          ? t.cutOpt===k
-          : Math.abs(r.cut-v)<1e-6&&(!r.locked||k!=='near'||nearIsUp===(k==='up'));
+        /* The box in force: the one that was pressed if the cut is locked, else the
+           one the rounding mode produces. Nearest often carries the same length as
+           a neighbour, and marking two boxes says nothing. */
+        const at=r.locked
+          ? (t.cutOpt?t.cutOpt===k:Math.abs(r.cut-v)<1e-6)
+          : r.mode===k;
         const sub=k==='near'?(nearIsUp?'rounds up':'rounds down'):(k==='down'?'-'+fmtRun(r.L-v):'+'+fmtRun(v-r.L));
         return '<button class="btn cutopt'+(at?' pri chosen':'')+'" data-cut="'+v.toFixed(4)+'" data-opt="'+k+'"'
           +(r.locked&&!at?' title="Locked at '+esc(fmtLen(r.cut))+' — unlock to choose this instead"':'')+'>'
@@ -4758,6 +4862,127 @@ function usedBy(key,id){
   const n=usesOf(key,id).length;
   return n?' · <b style="color:var(--amber)">used by '+n+'</b>':'';
 }
+/* ---- cutsheets ----
+   Every library item can carry the link to its own cutsheet, so the number you
+   are about to order against is one tap from the page that states it.
+
+   Checking a link from a browser is not as simple as it sounds: the same-origin
+   policy means a cross-origin response cannot be read, so a fetch that succeeds
+   tells us the server answered *something*. We say exactly that rather than
+   claiming a link is good, and offer to open it. */
+const sheetOf=o=>String((o&&o.sheet)||'').trim();
+function sheetState(o){
+  if(!sheetOf(o)) return {k:'none',t:'no cutsheet link'};
+  if(o.ok===true) return {k:'ok',t:'checked '+shortDate(o.checked)};
+  if(o.ok===false) return {k:'bad',t:'could not be reached '+shortDate(o.checked)};
+  if(o.checked) return {k:'seen',t:'answered '+shortDate(o.checked)};
+  return {k:'new',t:'not checked'};
+}
+const shortDate=iso=>{ if(!iso) return ''; try{ return new Date(iso).toLocaleDateString(); }catch(e){ return ''; } };
+async function checkSheet(o){
+  const url=sheetOf(o);
+  if(!url) return {state:'none',msg:'No cutsheet link on this item'};
+  if(!/^https?:\/\//i.test(url)) return {state:'bad',msg:'That does not look like a link'};
+  o.checked=new Date().toISOString();
+  try{
+    const r=await fetch(url,{method:'GET',mode:'cors',redirect:'follow'});
+    o.ok=r.ok; o.status=r.status;
+    return {state:r.ok?'ok':'bad',msg:r.ok?('Reachable — HTTP '+r.status):('The server answered HTTP '+r.status),
+      readable:true,res:r};
+  }catch(e){
+    /* almost always CORS rather than a dead link */
+    try{
+      await fetch(url,{mode:'no-cors',redirect:'follow'});
+      o.ok=null; delete o.status;
+      return {state:'opaque',msg:'The server answered, but the browser will not let this page read it — open it to be sure'};
+    }catch(e2){
+      o.ok=false; delete o.status;
+      return {state:'unreachable',msg:'Could not reach it at all — the link may be dead or you may be offline'};
+    }
+  }
+}
+/* ---- reading a cutsheet ----
+   A cross-origin page cannot be scraped from here, but a cutsheet you have in
+   your hands can be read: drop the PDF in and pdf.js hands us its text, or paste
+   the text yourself. Then it is a matter of finding the numbers. */
+async function pdfText(file,maxPages){
+  const buf=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+  const n=Math.min(pdf.numPages,maxPages||4);
+  let out='';
+  for(let i=1;i<=n;i++){
+    const pg=await pdf.getPage(i);
+    const tc=await pg.getTextContent();
+    out+=(tc.items||[]).map(x=>x.str).join(' ')+'\n';
+  }
+  return out;
+}
+function readSpecs(text){
+  const t=String(text||'').replace(/\u2033|\u201d/g,'"').replace(/\u2032|\u2019/g,"'").replace(/\s+/g,' ');
+  const num=m=>m?parseFloat(m[1]):null;
+  const out={};
+  let m;
+  if((m=t.match(/(\d{2,3})\s*V(?:DC|AC)?\b/i))) out.volts=num(m);
+  if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:W|watts?)\s*(?:\/|per\s*)\s*(?:ft|foot|')/i))) out.wft=num(m);
+  if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:lm|lumens?)\s*(?:\/|per\s*)\s*(?:ft|foot|')/i))) out.lm=num(m);
+  /* cut points come written both ways round */
+  if((m=t.match(/cut(?:ting)?\s*(?:point|increment|length|every|at)?\D{0,24}?(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)/i))) out.cut=num(m);
+  else if((m=t.match(/(\d+)\s*diodes?\s*per\s*(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)/i))) out.cut=parseFloat(m[2]);
+  else if((m=t.match(/cut(?:table)?\D{0,20}(\d+(?:\.\d+)?)\s*mm/i))) out.cut=num(m)/MM;
+  if((m=t.match(/max(?:imum)?\s*(?:run|length|feed)\D{0,24}?(\d+(?:\.\d+)?)\s*(?:'|ft|feet)/i))) out.feed=num(m)*12;
+  if((m=t.match(/(?:stock|standard|supplied|available)\s*(?:in\s*)?lengths?\D{0,24}?(\d+(?:\.\d+)?)\s*(?:'|ft|feet)/i))) out.stock=num(m)*12;
+  else if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(?:stock|lengths?)/i))) out.stock=num(m)*12;
+  if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:W|watts?)\b(?!\s*(?:\/|per))/i))) out.watts=num(m);
+  if(/class\s*2/i.test(t)) out.c2=true;
+  return out;
+}
+/* the fields a given kind of item cares about */
+const SPEC_FIELDS={
+  fix:[['volts','Volts'],['wft','Watts per foot'],['cut','Cut increment (in)'],
+       ['feed','Max run per feed (in)'],['lm','Lumens per foot']],
+  ch:[['stock','Stock length (in)'],['clip','Clip spacing (in)']],
+  psu:[['volts','Volts'],['watts','Rated watts'],['c2','Class 2']],
+};
+async function readSpecsInto(kind,o,after){
+  const r=await dlg({title:'Read specs — '+(o.name||'item'),fields:[
+    {k:'txt',type:'textarea',label:'Paste the cutsheet text, or choose the PDF below',val:'',
+      hint:'Copy the spec block out of the cutsheet and paste it here.'},
+    {k:'pdf',type:'file',label:'…or the cutsheet PDF',accept:'application/pdf'}
+  ],ok:'Read it',note:'Nothing is changed until you confirm what was found. '
+    +(sheetOf(o)?'This item links to '+sheetOf(o):'This item has no cutsheet link yet.')});
+  if(!r) return;
+  let text=r.txt||'';
+  if(r.pdf&&r.pdf.name){
+    if(!PDF_OK){ toast('The PDF engine did not load, so paste the text instead'); return; }
+    try{ text+='\n'+await pdfText(r.pdf,6); }
+    catch(e){ toast('Could not read that PDF — paste the text instead'); return; }
+  }
+  if(!text.trim()){ toast('Nothing to read'); return; }
+  const found=readSpecs(text);
+  const wanted=SPEC_FIELDS[kind]||[];
+  const hits=wanted.filter(([k])=>found[k]!=null&&found[k]!==''&&!(k==='c2'&&!found.c2));
+  if(!hits.length){ toast('No specs recognised in that text'); return; }
+  const fields=hits.map(([k,label])=>k==='c2'
+    ? {k,type:'check',cap:'Class 2 output',val:!!found[k]}
+    : {k,type:'num',label:label+'  —  now '+(o[k]||o[k]===0?String(o[k]):'unset'),val:found[k],step:0.01});
+  const conf=await dlg({title:'Found in that cutsheet',fields,ok:'Apply',
+    note:'Check each number against the sheet before applying — this reads text, it does not understand it.'});
+  if(!conf) return;
+  snap('Cutsheet specs');
+  hits.forEach(([k])=>{ o[k]=k==='c2'?!!conf[k]:(+conf[k]||0); });
+  o.verified=true; o.checked=new Date().toISOString();
+  renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
+  if(after) after();
+  toast('Applied '+hits.length+' value'+(hits.length===1?'':'s')+' from the cutsheet');
+}
+/* the cutsheet row shared by all three editors */
+function sheetFields(o){
+  return [
+    {k:'sheet',label:'Cutsheet link',val:sheetOf(o),ph:'https://…',
+      hint:'The page or PDF that states these numbers.'},
+    {k:'verified',type:'check',cap:'These numbers have been checked against the cutsheet',val:!!o.verified}
+  ];
+}
 async function delLib(key,item,what,arr,setArr){
   const used=usesOf(key,item.id);
   const others=arr.filter(x=>x!==item);
@@ -4779,10 +5004,36 @@ async function delLib(key,item,what,arr,setArr){
   renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
   toast('Deleted '+item.name+(used.length?' — '+used.length+' treatment'+(used.length===1?'':'s')+' reassigned':''));
 }
-function libRow(txt,sub,onclick,onDel){
+function libRow(txt,sub,onclick,onDel,item,kind){
   const el=document.createElement('div'); el.className='item';
-  el.innerHTML='<div style="flex:1;min-width:0"><div class="t">'+esc(txt)+'</div><div class="s">'+sub+'</div></div><button class="btn sm ghost" style="color:var(--faint)">✕</button>';
-  el.onclick=e=>{ if(e.target.tagName==='BUTTON'){ onDel(); return; } onclick(); };
+  const st=item?sheetState(item):{k:'none',t:''};
+  const badge={ok:'✓',bad:'✕',seen:'•',new:'?',none:''}[st.k];
+  const link=item&&sheetOf(item);
+  el.innerHTML='<div style="flex:1;min-width:0"><div class="t">'+esc(txt)
+    +(item&&item.verified===false?' <span class="pill warn">unverified</span>':'')+'</div>'
+    +'<div class="s">'+sub+'</div>'
+    +(item?'<div class="s" style="margin-top:3px;display:flex;gap:5px;align-items:center;flex-wrap:wrap">'
+      +(link?'<a href="'+esc(link)+'" target="_blank" rel="noopener" data-open="1" class="pill" '
+        +'style="text-decoration:none;border-color:var(--measure);color:var(--measure)">cutsheet ↗</a>':'')
+      +(link?'<button class="btn sm ghost" data-chk="1" title="'+esc(st.t)+'">check '+badge+'</button>':'')
+      +'<button class="btn sm ghost" data-read="1" title="Take the numbers out of the cutsheet">read specs</button>'
+      +'</div>':'')
+    +'</div><button class="btn sm ghost" data-del="1" style="color:var(--faint)">✕</button>';
+  el.onclick=async e=>{
+    const t=e.target;
+    if(t.dataset.open) { e.stopPropagation(); return; }          /* let the link work */
+    if(t.dataset.del){ onDel(); return; }
+    if(t.dataset.chk){
+      e.stopPropagation();
+      t.textContent='checking…';
+      const r=await checkSheet(item);
+      markDirty(); renderLib();
+      toast((item.name||'Item')+': '+r.msg);
+      return;
+    }
+    if(t.dataset.read){ e.stopPropagation(); readSpecsInto(kind,item); return; }
+    onclick();
+  };
   return el;
 }
 function renderLib(){
@@ -4797,22 +5048,24 @@ function renderLib(){
   const F=$('#fixList'); F.innerHTML=''; $('#cFix').textContent=P.fix.length;
   const kindLbl={tape:'Tape',fixture:'Fixture',neon:'Neon'};
   order(P.fix).forEach(f=>F.appendChild(libRow(f.name,
-    (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+f.wft+' W/ft · cuts in '+fmtRun(f.cut)
-    +(f.kind==='fixture'?' fixed lengths':' increments')+' · feed max '+fmtRun(f.feed)
+    (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+(f.wft?f.wft+' W/ft':'W/ft not set')
+    +(f.lm?' · '+f.lm+' lm/ft':'')
+    +' · '+(f.cut>0?('cuts in '+fmtRun(f.cut)+(f.kind==='fixture'?' fixed lengths':' increments')):'cut point not set')
+    +' · '+(f.feed>0?'feed max '+fmtRun(f.feed):'feed limit not set')
     +(rateOf(f)?' · <b style="color:var(--amber)">'+esc(money(f.cost))+(f.kind==='fixture'?' ea':'/ft')+'</b>':'')
     +usedBy('fixId',f.id),
-    ()=>editFix(f),()=>delLib('fixId',f,'LED product',P.fix,x=>{P.fix=x}))));
+    ()=>editFix(f),()=>delLib('fixId',f,'LED product',P.fix,x=>{P.fix=x}),f,'fix')));
   const C=$('#chList'); C.innerHTML=''; $('#cCh').textContent=P.ch.length;
   order(P.ch).forEach(c=>C.appendChild(libRow(c.name,
     (c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')+' · clips '+fmtLen(c.clip)+' o.c.'
     +(rateOf(c)?' · <b style="color:var(--amber)">'+esc(money(c.cost))+(c.stock?'/length':'/ft')+'</b>':'')
     +usedBy('chId',c.id),
-    ()=>editCh(c),()=>delLib('chId',c,'channel',P.ch,x=>{P.ch=x}))));
+    ()=>editCh(c),()=>delLib('chId',c,'channel',P.ch,x=>{P.ch=x}),c,'ch')));
   const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
   order(P.psu).forEach(p=>S.appendChild(libRow(p.name,
     p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')
     +(rateOf(p)?' · <b style="color:var(--amber)">'+esc(money(p.cost))+' ea</b>':'')+usedBy('psuId',p.id),
-    ()=>editPsu(p),()=>delLib('psuId',p,'power supply',P.psu,x=>{P.psu=x}))));
+    ()=>editPsu(p),()=>delLib('psuId',p,'power supply',P.psu,x=>{P.psu=x}),p,'psu')));
 }
 async function editFix(f){
   const isNew=!f; f=f||{id:uid('f_'),name:'',kind:'tape',volts:24,wft:3,cut:2,feed:196.85,note:''};
@@ -4827,13 +5080,15 @@ async function editFix(f){
     {k:'cut',label:'Cut increment / unit length',val:fmtLen(f.cut),row:'r2',
       hint:unitHint()+' — this is also the shortest usable piece.'},
     {k:'feed',label:'Maximum run per feed',val:fmtLen(f.feed),row:'r2',hint:'Voltage-drop limit from the cut sheet.'},
+    {k:'lm',type:'num',label:'Lumens per foot',val:f.lm||0,step:1},
     {k:'cost',type:'num',label:'Rate',val:f.cost||0,step:0.01,
       hint:(f.kind==='fixture'?'Per fixture.':'Per foot.')+' Leave at 0 and it shows as unpriced rather than free.'},
     {k:'note',label:'Note',val:f.note}
-  ]});
+  ].concat(sheetFields(f))});
   if(!r) return;
   Object.assign(f,{name:r.name||'Unnamed',kind:r.kind||'tape',volts:+r.volts||24,wft:+r.wft||0,
-    cut:parseLen(r.cut)||0,feed:parseLen(r.feed)||1e9,cost:Math.max(0,+r.cost||0),note:r.note});
+    cut:parseLen(r.cut)||0,feed:parseLen(r.feed)||0,lm:Math.max(0,+r.lm||0),
+    cost:Math.max(0,+r.cost||0),note:r.note,sheet:String(r.sheet||'').trim(),verified:!!r.verified});
   if(isNew) P.fix.push(f);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -4851,11 +5106,13 @@ async function editCh(c){
     {k:'capCost',type:'num',label:'Rate per end cap',val:c.capCost||0,step:0.01,row:'r3'},
     {k:'joinCost',type:'num',label:'Rate per splice plate',val:c.joinCost||0,step:0.01,row:'r3'},
     {k:'note',label:'Note',val:c.note}
-  ],note:'Channel is always cut to length on site — the stock length only says how it is bought, it never rounds the run.'});
+  ].concat(sheetFields(c)),
+    note:'Channel is always cut to length on site — the stock length only says how it is bought, it never rounds the run.'});
   if(!r) return;
-  Object.assign(c,{name:r.name||'Unnamed',stock:parseLen(r.stock)||0,clip:parseLen(r.clip)||20,
+  Object.assign(c,{name:r.name||'Unnamed',stock:parseLen(r.stock)||0,clip:parseLen(r.clip)||0,
     cost:Math.max(0,+r.cost||0),clipCost:Math.max(0,+r.clipCost||0),
-    capCost:Math.max(0,+r.capCost||0),joinCost:Math.max(0,+r.joinCost||0),note:r.note});
+    capCost:Math.max(0,+r.capCost||0),joinCost:Math.max(0,+r.joinCost||0),note:r.note,
+    sheet:String(r.sheet||'').trim(),verified:!!r.verified});
   if(isNew) P.ch.push(c);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -4868,10 +5125,10 @@ async function editPsu(p){
     {k:'watts',type:'num',label:'Rated watts',val:p.watts,row:'r1'},
     {k:'cost',type:'num',label:'Rate each',val:p.cost||0,step:0.01},
     {k:'c2',type:'check',cap:'Class 2 output (96 W ceiling)',val:p.c2}
-  ]});
+  ].concat(sheetFields(p))});
   if(!r) return;
   Object.assign(p,{name:r.name||'Unnamed',volts:+r.volts||24,watts:+r.watts||0,
-    cost:Math.max(0,+r.cost||0),c2:!!r.c2});
+    cost:Math.max(0,+r.cost||0),c2:!!r.c2,sheet:String(r.sheet||'').trim(),verified:!!r.verified});
   if(isNew) P.psu.push(p);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -6217,6 +6474,40 @@ $('#btnLibSave').onclick=()=>{
   catch(e){ exportBox(slug(P.name)+'.linework-library.json',libFileText()); }
 };
 $('#btnLibOpen').onclick=()=>$('#libInput').click();
+$('#btnLibSeed').onclick=async()=>{
+  const r=await dlg({title:'Load the QTL starter library',fields:[
+    {k:'mode',type:'select',label:'How',opts:[
+      {v:'merge',t:'Add anything missing, keep what is here'},
+      {v:'replace',t:'Replace the library with it'}],val:'merge'}
+  ],ok:'Load',note:'QTL products, each linked to its own catalogue page. Only the figures those pages state are filled in; '
+    +'the rest are left unset and marked unverified. Use "read specs" on an item to take the numbers out of its cutsheet.'});
+  if(!r) return;
+  snap('Load QTL library');
+  [['fix',DEF_FIX],['ch',DEF_CH],['psu',DEF_PSU]].forEach(([k,def])=>{
+    if(r.mode==='replace'){ P[k]=clone(def); return; }
+    clone(def).forEach(item=>{ if(!P[k].some(x=>x.id===item.id)) P[k].push(item); });
+  });
+  const fixIds=new Set(P.fix.map(x=>x.id)),chIds=new Set(P.ch.map(x=>x.id)),psuIds=new Set(P.psu.map(x=>x.id));
+  P.treat.forEach(t=>{
+    if(!fixIds.has(t.fixId)) t.fixId=P.fix[0].id;
+    if(!chIds.has(t.chId)) t.chId=P.ch[0].id;
+    if(!psuIds.has(t.psuId)) t.psuId=P.psu[0].id;
+  });
+  renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('QTL starter library loaded — check each item against its cutsheet before issuing');
+};
+$('#btnLibCheck').onclick=async()=>{
+  const all=[...P.fix,...P.ch,...P.psu].filter(o=>sheetOf(o));
+  if(!all.length){ toast('No cutsheet links to check'); return; }
+  toast('Checking '+all.length+' link'+(all.length===1?'':'s')+'…');
+  let ok=0,bad=0,opaque=0;
+  for(const o of all){
+    const r=await checkSheet(o);
+    if(r.state==='ok') ok++; else if(r.state==='opaque') opaque++; else bad++;
+  }
+  renderLib(); markDirty();
+  toast(ok+' reachable, '+opaque+' answered but unreadable from the browser, '+bad+' failed');
+};
 $('#libInput').onchange=async e=>{
   const f=e.target.files[0]; e.target.value=''; if(!f) return;
   let d;
@@ -6757,6 +7048,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   probeInsets,checkForUpdate,syncVerTag,update:UPDATE,
   approveTreat,unapproveTreat,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
+  sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   reportHtml,openReport,reportCss,

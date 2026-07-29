@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.22.0**
+**Version 1.23.0**
 
 ## What it does
 
@@ -110,6 +110,31 @@ rasterising** where the browser supports it; and an **incremental overlay**, so
 dragging one vertex re-formats one markup instead of every markup on the page.
 The drawing geometry used for snapping is cached per page too, and long tables
 render a capped number of rows — while still totalling the whole job.
+
+## The product library
+
+The library is seeded with **QTL** products — the static white and high-efficacy
+linear strips, the Q-CAP encapsulated flexible fixtures, the aluminium extrusions
+and the DC power supplies — each carrying a link to its own page on qtl.lighting.
+
+Only the figures those catalogue pages state are filled in. Where a cut point, a
+maximum run per feed or a stock length is not stated, it is **left unset and the
+item is marked unverified**: the library shows the badge, and the calculator says
+which number is missing rather than rounding on a guess. A blank that announces
+itself is safe; a plausible number nobody checked is not.
+
+Every LED product, channel and supply has a **cutsheet link**, and two buttons:
+
+- **check** — confirms the link still resolves and dates it. A cross-origin
+  response cannot be read by a browser, so a link that answers but cannot be
+  inspected is reported as exactly that rather than as good.
+- **read specs** — paste the cutsheet text, or hand it the cutsheet **PDF**, and
+  it pulls out volts, watts per foot, lumens per foot, the cut point (including
+  "8 diodes per 2\"" and metric increments), the maximum run per feed, and stock
+  lengths. Nothing changes until you confirm each number.
+
+*Load QTL starter library* puts the seeded set back, merging or replacing, and
+*Check every cutsheet link* walks the whole library at once.
 
 ## Lengths and cut increments
 
