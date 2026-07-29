@@ -409,6 +409,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn sm ghost" id="btnScroll" title="What the scroll wheel does">⊕ Scroll zooms</button>
     <span class="sep"></span>
     <select id="scalePreset" style="width:auto;padding:4px 6px;font-size:11px"><option value="">Set scale…</option></select>
+    <button class="btn sm ghost" id="btnScales" title="Which pages carry which scale">Scales…</button>
     <span class="sep"></span>
     <button class="tool" id="zOut" title="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M20 20l-4-4"/></svg></button>
     <span class="num" id="zLabel" style="font-size:11px;min-width:44px;text-align:center;color:var(--dim)">100%</span>
@@ -517,6 +518,7 @@ body.haspen #penFlag{display:inline}
       <button class="btn" id="btnCsvBom">Export BOM</button>
       <button class="btn" id="btnCsvCost">Export cost</button>
       <button class="btn pri" id="btnXlsx">Export workbook (.xlsx)</button>
+      <button class="btn pri" id="btnReport">Takeoff report…</button>
       <button class="btn" id="btnPdf">Export marked-up PDF</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
     </div></div>
@@ -576,7 +578,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.19.0';
+const APP_VER='1.20.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -603,8 +605,22 @@ const MM=25.4;
 /* Imperial lengths read as decimal feet with the inch equivalent alongside:
    decimal feet is what gets ordered, inches is what gets cut. */
 const inchTxt=v=>(Math.round(v*10)/10).toFixed(1).replace(/\.0$/,'');
+/* ---- display precision ----
+   A cove is not ordered to a thousandth of an inch. Lengths can be shown rounded
+   to the nearest practical increment while the arithmetic stays exact — rounding
+   the display never changes a cut, a total or an export. */
+const PRECS=[{v:'0',t:'Exact — as measured'},{v:'0.125',t:'Nearest 1/8"'},{v:'0.25',t:'Nearest 1/4"'},
+  {v:'0.5',t:'Nearest 1/2"'},{v:'1',t:'Nearest inch'},{v:'12',t:'Nearest foot'}];
+const PRECS_M=[{v:'0',t:'Exact — as measured'},{v:'0.03937',t:'Nearest mm'},
+  {v:'0.19685',t:'Nearest 5 mm'},{v:'0.3937',t:'Nearest 10 mm'}];
+function dispLen(inches){
+  const step=+P.prec;
+  if(!isFinite(step)||step<=0||inches==null||!isFinite(inches)) return inches;
+  return Math.round(inches/step)*step;
+}
 function fmtLen(inches,u){
   u=u||P.units;
+  inches=dispLen(inches);
   if(inches==null||!isFinite(inches)) return '—';
   if(u==='metric'){
     const mm=inches*MM;
@@ -616,6 +632,7 @@ function fmtLen(inches,u){
 /* feet-and-inches, kept for anywhere a traditional dimension string is wanted */
 function fmtFtIn(inches,u){
   u=u||P.units;
+  inches=dispLen(inches);
   if(inches==null||!isFinite(inches)) return '—';
   if(u==='metric') return fmtLen(inches,u);
   const neg=inches<0; let v=Math.abs(inches), den=16;
@@ -628,6 +645,7 @@ function fmtFtIn(inches,u){
 function fmtFt(inches){ return (inches/12).toFixed(2)+' ft'; }
 /* compact: decimal feet only, for totals and tight spaces */
 function fmtRun(inches){
+  inches=dispLen(inches);
   if(inches==null||!isFinite(inches)) return '—';
   return P.units==='metric' ? (inches*MM/1000).toFixed(3)+' m' : (inches/12).toFixed(2)+' ft';
 }
@@ -858,6 +876,8 @@ function applyProject(d){
     t.cutLock=+t.cutLock>0?+t.cutLock:0;
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
     t.detail=String(t.detail||'').toUpperCase();
+    t.approved=!!t.approved;
+    if(!t.approved){ delete t.apAt; delete t.apLen; delete t.apCut; }
     delete t.roundDefault;
   });
   P.name=String(P.name||'Untitled Project'); P.no=String(P.no||'');
@@ -892,6 +912,7 @@ function applyProject(d){
   P.cur=String(P.cur||'$').slice(0,3);
   P.minOff=Math.max(0,+P.minOff||0);
   P.rowCap=clamp(+P.rowCap||250,10,1e6);
+  P.prec=Math.max(0,+P.prec||0);
   if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
   P.alts=Array.isArray(P.alts)?P.alts.filter(a=>a&&a.id).map(a=>({id:a.id,name:String(a.name||'Alternate'),
@@ -1597,11 +1618,83 @@ function setScale(ratio,all,label){
   } else P.cal[calKey(V.docId,V.page)]=s;
   syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); markDirty();
 }
+/* ---- scales across a sheet ----
+   Per-page calibration has always been possible; what was missing was seeing it.
+   This lists every page of the sheet, which pages carry their own scale and
+   which inherit the sheet's, and lets a scale be set over a page range or
+   cleared — because a set that mixes scales is normal, and an inherited scale
+   that is silently wrong is the worst case. */
+function scaleMap(docId){
+  const d=P.docs.find(x=>x.id===docId);
+  const pages=Math.max(1,+(d&&d.pages)||1);
+  const all=P.cal[docId+'|*']||null;
+  const out=[];
+  for(let pg=1;pg<=pages;pg++){
+    const own=P.cal[calKey(docId,pg)]||null;
+    out.push({pg,own,eff:own||all,inherited:!own&&!!all});
+  }
+  return {pages,all,list:out};
+}
+function parseRange(str,pages){
+  const out=new Set();
+  String(str||'').split(/[,\s]+/).filter(Boolean).forEach(part=>{
+    const m=/^(\d+)(?:-(\d+))?$/.exec(part);
+    if(!m) return;
+    const a=clamp(+m[1],1,pages), b=clamp(+(m[2]||m[1]),1,pages);
+    for(let i=Math.min(a,b);i<=Math.max(a,b);i++) out.add(i);
+  });
+  return [...out].sort((x,y)=>x-y);
+}
+async function manageScales(){
+  if(!V.docId){ toast('Open a drawing first'); return; }
+  const d=P.docs.find(x=>x.id===V.docId);
+  const m=scaleMap(V.docId);
+  const lines=m.list.map(r=>'p'+r.pg+': '+(r.own?r.own.label+' (its own)'
+    :(r.eff?r.eff.label+' (from the sheet)':'not set'))).join('   ·   ');
+  const r=await dlg({title:'Scales — '+sheetLabel(d),fields:[
+    {k:'act',type:'select',label:'What to do',opts:[
+      {v:'set',t:'Set a scale on some pages'},
+      {v:'sheet',t:'Set the sheet scale, for every page'},
+      {v:'copy',t:'Copy this page\u2019s scale to some pages'},
+      {v:'clear',t:'Clear the scale on some pages'},
+      {v:'clearAll',t:'Clear every scale on this sheet'}],val:'set'},
+    {k:'pages',label:'Pages',val:String(V.page),ph:'1, 3, 5-8',
+      hint:'Ignored for the sheet-wide options.'},
+    {k:'scale',type:'select',label:'Scale',opts:SCALES.map(x=>({v:x[1],t:x[0]})),
+      val:(curScale()?SCALES.reduce((best,x)=>Math.abs(x[1]-curScale().ratio)<Math.abs(best[1]-curScale().ratio)?x:best,SCALES[0])[1]:48)}
+  ],ok:'Apply',note:m.pages+' page'+(m.pages===1?'':'s')+'.  '+lines});
+  if(!r) return;
+  const pages=parseRange(r.pages,m.pages);
+  const ratio=+r.scale, label=(SCALES.find(x=>x[1]===ratio)||[])[0]||ratioLabel(ratio);
+  snap('Scales on '+sheetLabel(d));
+  if(r.act==='sheet'){
+    Object.keys(P.cal).forEach(k=>{ if(k.startsWith(V.docId+'|')) delete P.cal[k]; });
+    P.cal[V.docId+'|*']={ratio,label};
+  }else if(r.act==='clearAll'){
+    Object.keys(P.cal).forEach(k=>{ if(k.startsWith(V.docId+'|')) delete P.cal[k]; });
+  }else if(r.act==='clear'){
+    if(!pages.length){ toast('Give the pages to clear, e.g. 2, 5-7'); return; }
+    pages.forEach(pg=>delete P.cal[calKey(V.docId,pg)]);
+  }else{
+    if(!pages.length){ toast('Give the pages, e.g. 2, 5-7'); return; }
+    const src=r.act==='copy'?curScale():{ratio,label};
+    if(!src){ toast('This page has no scale to copy'); return; }
+    pages.forEach(pg=>{ P.cal[calKey(V.docId,pg)]={ratio:src.ratio,label:src.label}; });
+  }
+  syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  const after=scaleMap(V.docId);
+  const own=after.list.filter(x=>x.own).length, none=after.list.filter(x=>!x.eff).length;
+  toast('Scales updated — '+own+' page'+(own===1?'':'s')+' with their own'
+    +(after.all?', the rest from the sheet':(none?', '+none+' still unset':'')));
+}
 function syncScaleUI(){
   const s=curScale();
-  $('#tbScale').textContent=s?s.label:'not set';
+  const own=V.docId?!!P.cal[calKey(V.docId,V.page)]:false;
+  $('#tbScale').textContent=(s?s.label:'not set')+(s&&own?' *':'');
   $('#tbScale').style.color=s?'var(--amber)':'var(--flag)';
-  $('#stScale').textContent='Scale: '+(s?s.label:'not set — calibrate before measuring');
+  $('#tbScale').title=s?(own?'This page has its own scale':'From the sheet, applied to every page'):'';
+  $('#stScale').textContent='Scale: '+(s?s.label+(own?' (this page only)':' (whole sheet)')
+    :'not set — calibrate before measuring');
   /* calibration comes before everything else, so say so where it cannot be missed */
   const bar=$('#calNag');
   if(bar) bar.style.display=(V.docId&&FILES[V.docId]&&!s)?'':'none';
@@ -1759,29 +1852,38 @@ function tick(a,b,at){ // drafting slash tick perpendicular-ish at endpoint
 const OVC={svg:new Map(),chips:new Map(),key:null};
 const ovKey=()=>V.docId+'|'+V.page+'|'+V.zoom.toFixed(4)+'|'+(P.code||'off')+'|'+CHIP_FS.toFixed(2)+'|'+W_MUL;
 function ovInvalidate(id){
-  if(id){ OVC.svg.delete(id); OVC.chips.delete(id); }
+  if(id){
+    /* a markup is cached once per selection state, so all of them go */
+    ['','s','m'].forEach(st=>{ OVC.svg.delete(id+'|'+st); OVC.chips.delete(id+'|'+st); });
+  }
   else { OVC.svg.clear(); OVC.chips.clear(); }
 }
 /* run drawAnn for one markup, capturing its label records separately */
-function annParts(a,selected,isDraft){
+function annParts(a,selected,isDraft,multi){
   const prev=CHIPQ; CHIPQ=[];
   let body='', mine=[];
-  try{ body=drawAnn(a,selected,isDraft); }
+  try{ body=drawAnn(a,selected,isDraft,multi); }
   finally{ mine=CHIPQ; CHIPQ=prev; }
   return {body,chips:mine};
 }
+const selState=a=>a.id===V.sel?'s':(inMulti(a.id)?'m':'');
 function cachedParts(a){
-  const k=a.id+(a.id===V.sel?'|s':'');
-  let hit=OVC.svg.get(k);
-  if(hit===undefined){
-    const p=annParts(a,a.id===V.sel);
+  const st=selState(a), k=a.id+'|'+st;
+  if(OVC.svg.get(k)===undefined){
+    const p=annParts(a,st==='s',false,st==='m');
     OVC.svg.set(k,p.body); OVC.chips.set(k,p.chips);
-    hit=p.body;
-    /* the other selection state is now stale */
-    OVC.svg.delete(a.id+(a.id===V.sel?'':'|s'));
-    OVC.chips.delete(a.id+(a.id===V.sel?'':'|s'));
+    /* the other selection states for this markup are now stale */
+    ['','s','m'].filter(x=>x!==st).forEach(x=>{ OVC.svg.delete(a.id+'|'+x); OVC.chips.delete(a.id+'|'+x); });
   }
   return k;
+}
+function marqueeSvg(){
+  const m=V.marq;
+  if(!m) return '';
+  const x=Math.min(m.x0,m.x1), y=Math.min(m.y0,m.y1);
+  const w=Math.abs(m.x1-m.x0), h=Math.abs(m.y1-m.y0);
+  return '<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)
+    +'" fill="#5AB6DE" fill-opacity=".08" stroke="#5AB6DE" stroke-width="1" stroke-dasharray="4 3"/>';
 }
 function snapCursorSvg(){
   if(!(V.snapHit&&(isMeasureTool(V.tool)||V.tool==='cal'))) return '';
@@ -1803,7 +1905,7 @@ function assembleOverlay(){
     body+=p.body;
     p.chips.forEach(r=>q.push(r));
   }
-  ov.innerHTML=body+layoutChips(q)+snapCursorSvg();
+  ov.innerHTML=body+layoutChips(q)+snapCursorSvg()+marqueeSvg();
 }
 /* an explicit redraw makes no promises about what changed, so it rebuilds all */
 function drawOverlay(){
@@ -1819,9 +1921,17 @@ function drawOverlayFor(a){
   if(a&&a.id) ovInvalidate(a.id);
   assembleOverlay();
 }
-function drawAnn(a,selected,isDraft){
+function drawAnn(a,selected,isDraft,multi){
   const col=colOf(a), pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
   let g='<g opacity="'+o+'">';
+  if(!selected&&multi&&pts.length){
+    /* part of a multiple selection: outlined, but no handles — a handle would
+       imply dragging one vertex, and this drag moves the whole set */
+    const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
+    g+='<rect x="'+(Math.min(...xs)-7)+'" y="'+(Math.min(...ys)-7)+'" width="'+(Math.max(...xs)-Math.min(...xs)+14)
+      +'" height="'+(Math.max(...ys)-Math.min(...ys)+14)+'" fill="#5AB6DE" fill-opacity=".07" stroke="#5AB6DE"'
+      +' stroke-dasharray="2 3" stroke-width="1"/>';
+  }
   if(selected&&pts.length){
     const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
     g+='<rect x="'+(Math.min(...xs)-9)+'" y="'+(Math.min(...ys)-9)+'" width="'+(Math.max(...xs)-Math.min(...xs)+18)+'" height="'+(Math.max(...ys)-Math.min(...ys)+18)+'" fill="none" stroke="#F2A93B" stroke-dasharray="3 3" stroke-width="1"/>';
@@ -2087,7 +2197,14 @@ function hitTest(sx,sy,tol){
 const HIST=[],FUT=[];
 const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq,
   fix:P.fix,ch:P.ch,psu:P.psu,alts:P.alts,base:P.base});
-function snap(){ HIST.push(snapshot()); if(HIST.length>60) HIST.shift(); FUT.length=0; syncUndo(); saveHist(); }
+/* Each step carries what it was, so undo can be aimed rather than counted. The
+   label is the caller's; an unlabelled step is honest about being unnamed. */
+let stepAt=0;
+function snap(label){
+  HIST.push({j:snapshot(),l:String(label||'Edit'),t:Date.now(),n:++stepAt});
+  if(HIST.length>60) HIST.shift();
+  FUT.length=0; syncUndo(); saveHist();
+}
 /* Undo depth is a working state, not part of the deliverable, so it rides in
    local storage rather than the project file. */
 const HKEY=KEY+':hist';
@@ -2098,18 +2215,21 @@ function saveHist(){
     localStorage.setItem(HKEY,JSON.stringify({h:HIST.slice(-25),f:FUT.slice(-25)}));
   }catch(e){} },600);
 }
+/* older stored history was a bare array of JSON strings */
+const asStep=x=>(x&&typeof x==='object'&&x.j!=null)?x:{j:String(x),l:'Edit',t:0,n:0};
 function loadHist(){
   try{
     const d=JSON.parse(localStorage.getItem(HKEY)||'null');
     if(!d||!Array.isArray(d.h)) return;
     HIST.length=0; FUT.length=0;
-    d.h.forEach(x=>HIST.push(x)); (d.f||[]).forEach(x=>FUT.push(x));
+    d.h.forEach(x=>HIST.push(asStep(x))); (d.f||[]).forEach(x=>FUT.push(asStep(x)));
+    stepAt=HIST.length+FUT.length;
     syncUndo();
   }catch(e){}
 }
 function clearHist(){ HIST.length=0; FUT.length=0; syncUndo(); try{localStorage.removeItem(HKEY)}catch(e){} }
-function restore(j){
-  const d=JSON.parse(j);
+function restore(step){
+  const d=JSON.parse(asStep(step).j);
   P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq;
   if(d.fix) P.fix=d.fix; if(d.ch) P.ch=d.ch; if(d.psu) P.psu=d.psu;
   P.alts=Array.isArray(d.alts)?d.alts:[];
@@ -2118,10 +2238,187 @@ function restore(j){
   V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks();
   renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty();
 }
-function undo(){ if(!HIST.length) return toast('Nothing to undo'); FUT.push(snapshot()); restore(HIST.pop()); syncUndo(); saveHist(); }
-function redo(){ if(!FUT.length) return toast('Nothing to redo'); HIST.push(snapshot()); restore(FUT.pop()); syncUndo(); saveHist(); }
-function syncUndo(){ const u=$('#btnUndo'),r=$('#btnRedo'); if(u)u.style.opacity=HIST.length?1:.35; if(r)r.style.opacity=FUT.length?1:.35; }
+function undo(quiet){
+  if(!HIST.length){ if(!quiet) toast('Nothing to undo'); return false; }
+  const step=HIST.pop();
+  FUT.push({j:snapshot(),l:step.l,t:Date.now(),n:step.n});
+  restore(step); syncUndo(); saveHist();
+  if(!quiet) toast('Undone: '+step.l);
+  return true;
+}
+function redo(quiet){
+  if(!FUT.length){ if(!quiet) toast('Nothing to redo'); return false; }
+  const step=FUT.pop();
+  HIST.push({j:snapshot(),l:step.l,t:Date.now(),n:step.n});
+  restore(step); syncUndo(); saveHist();
+  if(!quiet) toast('Redone: '+step.l);
+  return true;
+}
+/* jump to a point in the history: undo or redo until we are there */
+function jumpHistory(dir,count){
+  let n=0;
+  for(let i=0;i<count;i++){ if(!(dir<0?undo(true):redo(true))) break; n++; }
+  if(n) toast((dir<0?'Stepped back ':'Stepped forward ')+n+' change'+(n===1?'':'s'));
+  return n;
+}
+function historyList(){
+  return {past:HIST.map((x,i)=>({i,label:asStep(x).l,at:asStep(x).t})).reverse(),
+    future:FUT.map((x,i)=>({i,label:asStep(x).l,at:asStep(x).t})).reverse()};
+}
+async function showHistory(){
+  const h=historyList();
+  if(!h.past.length&&!h.future.length){ toast('Nothing in the history yet'); return; }
+  const when=t=>t?new Date(t).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}):'';
+  const opts=[]
+    .concat(h.future.map((x,k)=>({v:'f'+(h.future.length-k),t:'↷ '+x.label+'  '+when(x.at)})))
+    .concat([{v:'0',t:'— you are here —'}])
+    .concat(h.past.map((x,k)=>({v:'b'+(k+1),t:'↶ '+x.label+'  '+when(x.at)})));
+  const r=await dlg({title:'History',fields:[
+    {k:'to',type:'select',label:'Go to',opts,val:'0'}
+  ],ok:'Go',note:HIST.length+' change'+(HIST.length===1?'':'s')+' back'
+    +(FUT.length?' and '+FUT.length+' forward':'')+' are kept, and they survive a reload.'});
+  if(!r||r.to==='0') return;
+  const n=+r.to.slice(1);
+  jumpHistory(r.to[0]==='b'?-1:1,n);
+}
+function syncUndo(){
+  const u=$('#btnUndo'),r=$('#btnRedo');
+  const last=HIST.length?asStep(HIST[HIST.length-1]).l:null;
+  const next=FUT.length?asStep(FUT[FUT.length-1]).l:null;
+  if(u){ u.style.opacity=HIST.length?1:.35;
+    u.title=last?('Undo '+last+' (⌘Z) — ⌥click for the history'):'Undo (⌘Z)'; }
+  if(r){ r.style.opacity=FUT.length?1:.35;
+    r.title=next?('Redo '+next+' (⇧⌘Z)'):'Redo (⇧⌘Z)'; }
+}
 
+/* ---- selecting several markups ----
+   Colouring, weighting or deleting twenty markups one at a time is not work, it
+   is typing. Shift-click adds to the set; shift-drag on bare paper sweeps one. */
+const inMulti=id=>!!(V.multi&&V.multi.length&&V.multi.indexOf(id)>=0);
+const multiAnns=()=>(V.multi||[]).map(id=>P.ann.find(a=>a.id===id)).filter(Boolean);
+function setMulti(ids){
+  V.multi=(ids||[]).filter((v,i,l)=>l.indexOf(v)===i);
+  if(V.multi.length===1){ V.sel=V.multi[0]; V.multi=[]; }
+  drawOverlay(); renderAnnList();
+  if(V.multi.length>1) showMultiInspector(); else showInspector(V.sel?P.ann.find(a=>a.id===V.sel):null);
+}
+function toggleMulti(id){
+  const cur=(V.multi&&V.multi.length)?V.multi.slice():(V.sel?[V.sel]:[]);
+  const i=cur.indexOf(id);
+  if(i>=0) cur.splice(i,1); else cur.push(id);
+  V.sel=null;
+  setMulti(cur);
+}
+/* bounding box of a markup in PDF space */
+function annBox(a){
+  const pts=annPts(a);
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  return {x1:Math.min(...xs),x2:Math.max(...xs),y1:Math.min(...ys),y2:Math.max(...ys)};
+}
+function shiftAnn(a,dx,dy){
+  a.pts=a.pts.map(q=>q.length>2?[q[0]+dx,q[1]+dy,q[2]]:[q[0]+dx,q[1]+dy]);
+}
+/* PDF space has y up, so "top" is the larger y — named from the drawing's point
+   of view, not the array's */
+const ALIGNS=[['left','Left edges'],['right','Right edges'],['cx','Centres, vertically'],
+  ['top','Top edges'],['bottom','Bottom edges'],['cy','Centres, horizontally']];
+function alignMulti(how){
+  const list=multiAnns();
+  if(list.length<2){ toast('Select two or more markups'); return; }
+  snap('Align markups');
+  const boxes=list.map(annBox);
+  const L=Math.min(...boxes.map(b=>b.x1)), R=Math.max(...boxes.map(b=>b.x2));
+  const B=Math.min(...boxes.map(b=>b.y1)), T=Math.max(...boxes.map(b=>b.y2));
+  const cx=(L+R)/2, cy=(B+T)/2;
+  list.forEach((a,i)=>{
+    const b=boxes[i];
+    if(how==='left') shiftAnn(a,L-b.x1,0);
+    if(how==='right') shiftAnn(a,R-b.x2,0);
+    if(how==='cx') shiftAnn(a,cx-(b.x1+b.x2)/2,0);
+    if(how==='top') shiftAnn(a,0,T-b.y2);
+    if(how==='bottom') shiftAnn(a,0,B-b.y1);
+    if(how==='cy') shiftAnn(a,0,cy-(b.y1+b.y2)/2);
+  });
+  afterMultiEdit();
+}
+function distributeMulti(axis){
+  const list=multiAnns();
+  if(list.length<3){ toast('Distributing needs three or more markups'); return; }
+  snap('Distribute markups');
+  const withBox=list.map(a=>({a,b:annBox(a)}));
+  const key=o=>axis==='x'?(o.b.x1+o.b.x2)/2:(o.b.y1+o.b.y2)/2;
+  withBox.sort((p,q)=>key(p)-key(q));
+  const first=key(withBox[0]), last=key(withBox[withBox.length-1]);
+  const step=(last-first)/(withBox.length-1);
+  withBox.forEach((o,i)=>{
+    const want=first+step*i, d=want-key(o);
+    shiftAnn(o.a,axis==='x'?d:0,axis==='y'?d:0);
+  });
+  afterMultiEdit();
+}
+function afterMultiEdit(){
+  invalidateAnns();
+  drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  if((V.multi||[]).length>1) showMultiInspector();
+}
+function showMultiInspector(){
+  const list=multiAnns();
+  const box=$('#inspector');
+  if(list.length<2){ showInspector(null); return; }
+  box.classList.add('show');
+  $('#insTitle').textContent=list.length+' markups selected';
+  const kinds={};
+  list.forEach(a=>{ const k=a.type==='line'&&a.poly?'poly':a.type; kinds[k]=(kinds[k]||0)+1; });
+  const L=list.filter(a=>a.type==='line'||a.type==='arc'||a.type==='area')
+    .reduce((s,a)=>s+(annLen(a)||0),0);
+  let h='<div class="kv"><span>Selected</span><b class="hi">'+list.length+'</b></div>'
+    +'<div class="kv"><span>Kinds</span><b>'+esc(Object.keys(kinds).map(k=>k+' '+kinds[k]).join(', '))+'</b></div>'
+    +(L>0?'<div class="kv"><span>Measured together</span><b>'+fmtLen(L)+'</b></div>':'');
+  h+='<div class="f"><label>Align</label><div style="display:flex;flex-wrap:wrap;gap:4px">'
+    +ALIGNS.map(([k,t])=>'<button class="btn sm" data-al="'+k+'">'+esc(t)+'</button>').join('')
+    +'</div></div>';
+  h+='<div class="f"><label>Distribute evenly</label><div style="display:flex;gap:4px">'
+    +'<button class="btn sm" data-di="x">Across</button><button class="btn sm" data-di="y">Down</button></div></div>';
+  h+='<div class="f"><label>Line weight</label><select data-mw><option value="">— leave as they are —</option>'
+    +WEIGHTS.map(x=>'<option value="'+x.v+'">'+x.t+' · '+x.v+'</option>').join('')+'</select></div>';
+  h+='<div class="f"><label>Colour</label><div class="swatches">'
+    +COLORS.map(c=>'<span class="sw" data-mc="'+c+'" style="background:'+c+'"></span>').join('')+'</div></div>';
+  h+='<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">'
+    +'<button class="btn sm" data-mact="hide">Hide these</button>'
+    +'<button class="btn sm" data-mact="show">Show these</button>'
+    +'<button class="btn sm" data-mact="clear">Clear selection</button>'
+    +'<button class="btn sm" data-mact="del" style="color:var(--flag)">Delete these</button></div>';
+  h+='<div class="hint">⇧-click a markup to add or remove it. ⇧-drag on bare paper to sweep a selection. Dragging any one of them moves the set.</div>';
+  const bd=$('#insBody'); bd.innerHTML=h;
+  $$('[data-al]',bd).forEach(b=>b.onclick=()=>alignMulti(b.dataset.al));
+  $$('[data-di]',bd).forEach(b=>b.onclick=()=>distributeMulti(b.dataset.di));
+  $$('[data-mw]',bd).forEach(el=>el.onchange=()=>{
+    if(!el.value) return;
+    snap('Line weight of '+list.length);
+    list.forEach(a=>{ if(a.type!=='cal') a.w=+el.value; });
+    afterMultiEdit();
+  });
+  $$('[data-mc]',bd).forEach(el=>el.onclick=()=>{
+    snap('Colour of '+list.length);
+    list.forEach(a=>{ a.color=el.dataset.mc; });
+    afterMultiEdit();
+  });
+  $$('[data-mact]',bd).forEach(b=>b.onclick=()=>{
+    const act=b.dataset.mact;
+    if(act==='clear'){ setMulti([]); return; }
+    if(act==='hide'||act==='show'){ snap((act==='hide'?'Hide ':'Show ')+list.length);
+      list.forEach(a=>{ a.hidden=act==='hide'; }); afterMultiEdit(); return; }
+    if(act==='del'){
+      snap('Delete '+list.length+' markups');
+      const ids=new Set(list.map(a=>a.id));
+      P.ann=P.ann.filter(a=>!ids.has(a.id));
+      P.treat.forEach(t=>{ if(ids.has(t.annId)) t.annId=null; });
+      V.multi=[]; V.sel=null; showInspector(null);
+      invalidateAnns(); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); stats(); markDirty();
+      toast('Deleted '+ids.size+' markups');
+    }
+  });
+}
 /* ---- pointer engine: mouse, Apple Pencil, multi-touch ---- */
 const PT=new Map();
 let pan=null, press=null, stroke=null, pinch=null, wz=null, activePen=null, lastPenAt=0;
@@ -2194,6 +2491,13 @@ function editMove(e){
     drawOverlayFor(a);
     return;
   }
+  if(edit.mode==='moveMulti'){
+    const dx=p[0]-edit.last[0], dy=p[1]-edit.last[1];
+    edit.list.forEach(x=>shiftAnn(x,dx,dy));
+    edit.last=p;
+    drawOverlay();
+    return;
+  }
   if(edit.mode==='move'){
     const dx=p[0]-edit.last[0], dy=p[1]-edit.last[1];
     a.pts=a.pts.map(q=>q.length>2?[q[0]+dx,q[1]+dy,q[2]]:[q[0]+dx,q[1]+dy]);
@@ -2214,7 +2518,8 @@ function endEdit(){
   const ed=edit; edit=null;
   if(!ed||!ed.did) return;
   drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); stats();
-  if(V.sel===ed.a.id) showInspector(ed.a);
+  if(ed.mode==='moveMulti') showMultiInspector();
+  else if(V.sel===ed.a.id) showInspector(ed.a);
   markDirty();
 }
 const coarse=!!(window.matchMedia&&(matchMedia('(pointer:coarse)').matches||matchMedia('(hover:none)').matches));
@@ -2285,6 +2590,19 @@ stage.addEventListener('pointerdown',e=>{
 
   if(V.tool==='pan'||!isDrawInput(e)){                    /* finger always pans while a draw tool is live */
     if(V.tool==='pan'){
+      /* ⇧ on a markup adds it to the selection; ⇧ on bare paper sweeps one */
+      if(e.shiftKey&&e.pointerType!=='touch'){
+        const hs=hitTest(sc[0],sc[1],tol);
+        if(hs){ toggleMulti(hs.id); return; }
+        V.marq={x0:sc[0],y0:sc[1],x1:sc[0],y1:sc[1],id:e.pointerId,add:(V.multi||[]).slice()};
+        return;
+      }
+      /* dragging any member of a multiple selection moves the whole set */
+      const hm=(V.multi&&V.multi.length>1)?hitTest(sc[0],sc[1],tol):null;
+      if(hm&&inMulti(hm.id)){
+        edit={mode:'moveMulti',a:hm,list:multiAnns(),last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
+        return;
+      }
       /* a label can be dragged out of the way, and takes precedence over the
          markup underneath it */
       const lc=hitChipAt(sc[0],sc[1]);
@@ -2308,7 +2626,8 @@ stage.addEventListener('pointerdown',e=>{
         drawOverlay();
         edit={mode:'move',a:h,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
         return; }
-      V.sel=null; showInspector(null); drawOverlay(); }
+      V.sel=null; if(V.multi&&V.multi.length) V.multi=[];
+      showInspector(null); drawOverlay(); }
     pan={x:e.clientX,y:e.clientY,l:viewport.scrollLeft,t:viewport.scrollTop};
     viewport.classList.add('drag'); return;
   }
@@ -2324,6 +2643,10 @@ stage.addEventListener('pointermove',e=>{
   if(e.pointerType==='pen'){ lastPenAt=Date.now();
     if(e.buttons===0){ const sc=toS(e); const d=$('#penDot'); d.classList.add('show'); d.style.left=sc[0]+'px'; d.style.top=sc[1]+'px'; } }
   if(pinch){ movePinch(); return; }
+  if(V.marq&&V.marq.id===e.pointerId){
+    const sc=toS(e); V.marq.x1=sc[0]; V.marq.y1=sc[1];
+    drawOverlayFor(); return;
+  }
   if(edit&&edit.id===e.pointerId){ editMove(e); return; }
   if(pan){ pan.d=Math.hypot(e.clientX-pan.x,e.clientY-pan.y);
     viewport.scrollLeft=pan.l-(e.clientX-pan.x); viewport.scrollTop=pan.t-(e.clientY-pan.y); return; }
@@ -2385,6 +2708,21 @@ function liveLen(d){
 function endPointer(e){
   PT.delete(e.pointerId);
   if(e.pointerType==='pen'){ activePen=null; lastPenAt=Date.now(); }
+  if(V.marq&&V.marq.id===e.pointerId){
+    const m=V.marq; V.marq=null;
+    const x1=Math.min(m.x0,m.x1),x2=Math.max(m.x0,m.x1),y1=Math.min(m.y0,m.y1),y2=Math.max(m.y0,m.y1);
+    if(Math.abs(x2-x1)<4&&Math.abs(y2-y1)<4){ drawOverlay(); return; }
+    /* anything the sweep touches, not only what it wholly contains */
+    const hits=pageAnns().filter(annVisible).filter(a=>{
+      const pts=annPts(a).map(sp);
+      const bx1=Math.min(...pts.map(p=>p[0])),bx2=Math.max(...pts.map(p=>p[0]));
+      const by1=Math.min(...pts.map(p=>p[1])),by2=Math.max(...pts.map(p=>p[1]));
+      return !(bx2<x1||bx1>x2||by2<y1||by1>y2);
+    }).map(a=>a.id);
+    setMulti(m.add.concat(hits));
+    toast(hits.length?((V.multi.length||1)+' markup'+((V.multi.length||1)===1?'':'s')+' selected'):'Nothing in that sweep');
+    return;
+  }
   if(edit&&edit.id===e.pointerId){ endEdit(); return; }
   if(pinch){ if(touchPts().length<2) endPinch(); return; }
   if(pan){ if(pan.btn===2&&pan.d>4) suppressCtx=true; pan=null; viewport.classList.remove('drag'); }
@@ -2763,7 +3101,8 @@ $('#inkW').onchange=e=>{ V.width=+e.target.value;
   const sel=V.sel&&P.ann.find(x=>x.id===V.sel);
   if(sel&&sel.type!=='cal'){ snap(); sel.w=V.width; drawOverlay(); showInspector(sel); markDirty(); }
 };
-$('#btnUndo').onclick=undo; $('#btnRedo').onclick=redo;
+$('#btnUndo').onclick=e=>{ if(e&&(e.altKey||e.shiftKey)) showHistory(); else undo(); };
+$('#btnRedo').onclick=()=>redo();
 $('#btnSnap').onclick=()=>{
   P.snap=P.snap===false; syncSnapBtn(); markDirty();
   if(P.snap!==false&&!SNAP.grid) buildSnap();
@@ -3446,13 +3785,15 @@ function renderAnnList(){
       :a.type==='driver'?((a.name||'PS')+'  ·  '+driverLabel(a,driverLoad(a)))
       :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
-    const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
+    const el=document.createElement('div'); el.className='item'+(a.id===V.sel||inMulti(a.id)?' on':'');
     el.style.opacity=annVisible(a)?'':'.45';
     const ec=colOf(a);
     el.innerHTML='<span class="pill" style="border-color:'+ec+';color:'+ec+'">'+kind+'</span>'
       +'<div style="flex:1;min-width:0"><div class="t">'+esc(String(label).slice(0,34))+'</div>'
       +(t?'<div class="s">'+esc(tagOf(t)+' · '+t.name)+'</div>':'')+'</div>';
-    el.onclick=()=>{ V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList();
+    el.onclick=ev=>{
+      if(ev.shiftKey){ toggleMulti(a.id); return; }
+      V.multi=[]; V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList();
       if(!onScreen(a)) centerOn(a); };
     h.appendChild(el);
   });
@@ -3495,6 +3836,29 @@ function lenOf(t){
   if(t.annId){ const a=P.ann.find(x=>x.id===t.annId); if(a){ const L=annLen(a); if(L!=null) return L; } }
   return +t.manual||0;
 }
+/* ---- approving a treatment ----
+   Once a number has been issued it should not drift because someone nudged a
+   markup. An approved treatment holds the cut it was approved at, its inputs go
+   read-only, and if the drawing moves underneath it, it says so rather than
+   quietly re-costing. */
+function approveTreat(t){
+  const r=calc(t);
+  t.approved=true;
+  t.apAt=new Date().toISOString();
+  t.apLen=r.L;
+  t.apCut=r.tot.cut;
+  if(r.cut>0) t.cutLock=r.cut;          /* freeze the cut, not just the display */
+}
+function unapproveTreat(t){
+  t.approved=false;
+  delete t.apAt; delete t.apLen; delete t.apCut;
+  t.cutLock=0;
+}
+const apDrift=t=>{
+  if(!t.approved||t.apLen==null) return 0;
+  const now=lenOf(t);
+  return Math.abs(now-t.apLen)>0.125?now-t.apLen:0;
+};
 function calc(t){
   const f=P.fix.find(x=>x.id===t.fixId)||P.fix[0];
   const c=P.ch.find(x=>x.id===t.chId)||P.ch[0];
@@ -3545,6 +3909,11 @@ function calc(t){
   if(!feedSet&&feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(f.feed)+' per feed. A centre feed usually solves it.');
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
   if(stock===0&&c.id!=='C6') w.push('No stock length set for this channel.');
+  if(t.approved){
+    const d=apDrift(t);
+    if(d) w.push('Approved at '+fmtLen(t.apLen)+' but the drawing now measures '+fmtLen(lenOf(t))
+      +' ('+(d>0?'+':'')+fmtLen(d)+'). Re-approve or unlock to accept the new length.');
+  }
   if(clipBad) w.push('Clip spacing "'+t.clip+'" could not be read — using '+fmtLen(clipSp)+'.');
   if(clipClamped) w.push('Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
   if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
@@ -3573,7 +3942,8 @@ function openTreat(id,focus){
 function treatMatch(t,q){
   if(!q) return true;
   const r=calc(t), d=P.docs.find(x=>x.id===t.docId);
-  const hay=[tagOf(t),t.type,t.zone,t.name,t.room,t.detail,t.notes,r.f.name,r.c.name,r.ps.name,d&&d.name]
+  const hay=[tagOf(t),t.type,t.zone,t.name,t.room,t.detail,t.notes,r.f.name,r.c.name,r.ps.name,d&&d.name,
+    t.approved?'approved locked':'',apDrift(t)?'drift moved':'']
     .filter(Boolean).join(' ').toLowerCase();
   /* every whitespace-separated term must appear, so "cove z2" narrows */
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
@@ -3610,8 +3980,9 @@ function renderTreatments(){
     const shopOpts='<option value="">— none —</option>'+P.docs.map(d=>'<option value="'+d.id+'"'+(d.id===t.shop?' selected':'')+'>'+esc(d.name)+'</option>').join('');
     el.innerHTML=
       '<div class="hd"><span class="tag">'+esc(tagOf(t))+'</span>'
-      +'<span class="nm">'+esc(t.name||'Untitled')+'</span>'
-      +'<span class="len">'+(t.qty>1?t.qty+' × ':'')+fmtLen(r.L)+'</span></div>'
+      +'<span class="nm">'+(t.approved?'🔒 ':'')+esc(t.name||'Untitled')+'</span>'
+      +'<span class="len"'+(apDrift(t)?' style="color:var(--flag)"':'')+'>'
+      +(t.qty>1?t.qty+' × ':'')+fmtLen(r.L)+'</span></div>'
       +'<div class="bd">'
       +'<div class="grid3">'
         +'<div class="f"><label>Type</label><input type="text" class="up" data-t="type" data-tab="1" value="'+esc(t.type||'')+'" placeholder="COVE"></div>'
@@ -3649,6 +4020,7 @@ function renderTreatments(){
       +'<div class="f" style="margin-top:8px"><label>Notes</label><textarea data-t="notes">'+esc(t.notes||'')+'</textarea></div>'
       +'<div id="out_'+t.id+'">'+outHtml(r,t)+'</div>'
       +'<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">'
+        +'<button class="btn sm'+(t.approved?' pri':'')+'" data-a="ap">'+(t.approved?'Approved 🔒':'Approve')+'</button>'
         +(t.annId?'<button class="btn sm" data-a="loc">Show on drawing</button><button class="btn sm" data-a="unlink">Unlink dimension</button>'
                  :'<button class="btn sm" data-a="link">Link selected dimension</button>')
         +'<button class="btn sm" data-a="dup">Duplicate</button>'
@@ -3672,6 +4044,8 @@ function renderTreatments(){
       drawOverlay(); renderBom(); stats(); markDirty();
       toast(v>0?'Cut locked at '+fmtLen(v):'Cut follows the measurement again');
     });
+    /* an approved treatment is read-only until it is unapproved */
+    if(t.approved) $$('[data-t]',el).forEach(inp=>{ inp.disabled=true; inp.tabIndex=-1; });
     $$('[data-t]',el).forEach(inp=>{
       inp.oninput=()=>{
         const k=inp.dataset.t;
@@ -3700,7 +4074,30 @@ function renderTreatments(){
       if(a==='del'){ snap(); if(t.annId){const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat;}
         P.ann.forEach(x=>{ if(x.type==='driver'&&Array.isArray(x.serves)) x.serves=x.serves.filter(id=>id!==t.id); });
         P.treat=P.treat.filter(x=>x.id!==t.id); renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty(); }
-      if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t); P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
+      if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t);
+        unapproveTreat(c2);              /* a copy has not been approved */ P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
+      if(a==='ap'){
+        if(t.approved){
+          const r2=await dlg({title:'Unapprove '+tagOf(t),fields:[
+            {k:'go',type:'check',cap:'Let this treatment follow the drawing again',val:false}
+          ],ok:'Unapprove',note:'It was approved at '+fmtLen(t.apLen)+(apDrift(t)?', and the drawing now measures '
+            +fmtLen(lenOf(t))+'.':'.')+' Unapproving unlocks the cut and the fields.'});
+          if(!r2||!r2.go) return;
+          snap('Unapprove '+tagOf(t)); unapproveTreat(t);
+          toast(tagOf(t)+' follows the drawing again');
+        }else{
+          const rr=calc(t);
+          if(rr.L<=0){ toast('Nothing to approve yet — measure it first'); return; }
+          const r2=await dlg({title:'Approve '+tagOf(t),fields:[
+            {k:'go',type:'check',cap:'Freeze this treatment at '+fmtLen(rr.cut),val:false}
+          ],ok:'Approve',note:'Measured '+fmtLen(rr.L)+', cut '+fmtLen(rr.cut)
+            +'. Its fields go read-only and the cut stops following the markup. If the drawing changes afterwards it will say so.'});
+          if(!r2||!r2.go) return;
+          snap('Approve '+tagOf(t)); approveTreat(t);
+          toast(tagOf(t)+' approved at '+fmtLen(t.apCut));
+        }
+        renderTreatments(); renderBom(); stats(); markDirty(); openTreat(t.id);
+      }
       if(a==='across') await dupAcross(t);
       if(a==='loc'){ const an=P.ann.find(x=>x.id===t.annId);
         if(!an){ toast('No dimension linked to this treatment'); return; }
@@ -3747,6 +4144,7 @@ async function dupAcross(t){
     const c=clone(t);
     c.id=uid('t_'); c.tag='L-'+pad(P.seq++);
     c.docId=doc; c.page=+pg; c.annId=null;
+    unapproveTreat(c);
     if(String(r.zone||'').trim()) c.zone=String(r.zone).trim().toUpperCase();
     c.manual=lenOf(t);
     if(r.mark&&src){
@@ -4216,7 +4614,8 @@ function renderBom(){
   const cutCap=capList('cutTbl',cutAll);
   cutCap.shown.forEach(t=>{
     const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts; tf+=r.tot.feeds;
-    h+='<tr><td><span class="tag">'+esc(tagOf(t))+'</span></td>'
+    h+='<tr><td><span class="tag">'+esc(tagOf(t))+'</span>'+(t.approved?' 🔒':'')
+      +(apDrift(t)?'<div class="hint" style="color:var(--flag)">drawing moved</div>':'')+'</td>'
       +'<td>'+(t.type?'<span class="typ">'+esc(t.type)+'</span>':'<span class="hint">—</span>')+'</td>'
       +'<td>'+(t.zone?'<span class="typ">'+esc(t.zone)+'</span>':'<span class="hint">—</span>')+'</td>'
       +'<td>'+esc(t.room||t.name||'—')+'<div class="hint">'+esc((P.docs.find(d=>d.id===t.docId)||{}).name||'')+'</div></td>'
@@ -4459,6 +4858,189 @@ async function exportSheetPdf(){
     toast('Exported '+name);
   }catch(e){ toast('Could not export: '+(e&&e.message||'unknown')); }
 }
+/* ---- the printable report ----
+   A takeoff gets issued on paper or as a PDF someone else prints. This builds
+   one self-contained HTML page — every table, the cost summary, piece labels for
+   the bench, and optional sheet thumbnails — and opens it ready to print. No
+   network, no fonts to fetch: it has to work on a site laptop. */
+function reportCss(){
+  return '*{box-sizing:border-box}'
+    +'body{margin:0;padding:26px 30px;background:#fff;color:#1a1a1a;'
+    +'font:12px/1.45 "Helvetica Neue",Helvetica,Arial,sans-serif}'
+    +'h1{font-size:20px;margin:0 0 2px;letter-spacing:.02em}'
+    +'h2{font-size:13px;text-transform:uppercase;letter-spacing:.13em;margin:26px 0 7px;'
+    +'padding-bottom:5px;border-bottom:1.5px solid #1a1a1a}'
+    +'.sub{color:#555;font-size:11.5px}'
+    +'.meta{display:flex;flex-wrap:wrap;gap:0 26px;margin:12px 0 4px;font-size:11.5px}'
+    +'.meta b{font-weight:600}'
+    +'table{border-collapse:collapse;width:100%;font-size:11px;margin-bottom:4px}'
+    +'th,td{border-bottom:1px solid #ddd;padding:4px 6px;text-align:left;vertical-align:top}'
+    +'th{background:#f2f0ec;font-size:9.5px;text-transform:uppercase;letter-spacing:.08em}'
+    +'td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}'
+    +'tr.tot td{border-top:1.5px solid #1a1a1a;border-bottom:none;font-weight:600}'
+    +'.tag{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-weight:600}'
+    +'.cards{display:flex;flex-wrap:wrap;gap:8px}'
+    +'.card{border:1.2px solid #1a1a1a;border-radius:3px;padding:7px 9px;min-width:132px}'
+    +'.card b{display:block;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}'
+    +'.card span{display:block;color:#555;font-size:10.5px}'
+    +'.sum{display:flex;flex-wrap:wrap;gap:10px;margin:8px 0}'
+    +'.sum div{border:1px solid #ccc;border-radius:3px;padding:8px 12px;min-width:120px}'
+    +'.sum b{display:block;font-size:17px}'
+    +'.sum span{color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.08em}'
+    +'.thumb{page-break-inside:avoid;margin-bottom:14px}'
+    +'.thumb img{width:100%;border:1px solid #bbb}'
+    +'.flag{color:#b3452f}'
+    +'footer{margin-top:26px;border-top:1px solid #ccc;padding-top:7px;color:#666;font-size:10px}'
+    +'@media print{body{padding:0}h2{page-break-after:avoid}table{page-break-inside:auto}'
+    +'tr{page-break-inside:avoid}.noprint{display:none}}';
+}
+const rEsc=esc;
+function rTable(head,rows,tot){
+  if(!rows.length) return '<p class="sub">Nothing to report here.</p>';
+  const th=head.map(h=>'<th'+(h.n?' class="n"':'')+'>'+rEsc(h.t||h)+'</th>').join('');
+  const body=rows.map(r=>'<tr>'+r.map((c,i)=>'<td'+(head[i]&&head[i].n?' class="n"':'')+'>'+rEsc(c)+'</td>').join('')+'</tr>').join('');
+  const foot=tot?'<tr class="tot">'+tot.map((c,i)=>'<td'+(head[i]&&head[i].n?' class="n"':'')+'>'+rEsc(c)+'</td>').join('')+'</tr>':'';
+  return '<table><thead><tr>'+th+'</tr></thead><tbody>'+body+foot+'</tbody></table>';
+}
+async function reportHtml(opts){
+  opts=opts||{};
+  const c=costTotals(), d=baseDiff(), cnt=countTotals(), drv=driverRows();
+  const totLen=P.treat.reduce((s,t)=>s+calc(t).tot.cut,0);
+  const totW=P.treat.reduce((s,t)=>s+calc(t).tot.watts,0);
+  const runs=P.treat.reduce((s,t)=>s+Math.max(1,+t.qty||1),0);
+  let h='<h1>'+rEsc(P.name||'Untitled Project')+'</h1>'
+    +'<div class="sub">Linear lighting takeoff'+(P.no?'  ·  job '+rEsc(P.no):'')+'</div>'
+    +'<div class="meta"><span><b>Issued</b> '+new Date().toLocaleString()+'</span>'
+    +'<span><b>Sheets</b> '+P.docs.length+'</span>'
+    +'<span><b>Treatments</b> '+P.treat.length+'</span>'
+    +'<span><b>Runs</b> '+runs+'</span>'
+    +'<span><b>Units</b> '+rEsc(P.units)+'</span>'
+    +'<span><b>Linework</b> '+APP_VER+'</span></div>';
+  h+='<div class="sum">'
+    +'<div><span>LED ordered</span><b>'+rEsc(fmtRun(totLen))+'</b></div>'
+    +'<div><span>Connected load</span><b>'+totW.toFixed(0)+' W</b></div>'
+    +'<div><span>Feed points</span><b>'+P.treat.reduce((s,t)=>s+calc(t).tot.feeds,0)+'</b></div>'
+    +'<div><span>Supplies</span><b>'+P.treat.reduce((s,t)=>s+calc(t).psuQty,0)+'</b></div>'
+    +(c.total>0?'<div><span>Estimate</span><b>'+rEsc(money(c.total))+'</b></div>':'')
+    +(c.perFt!=null&&c.total>0?'<div><span>Per LED ft</span><b>'+rEsc(money(c.perFt))+'</b></div>':'')
+    +'</div>';
+  /* cut list */
+  h+='<h2>Cut list</h2>'+rTable(
+    ['Tag','Type','Zone','Location','Detail','Product',{t:'Runs',n:1},{t:'Field',n:1},{t:'Cut',n:1},{t:'W',n:1},{t:'Feeds',n:1}],
+    P.treat.map(t=>{ const r=calc(t);
+      return [tagOf(t)+(t.approved?' 🔒':''),t.type||'',t.zone||'',t.room||t.name||'',t.detail||'',
+        r.f.name,r.qty,fmtRun(r.L),fmtRun(r.cut),r.tot.watts.toFixed(0),r.tot.feeds]; }),
+    ['Total','','','','','','',fmtRun(P.treat.reduce((s,t)=>s+calc(t).tot.len,0)),fmtRun(totLen),totW.toFixed(0),
+      P.treat.reduce((s,t)=>s+calc(t).tot.feeds,0)]);
+  /* BOM */
+  h+='<h2>Bill of materials</h2>'+rTable(['Category','Item',{t:'Qty',n:1},'Unit','Note'],
+    bomData().map(r=>[r[0],r[1],r[3],r[2],r[4]]));
+  /* cost */
+  if(c.rows.length){
+    h+='<h2>Cost</h2>'+rTable(['Category','Item',{t:'Qty',n:1},'Unit',{t:'Rate',n:1},{t:'Total',n:1}],
+      c.rows.map(r=>[r.cat,r.item+(r.unpriced?'  (no rate set)':''),
+        r.unit==='ft'?r.qty.toFixed(2):r.qty,r.unit,r.rate>0?money(r.rate):'—',r.rate>0?money(r.total):'—']),
+      ['','Material '+money(c.mat)+'  ·  markup '+money(c.markup)+'  ·  labour '+c.hours.toFixed(1)+' h '+money(c.labour),
+        '','','Total',money(c.total)]);
+    if(c.unpriced) h+='<p class="sub flag">'+c.unpriced+' item'+(c.unpriced===1?'':'s')
+      +' have no rate set and are excluded from the total.</p>';
+  }
+  /* pieces and their marks */
+  const pc=pieceData();
+  if(pc.length){
+    h+='<h2>Pieces to cut</h2>'+rTable(['Mark',{t:'Of',n:1},'Tag','Zone','Item',{t:'Cut to',n:1},'Note'],
+      pc.map(r=>[r.mark,r.seq+' of '+r.of,r.tag,r.zone||'',r.item,fmtLen(r.len),r.note+(r.locked?' · locked':'')]));
+    if(opts.labels!==false){
+      h+='<h2>Piece labels</h2><div class="cards">'
+        +pc.map(r=>'<div class="card"><b>'+rEsc(r.mark)+'</b><span>'+rEsc(r.tag)
+          +(r.zone?' · '+rEsc(r.zone):'')+'</span><span>'+rEsc(fmtLen(r.len))+'</span>'
+          +'<span>'+rEsc(r.item)+'</span><span>'+r.seq+' of '+r.of+'</span></div>').join('')
+        +'</div>';
+    }
+  }
+  /* nesting */
+  const nest=nestData();
+  if(nest.length){
+    const rows=[];
+    nest.forEach(g=>g.bins.forEach((b,i)=>rows.push([g.name+(g.scope?' · '+g.scope:''),i+1,
+      b.cuts.map(x=>fmtRun(x)).join('  +  '),fmtRun(b.left)+((g.minOff>0&&b.left>=g.minOff)?' re-usable':'')])));
+    h+='<h2>Channel nesting</h2>'+rTable(['Channel',{t:'Stock #',n:1},'Cut from it',{t:'Off-cut',n:1}],rows);
+    h+=rTable(['Channel',{t:'Needed',n:1},{t:'Bought',n:1},{t:'Waste',n:1},{t:'Yield',n:1}],
+      nest.map(g=>[g.name,fmtRun(g.used),g.bins.length+' × '+fmtLen(g.stock),
+        fmtRun(g.minOff>0?g.scrap:g.waste),(g.yield*100).toFixed(0)+'%']));
+  }
+  /* rollups */
+  const zr=rollup(t=>t.zone||'(no zone)');
+  if(zr.length) h+='<h2>By zone</h2>'+rTable(['Zone',{t:'Runs',n:1},{t:'LED',n:1},{t:'Channel',n:1},{t:'W',n:1},{t:'Feeds',n:1},{t:'Supplies',n:1}],
+    zr.map(v=>[v.label,v.runs,fmtRun(v.led),fmtRun(v.ch),v.watts.toFixed(0),v.feeds,v.psu]));
+  const sr=rollup(t=>t.docId||'(none)',t=>sheetLabel(P.docs.find(x=>x.id===t.docId)));
+  if(sr.length) h+='<h2>By sheet</h2>'+rTable(['Sheet',{t:'Runs',n:1},{t:'LED',n:1},{t:'Channel',n:1},{t:'W',n:1},{t:'Feeds',n:1},{t:'Supplies',n:1}],
+    sr.map(v=>[v.label,v.runs,fmtRun(v.led),fmtRun(v.ch),v.watts.toFixed(0),v.feeds,v.psu]));
+  /* counts, drivers, revisions, changes */
+  if(cnt.length) h+='<h2>Counts</h2>'+rTable(['Group','Symbol',{t:'Count',n:1},{t:'Rate',n:1},{t:'Total',n:1},'Sheets'],
+    cnt.map(x=>{ const rate=+((P.cntRate||{})[x.grp])||0;
+      return [x.grp,x.sym,x.n,rate?money(rate):'—',rate?money(rate*x.n):'—',x.sheets]; }));
+  if(drv.length) h+='<h2>Drivers</h2>'+rTable(['Mark','Supply','Sheet',{t:'Load',n:1},{t:'Usable',n:1},{t:'Home run',n:1},{t:'Runs',n:1},'Flags'],
+    drv.map(r=>[r.name,r.supply,r.sheet,r.watts.toFixed(0)+' W',r.cap>0?Math.round(r.cap)+' W':'—',
+      r.home>0?fmtRun(r.home):'—',r.serves,r.warn.join(' ')]));
+  const clouds=P.ann.filter(a=>a.type==='cloud');
+  if(clouds.length) h+='<h2>Revisions</h2>'+rTable(['Rev','Sheet','What changed'],
+    clouds.map(a=>[a.rev||'1',sheetLabel(P.docs.find(x=>x.id===a.doc))+' p'+a.page,a.text||'']));
+  const alts=altRows();
+  if(alts.length>1) h+='<h2>Alternates</h2>'+rTable(['Option','Substitutions',{t:'LED',n:1},{t:'Material',n:1},{t:'Total',n:1},{t:'vs base',n:1}],
+    alts.map(r=>[r.name,r.alt?altLabel(r.alt):'—',fmtRun(r.sum.ledFt*12),money(r.sum.mat),money(r.sum.total),
+      r.base?'—':((r.delta>0?'+':'')+money(r.delta))]));
+  if(d) h+='<h2>Changes since '+new Date(d.at).toLocaleDateString()+'</h2>'+rTable(['State','Tag',{t:'Was',n:1},{t:'Now',n:1},{t:'Δ',n:1}],
+    d.added.map(x=>['added',x.tag,'—',fmtRun(x.now.cut),'+'+fmtRun(x.delta)])
+      .concat(d.changed.map(x=>['changed',x.tag,fmtRun(x.was.cut),fmtRun(x.now.cut),(x.delta>0?'+':'')+fmtRun(x.delta)]),
+        d.removed.map(x=>['removed',x.tag,fmtRun(x.was.cut),'—',fmtRun(x.delta)])),
+    ['Net','','','',(d.net>0?'+':'')+fmtRun(d.net)]);
+  /* warnings worth carrying onto paper */
+  const warn=[];
+  P.treat.forEach(t=>calc(t).warn.forEach(w=>warn.push(tagOf(t)+': '+w)));
+  P.docs.forEach(x=>{ if(!scaleOf(x.id,1)) warn.push(sheetLabel(x)+': no scale set'); });
+  if(warn.length) h+='<h2>Check before issuing</h2><ul class="sub">'
+    +warn.slice(0,40).map(w=>'<li>'+rEsc(w)+'</li>').join('')
+    +(warn.length>40?'<li>… and '+(warn.length-40)+' more</li>':'')+'</ul>';
+  /* sheet thumbnails, marked up */
+  if(opts.thumbs){
+    const shots=[];
+    for(const doc of P.docs){
+      if(!FILES[doc.id]) continue;
+      try{
+        const b=await sheetBitmap(doc.id,1,1.1);
+        shots.push('<div class="thumb"><img src="'+b.canvas.toDataURL('image/jpeg',.72)+'">'
+          +'<div class="sub">'+rEsc(sheetLabel(doc))+'</div></div>');
+      }catch(e){}
+    }
+    if(shots.length) h+='<h2>Sheets</h2>'+shots.join('');
+  }
+  h+='<footer>Generated by Linework '+APP_VER+' on '+new Date().toLocaleString()
+    +'. Quantities include '+(+P.waste||0)+'% waste; supplies are loaded to at most '
+    +Math.round(+P.load||80)+'% of their rating.</footer>';
+  return '<!doctype html><html><head><meta charset="utf-8"><title>'
+    +rEsc((P.name||'Takeoff')+(P.no?' — '+P.no:''))+'</title><style>'+reportCss()+'</style></head><body>'
+    +h+'</body></html>';
+}
+async function openReport(){
+  const r=await dlg({title:'Takeoff report',fields:[
+    {k:'labels',type:'check',cap:'Include piece labels for the shop',val:true},
+    {k:'thumbs',type:'check',cap:'Include a marked-up thumbnail of each sheet',val:false},
+    {k:'how',type:'select',label:'Then',opts:[{v:'open',t:'Open it for printing'},
+      {v:'save',t:'Save it as an HTML file'}],val:'open'}
+  ],ok:'Build',note:'One self-contained page — no network, so it prints from a site laptop.'});
+  if(!r) return;
+  toast('Building the report…');
+  try{
+    const html=await reportHtml({labels:r.labels,thumbs:r.thumbs});
+    if(r.how==='save'){ download(slug(P.name)+'-takeoff.html',html,'text/html'); toast('Saved the report'); return; }
+    const w=window.open('','_blank');
+    if(!w){ download(slug(P.name)+'-takeoff.html',html,'text/html');
+      toast('Pop-up blocked — the report was downloaded instead'); return; }
+    w.document.open(); w.document.write(html); w.document.close();
+    setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} },350);
+  }catch(e){ toast('Could not build the report: '+(e&&e.message||'unknown')); }
+}
 async function exportBox(name,text){
   await dlg({title:'Export — '+name,fields:[{k:'x',type:'textarea',label:'Preview',val:text.slice(0,4000)}],ok:'Download',cancel:'Close'})
     .then(r=>{ if(!r) return; try{
@@ -4469,7 +5051,7 @@ async function exportBox(name,text){
 $('#btnCsvCut').onclick=()=>{
   const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
-    'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually',
+    'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually','Approved','Approved at',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
@@ -4477,10 +5059,12 @@ $('#btnCsvCut').onclick=()=>{
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
       r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
+      t.approved?'yes':'no',t.approved?(t.apAt||''):'',
       (r.tot.chLen/12).toFixed(2),r.tot.pieces,r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes]); });
   exportBox(slug(P.name)+'-cutlist.csv',csv(rows));
 };
 $('#btnXlsx').onclick=exportWorkbook;
+$('#btnReport').onclick=openReport;
 $('#btnAlt').onclick=()=>editAlt(null);
 $('#btnBase').onclick=async()=>{
   const has=!!P.base;
@@ -5193,6 +5777,7 @@ function applyTheme(){
 $('#btnTheme').onclick=()=>{ P.theme=P.theme==='light'?'dark':'light'; applyTheme(); markDirty(); };
 $('#btnSet').onclick=openSettings;
 $('#calNagGo').onclick=()=>{ setTool('cal'); toast('Drag along a dimension you can read on the sheet'); };
+$('#btnScales').onclick=manageScales;
 function syncSmartBtn(){
   const b=$('#btnSmart'); if(!b) return;
   const on=P.smart!==false;
@@ -5273,11 +5858,15 @@ document.addEventListener('keydown',e=>{
   if(tag==='input'||tag==='textarea'||tag==='select') return;
   const k=e.key.toLowerCase();
   if((e.metaKey||e.ctrlKey)&&k==='z'){ e.preventDefault(); e.shiftKey?redo():undo(); return; }
+  if((e.metaKey||e.ctrlKey)&&k==='y'){ e.preventDefault(); showHistory(); return; }
   if((e.metaKey||e.ctrlKey)&&k==='c'&&V.sel){ e.preventDefault(); copyAnn(); return; }
   if((e.metaKey||e.ctrlKey)&&k==='v'){ e.preventDefault(); pasteAnn(null); return; }
   if((e.metaKey||e.ctrlKey)&&k==='d'&&V.sel){ e.preventDefault(); const a=P.ann.find(x=>x.id===V.sel); if(a) pasteAnn(null,a); return; }
   /* escape backs all the way out: drop the draft, clear the selection, pointer tool */
-  if(k==='escape'){ closeCtx(); V.draft=null; V.sel=null; showInspector(null);
+  if((e.metaKey||e.ctrlKey)&&k==='a'&&V.vp){ e.preventDefault();
+    setMulti(pageAnns().filter(annVisible).map(a=>a.id));
+    toast((V.multi.length||(V.sel?1:0))+' markup(s) selected on this page'); return; }
+  if(k==='escape'){ closeCtx(); V.draft=null; V.sel=null; V.multi=[]; V.marq=null; showInspector(null);
     if(V.tool!=='pan') setTool('pan'); else { drawOverlay(); syncDrawbar(); }
     return; }
   if(k==='enter'&&V.draft) finishDraft();
@@ -5293,6 +5882,15 @@ document.addEventListener('keydown',e=>{
   if(k==='['){ setPanel('left',(P.panels||{}).left===false); }
   if(k===']'){ setPanel('right',(P.panels||{}).right===false); }
   if(k==='\\'){ setPanel('swap',!(P.panels||{}).swap); }
+  if((k==='delete'||k==='backspace')&&(V.multi||[]).length>1){
+    const ids=new Set(V.multi);
+    snap('Delete '+ids.size+' markups');
+    P.ann=P.ann.filter(a=>!ids.has(a.id));
+    P.treat.forEach(t=>{ if(ids.has(t.annId)) t.annId=null; });
+    V.multi=[]; showInspector(null); invalidateAnns();
+    drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); stats(); markDirty();
+    toast('Deleted '+ids.size+' markups'); return;
+  }
   if((k==='delete'||k==='backspace')&&V.sel){ const a=P.ann.find(x=>x.id===V.sel);
     if(a){ snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(t=>{if(t.annId===a.id)t.annId=null}); V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); markDirty(); } }
   if(k==='+'||k==='=') zoomBy(1.25); if(k==='-') zoomBy(.8);
@@ -5391,6 +5989,8 @@ function settingsHtml(){
     +setRow('Default cut rounding','Which way a run rounds to the product\u2019s cut increment.',
       setSel('round',[{v:'',t:'Automatic — up for fixtures, down for tape'},
         {v:'down',t:'Always round down'},{v:'near',t:'Always nearest'},{v:'up',t:'Always round up'}],P.round||''))
+    +setRow('Show lengths to','Rounds what is displayed. Cuts, totals and exports stay exact.',
+      setSel('prec',P.units==='metric'?PRECS_M:PRECS,String(+P.prec||0)))
     +'</div><div class="setgrp"><h4>Regions</h4>'
     +setRow('Cove set in from the wall','Applied to new regions; each one can be changed after.',
       '<input type="text" data-set="areaOff" value="'+esc(P.areaOff?fmtLen(P.areaOff):'')+'" placeholder="0">')
@@ -5438,7 +6038,7 @@ function settingsHtml(){
     +setRow('Auto-save to the linked file','Every change also writes to the project file you picked.',
       setChk('autoFile',autoFile,FH?('Writing to '+FH.name):'No file linked yet'))
     +setRow('Undo depth','How many steps are kept. They survive a reload.',
-      '<span class="val">'+HIST.length+' of 60 used</span>')
+      '<span class="val">'+HIST.length+' of 60 used</span> <button class="btn sm" id="setHist">History…</button>')
     +setRow('Keep drawings in this browser','Reopening the job then needs no re-import. The project file is still the portable copy.',
       setChk('keepPdf',P.keepPdf!==false,P.keepPdf!==false?'On':'Off'))
     +setRow('Stored drawings','',('<span class="val" id="setPdfSize">…</span>'
@@ -5468,6 +6068,7 @@ function renderSettings(){
     const cl=$('#setPdfClear');
     if(cl) cl.onclick=async()=>{ await pdfForget(); renderSettings(); };
   },0);
+  setTimeout(()=>{ const hb=$('#setHist'); if(hb) hb.onclick=showHistory; },0);
   $('#setNav').innerHTML=SET_TABS.map(t=>'<button data-tab="'+t.k+'"'+(t.k===setTab?' class="on"':'')+'>'+esc(t.t)+'</button>').join('');
   $$('#setNav button').forEach(b=>b.onclick=()=>{ setTab=b.dataset.tab; renderSettings(); });
   const body=$('#setBody');
@@ -5501,6 +6102,7 @@ function applySetting(el){
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'maxHome': { const v=parseLen(val); P.maxHome=(isFinite(v)&&v>0)?v:240;
       drawOverlay(); renderBom(); break; }
+    case 'prec': P.prec=Math.max(0,+val||0); boot(true); break;
     case 'nestBy': P.nestBy=val; renderBom(); break;
     case 'tiles': P.tiles=val; if(!val) tileClear(); renderSettings(); break;
     case 'gpu': P.gpu=val; tileClear(); scheduleRepaint(true); renderSettings(); break;
@@ -5549,11 +6151,13 @@ $('#setReset').onclick=async()=>{
 window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen,openFiles,openDoc,bomData,boot,rdp,smooth,undo,redo,snap,copyAnn,pasteAnn,ctxForAnn,ctxForSheet,wheelZoom,flushWheel,
   saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
   annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
-  fmtRun,fmtFtIn,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
+  fmtRun,fmtFtIn,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,dispLen,precisions:PRECS,
   get chipFontSize(){return CHIP_FS}, get chipHeight(){return CHIP_H},
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
+  historyList,jumpHistory,showHistory,
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
+  scaleMap,parseRange,manageScales,
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
   drawOverlay,drawOverlayFor,ovInvalidate,ovCache:()=>({svg:OVC.svg.size,chips:OVC.chips.size,key:OVC.key}),
@@ -5562,9 +6166,12 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   pdfSave,pdfLoad,pdfDrop,pdfKeys,pdfStoreSize,pdfForget,pdfPrune,restoreDrawings,
   snapCache:()=>({pages:SNAP.cache.size,keys:[...SNAP.cache.keys()]}),
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
+  setMulti,toggleMulti,multiAnns,inMulti,alignMulti,distributeMulti,annBox,shiftAnn,aligns:ALIGNS,
+  approveTreat,unapproveTreat,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
+  reportHtml,openReport,reportCss,
   cloudPath,nextRev,driverLoad,driverRows,placeDriver,nearestPtOn,driverLabel,
   compareSheets,compareRevisions,cloudRects,readTitleblock,scanTitleblocks,sheetLabel,
   countTotals,countsOf,countIndex,placeCount,countSyms:CNT_SYMS,
