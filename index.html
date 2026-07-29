@@ -303,6 +303,7 @@ body.haspen #penFlag{display:inline}
     <button class="tool" id="btnUndo" title="Undo (⌘Z)"><svg viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 010 10h-6"/><path d="M8 5L4 9l4 4"/></svg></button>
     <button class="tool" id="btnRedo" title="Redo (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="M20 9H9a5 5 0 000 10h6"/><path d="M16 5l4 4-4 4"/></svg></button>
     <button class="btn sm ghost" id="btnFinger" title="What one finger does">✋ Finger pans</button>
+    <button class="btn sm ghost" id="btnSnap" title="Snap to the drawing's own geometry">⊹ Snap</button>
     <button class="btn sm ghost" id="btnScroll" title="What the scroll wheel does">⊕ Scroll zooms</button>
     <span class="sep"></span>
     <select id="scalePreset" style="width:auto;padding:4px 6px;font-size:11px"><option value="">Set scale…</option></select>
@@ -423,7 +424,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.10.0';
+const APP_VER='1.11.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -780,7 +781,7 @@ async function ensurePage(){
     const v1=V.pageObj.getViewport({scale:1}); V.pw=v1.width; V.ph=v1.height;
     /* the sharp layer belongs to the page we just left — drop it and let the
        base layer carry the view until the new page paints */
-    V.win=null; V.winZoom=null;
+    V.win=null; V.winZoom=null; snapReset();
     DET.forEach(c=>{ c.style.visibility='hidden'; });
   }
   return true;
@@ -870,6 +871,7 @@ async function paintPage(){
   V.win=win; V.winZoom=zoomAt;
   syncZoomUI();
   drawOverlay();
+  if(P.snap!==false&&SNAP.key!==V.docId+'|'+V.page) buildSnap();
 }
 /* Repaint after scrolling out of the window, zooming, or resizing. The base layer
    covers whatever is newly exposed in the meantime, so being late is not jarring
@@ -893,6 +895,104 @@ async function renderPage(){
   if(!await ensurePage()) return;
   V.zoom=clampZoom(V.zoom);
   resizeStage(); await paintPage();
+}
+
+/* ============================================================
+   Snap to the drawing's own geometry
+   ============================================================
+   pdf.js hands us the page's path construction operators, so the real endpoints
+   and corners of the drawing are recoverable. Snapping to those is the single
+   biggest accuracy win available: a measurement is only as good as where you
+   put its ends. Points are kept in PDF user space so they hold at any zoom, and
+   bucketed into a grid so lookup stays O(1)-ish on a dense sheet. */
+const SNAP_TOL=11;              /* screen px */
+const SNAP_CAP=120000;          /* points; a very dense sheet is truncated */
+const SNAP_CELL=24;             /* grid cell, PDF points */
+const SNAP={key:null,grid:null,n:0,truncated:false,building:false};
+
+function snapReset(){ SNAP.key=null; SNAP.grid=null; SNAP.n=0; SNAP.truncated=false; }
+function mul(m,n){ return [
+  m[0]*n[0]+m[2]*n[1], m[1]*n[0]+m[3]*n[1],
+  m[0]*n[2]+m[2]*n[3], m[1]*n[2]+m[3]*n[3],
+  m[0]*n[4]+m[2]*n[5]+m[4], m[1]*n[4]+m[3]*n[5]+m[5]];
+}
+const apply=(m,x,y)=>[m[0]*x+m[2]*y+m[4], m[1]*x+m[3]*y+m[5]];
+
+async function buildSnap(){
+  const key=V.docId+'|'+V.page;
+  if(SNAP.key===key||SNAP.building||!V.pageObj||!PDF_OK) return;
+  SNAP.building=true;
+  const grid=new Map(); let n=0, truncated=false;
+  try{
+    const ops=await V.pageObj.getOperatorList();
+    const OPS=pdfjsLib.OPS;
+    let m=[1,0,0,1,0,0]; const stack=[];
+    const add=(x,y)=>{
+      if(n>=SNAP_CAP){ truncated=true; return; }
+      const p=apply(m,x,y);
+      const k=Math.round(p[0]/SNAP_CELL)+','+Math.round(p[1]/SNAP_CELL);
+      let b=grid.get(k); if(!b){ b=[]; grid.set(k,b); }
+      /* collapse duplicates: drawings repeat the same corner constantly */
+      for(const q of b) if(Math.abs(q[0]-p[0])<.05&&Math.abs(q[1]-p[1])<.05) return;
+      b.push(p); n++;
+    };
+    for(let i=0;i<ops.fnArray.length;i++){
+      const fn=ops.fnArray[i], args=ops.argsArray[i];
+      if(fn===OPS.save) stack.push(m.slice());
+      else if(fn===OPS.restore) m=stack.pop()||[1,0,0,1,0,0];
+      else if(fn===OPS.transform) m=mul(m,args);
+      else if(fn===OPS.constructPath){
+        const sub=args[0], co=args[1];
+        let c=0;
+        for(const op of sub){
+          if(op===OPS.moveTo||op===OPS.lineTo){ add(co[c],co[c+1]); c+=2; }
+          else if(op===OPS.curveTo){ add(co[c],co[c+1]); add(co[c+2],co[c+3]); add(co[c+4],co[c+5]); c+=6; }
+          else if(op===OPS.curveTo2||op===OPS.curveTo3){ add(co[c],co[c+1]); add(co[c+2],co[c+3]); c+=4; }
+          else if(op===OPS.rectangle){
+            const [x,y,w,h]=[co[c],co[c+1],co[c+2],co[c+3]];
+            add(x,y); add(x+w,y); add(x+w,y+h); add(x,y+h); c+=4;
+          }
+          else if(op===OPS.closePath){ /* no new point */ }
+        }
+      }
+      if(truncated) break;
+    }
+    SNAP.grid=grid; SNAP.n=n; SNAP.truncated=truncated; SNAP.key=key;
+  }catch(e){ SNAP.grid=null; SNAP.key=key; SNAP.n=0; }   /* snapping simply stays off */
+  SNAP.building=false;
+  syncSnapBtn();
+}
+/* nearest geometry point to a PDF-space point, within the screen tolerance */
+function snapAt(p){
+  if(P.snap===false||!SNAP.grid||!V.vp) return null;
+  const tolPt=SNAP_TOL/Math.max(V.zoom,.01);
+  const c0=Math.round(p[0]/SNAP_CELL), c1=Math.round(p[1]/SNAP_CELL);
+  const reach=Math.ceil(tolPt/SNAP_CELL);
+  let best=null,bd=tolPt*tolPt;
+  for(let i=c0-reach;i<=c0+reach;i++) for(let j=c1-reach;j<=c1+reach;j++){
+    const b=SNAP.grid.get(i+','+j); if(!b) continue;
+    for(const q of b){
+      const d=(q[0]-p[0])*(q[0]-p[0])+(q[1]-p[1])*(q[1]-p[1]);
+      if(d<bd){ bd=d; best=q; }
+    }
+  }
+  return best?best.slice():null;
+}
+/* snap a candidate point, remembering it so the cursor can show the hit */
+function snapped(p){
+  const q=snapAt(p);
+  V.snapHit=q?q.slice():null;
+  return q||p;
+}
+function syncSnapBtn(){
+  const b=$('#btnSnap'); if(!b) return;
+  const on=P.snap!==false;
+  b.classList.toggle('pri',on&&!!SNAP.grid);
+  b.textContent=on?(SNAP.grid?'⊹ Snap '+(SNAP.n>999?(SNAP.n/1000).toFixed(0)+'k':SNAP.n):'⊹ Snap …'):'⊹ Snap off';
+  b.title=on
+    ? (SNAP.grid?SNAP.n+' points found on this page'+(SNAP.truncated?' (truncated)':'')+' — measurements snap to the drawing'
+              :'Reading the drawing geometry…')
+    : 'Snapping off — measurements land exactly where you click';
 }
 
 /* ---- scale ---- */
@@ -1012,6 +1112,12 @@ function drawOverlay(){
   let s='';
   for(const a of list) s+=drawAnn(a,a.id===V.sel);
   if(V.draft) s+=drawAnn(V.draft,false,true);
+  if(V.snapHit&&(isMeasureTool(V.tool)||V.tool==='cal')){
+    const q=sp(V.snapHit);
+    s+='<g stroke="#8FC46A" stroke-width="1.6" fill="none">'
+      +'<rect x="'+(q[0]-5.5).toFixed(1)+'" y="'+(q[1]-5.5).toFixed(1)+'" width="11" height="11"/>'
+      +'<path d="M'+(q[0]-9)+' '+q[1]+' h4 M'+(q[0]+5)+' '+q[1]+' h4 M'+q[0]+' '+(q[1]-9)+' v4 M'+q[0]+' '+(q[1]+5)+' v4"/></g>';
+  }
   ov.innerHTML=s;
 }
 function drawAnn(a,selected,isDraft){
@@ -1251,7 +1357,9 @@ function editMove(e){
     a.pts=a.pts.map(q=>q.length>2?[q[0]+dx,q[1]+dy,q[2]]:[q[0]+dx,q[1]+dy]);
   }else{
     const nb=a.pts[edit.i-1]||a.pts[edit.i+1];
-    a.pts[edit.i]=(e.shiftKey&&nb)?ortho(nb,p,true):p;
+    const snapTo=snapAt(p);
+    a.pts[edit.i]=snapTo||((e.shiftKey&&nb)?ortho(nb,p,true):p);
+    V.snapHit=snapTo;
   }
   edit.last=p;
   drawOverlay(); liveEditLen(a);
@@ -1378,7 +1486,7 @@ stage.addEventListener('pointermove',e=>{
     if(V.tool==='erase'){ evs.forEach(ev=>eraseAt(toS(ev))); return; }
     if((V.tool==='box'||V.tool==='tbox')&&V.draft){ V.draft.pts[1]=p; drawOverlay(); return; }
     if(V.tool==='cal'&&press.moved){
-      V.draft={id:'d',type:'cal',doc:V.docId,page:V.page,pts:[press.p0,ortho(press.p0,p,e.shiftKey)],color:'#5AB6DE',w:V.width};
+      V.draft={id:'d',type:'cal',doc:V.docId,page:V.page,pts:[snapped(press.p0),snapped(ortho(press.p0,p,e.shiftKey))],color:'#5AB6DE',w:V.width};
       drawOverlay(); liveLen(V.draft); return; }
     if(V.tool==='line'&&press.moved&&!press.vertex){
       if(!curScale()){ press=null; toast('Set the scale first'); setTool('cal'); return; }
@@ -1387,13 +1495,17 @@ stage.addEventListener('pointermove',e=>{
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>1.4) press.free.push(q); });
       V.draft.pts=press.free; drawOverlay(); liveLen(V.draft); return; }
   }
+  if(isMeasureTool(V.tool)||V.tool==='cal'){ snapAt(p)?(V.snapHit=snapAt(p)):(V.snapHit=null); }
+  else V.snapHit=null;
   if(V.draft&&V.draft.type==='arc'&&!press){
     V.draft.pts[Math.min(V.arcN||1,2)]=p;
     if((V.arcN||1)<2) V.draft.pts[2]=p;
     drawOverlay(); liveLen(V.draft); return;
   }
   if(V.draft&&!press&&(V.draft.type==='line'||V.draft.type==='cal')){   /* hover preview between taps */
-    const n=V.draft.pts.length; V.draft.pts[n-1]=ortho(V.draft.pts[n-2],p,e.shiftKey); drawOverlay(); liveLen(V.draft); return; }
+    const n=V.draft.pts.length;
+    V.draft.pts[n-1]=snapAt(p)||ortho(V.draft.pts[n-2],p,e.shiftKey);
+    drawOverlay(); liveLen(V.draft); return; }
   const k=inPerPt();
   $('#stCoord').textContent=k?('x '+fmtLen(p[0]*k)+'   y '+fmtLen(p[1]*k)):'—';
 },{passive:false});
@@ -1438,6 +1550,7 @@ stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot'
 
 function tapVertex(p,e){
   if(isLineTool(V.tool)&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
+  p=snapped(p);
   if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
     color:V.tool==='cal'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined};
   else{
@@ -1450,6 +1563,7 @@ function tapVertex(p,e){
 }
 function tapArc(p){
   if(!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
+  p=snapped(p);
   if(!V.draft||V.draft.type!=='arc'){
     V.draft={id:'d',type:'arc',doc:V.docId,page:V.page,pts:[p,p.slice(),p.slice()],color:V.color,w:V.width};
     V.arcN=1;
@@ -1699,6 +1813,11 @@ $('#inkW').onchange=e=>{ V.width=+e.target.value;
   if(sel&&sel.type!=='cal'){ snap(); sel.w=V.width; drawOverlay(); showInspector(sel); markDirty(); }
 };
 $('#btnUndo').onclick=undo; $('#btnRedo').onclick=redo;
+$('#btnSnap').onclick=()=>{
+  P.snap=P.snap===false; syncSnapBtn(); markDirty();
+  if(P.snap!==false&&!SNAP.grid) buildSnap();
+  toast(P.snap!==false?'Snapping to the drawing geometry':'Snapping off');
+};
 $('#btnScroll').onclick=()=>{ P.scrollZoom=P.scrollZoom===false; syncScrollBtn(); markDirty();
   toast(P.scrollZoom?'Scroll wheel zooms at the cursor — ⇧ scroll pans across':'Scroll wheel pans — ⌘/Ctrl scroll zooms'); };
 function syncScrollBtn(){ $('#btnScroll').textContent=P.scrollZoom===false?'↕ Scroll pans':'⊕ Scroll zooms'; }
@@ -2916,7 +3035,7 @@ function boot(keepDoc){
     +'</optgroup><optgroup label="Metric">'+SCALES.slice(13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')+'</optgroup>';
   $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
   $('#btnFinger').style.display=coarse?'':'none';
-  syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn();
+  syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(V.vp) drawOverlay();      /* markups are state too — keep the sheet in step */
   if(P.docs.length&&!Object.keys(FILES).length){
@@ -2935,6 +3054,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
+  buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
+  snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
   render(){boot()}};
 (async()=>{ await loadProject(); loadHist(); boot(); setTool('pan');
   if(!PDF_OK) toast('The PDF engine did not load — check vendor/pdf.min.js');
