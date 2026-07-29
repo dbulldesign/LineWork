@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. A single self-contained
 `index.html` — no build step, no server. Open it in a browser, or serve the repo
 root as a static site.
 
-**Version 1.5.0**
+**Version 1.6.0**
 
 ## What it does
 
@@ -15,9 +15,9 @@ out the other end.
 - **Measure** — dimension runs (drag to trace a curve, or tap each corner) and
   poly lengths that report each segment separately, with an optional closing leg.
 - **Mark up** — text, text boxes, callout notes, area boxes, freehand ink, and
-  links from a plan to the millwork shop drawing that details it. Every markup
-  stays editable: drag it to move, drag a handle to reshape, double-click to
-  retype.
+  links from a plan to the millwork shop drawing that details it. Line weight is
+  adjustable per markup. Every markup stays editable: drag it to move, drag a
+  handle to reshape, double-click to retype.
 - **Take off** — one treatment per lighting condition, each carrying a TYPE
   designation, its LED product, channel, power supply, and feed points, rolled up
   into a cut list and BOM with waste and supply-load allowances.
@@ -56,6 +56,14 @@ lengths to buy.
 Feed points are computed from the product's voltage-drop limit, and can be
 overridden per treatment. Setting fewer than the limit allows is flagged rather
 than silently accepted.
+
+A run sits between two cut points — the next shortest and the next longest
+increment. The Calculated panel offers both (marking which is nearest); picking
+one **locks** the cut for that treatment, so re-measuring the markup no longer
+moves it. Unlock to go back to following the measurement.
+
+Treatment tags are built from **TYPE** and **Zone #** — set those and the tag
+becomes e.g. `COVE Z2`, shown on the drawing, in the cut list and in exports.
 
 ## Saving
 
