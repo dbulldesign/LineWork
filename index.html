@@ -91,8 +91,13 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
    height instead of scrolling, which kills vertical pan and zoom-at-cursor */
 #viewport{flex:1;min-height:0;overflow:auto;position:relative;padding:26px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 #stage{position:relative;margin:0 auto;box-shadow:0 0 0 1px #000,0 18px 50px rgba(0,0,0,.6);background:var(--paper);touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
-/* windowed: positioned inside the stage, covering only what is on screen */
-#pdfCanvas{display:block;position:absolute;left:0;top:0}
+/* Two layers. #pdfBase is a cheap full-page render stretched by CSS, so
+   something correct is always on screen. The two #pdfCanvas* are the sharp
+   windowed layer, double-buffered: we paint the hidden one and swap, so the
+   view never blanks mid-render. */
+#pdfBase{display:block;position:absolute;left:0;top:0;width:100%;height:100%}
+#pdfCanvas,#pdfCanvas2{display:block;position:absolute;left:0;top:0;transform-origin:0 0}
+#pdfCanvas2{visibility:hidden}
 #overlay{position:absolute;inset:0;pointer-events:none;overflow:visible}
 #viewport.pan{cursor:grab}
 #viewport.pan.drag{cursor:grabbing}
@@ -297,7 +302,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn sm ghost" id="pgNext">▶</button>
   </div>
   <div id="viewport" class="pan">
-    <div id="stage" style="display:none"><canvas id="pdfCanvas"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <div id="stage" style="display:none"><canvas id="pdfBase"></canvas><canvas id="pdfCanvas"></canvas><canvas id="pdfCanvas2"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
     <div id="penDot"></div>
     <div class="blank" id="blank">
       <div class="dropzone" id="drop">
@@ -382,7 +387,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.3.0';
+const APP_VER='1.4.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -594,7 +599,11 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
 /* ============================================================
    B) documents, rendering, scale
    ============================================================ */
-const cv=$('#pdfCanvas'), ctx=cv.getContext('2d'), stage=$('#stage'), ov=$('#overlay'), viewport=$('#viewport');
+const stage=$('#stage'), ov=$('#overlay'), viewport=$('#viewport');
+const baseCv=$('#pdfBase'), baseCtx=baseCv.getContext('2d');
+const DET=[$('#pdfCanvas'),$('#pdfCanvas2')];
+let detIdx=0;                                  /* which detail buffer is on screen */
+const shownDetail=()=>DET[detIdx], spareDetail=()=>DET[1-detIdx];
 let renderTask=null;
 
 async function openFiles(list){
@@ -669,9 +678,9 @@ function pageWindow(){
     w:Math.max(1,Math.ceil(Math.min(W-x0,v.w+WIN_MARGIN*2))),
     h:Math.max(1,Math.ceil(Math.min(H-y0,v.h+WIN_MARGIN*2)))};
 }
-/* has the view scrolled outside what is currently painted? */
+/* has the view scrolled or zoomed outside what is currently painted? */
 function needRepaint(){
-  if(!V.win) return true;
+  if(!V.win||V.winZoom!==V.zoom) return true;
   const v=visRect(),o=V.win;
   return v.x<o.x0-1||v.y<o.y0-1||v.x+v.w>o.x0+o.w+1||v.y+v.h>o.y0+o.h+1;
 }
@@ -682,6 +691,10 @@ async function ensurePage(){
   if(!V.pageObj||V.pageNo!==V.page||V.pageDoc!==V.docId){
     V.pageObj=await d.pdf.getPage(V.page); V.pageNo=V.page; V.pageDoc=V.docId;
     const v1=V.pageObj.getViewport({scale:1}); V.pw=v1.width; V.ph=v1.height;
+    /* the sharp layer belongs to the page we just left — drop it and let the
+       base layer carry the view until the new page paints */
+    V.win=null; V.winZoom=null;
+    DET.forEach(c=>{ c.style.visibility='hidden'; });
   }
   return true;
 }
@@ -699,15 +712,42 @@ async function fitPage(){
 function resizeStage(){
   if(!V.pageObj) return;
   const vp=V.pageObj.getViewport({scale:V.zoom});
-  V.vp=vp; V.win=null;                       /* window is stale until the next paint */
+  V.vp=vp;
   stage.style.width=vp.width+'px'; stage.style.height=vp.height+'px';
   ov.setAttribute('viewBox','0 0 '+vp.width+' '+vp.height);
   ov.style.width=vp.width+'px'; ov.style.height=vp.height+'px';
+  rescaleDetail();       /* keep the sharp layer aligned (blurry) until it repaints */
 }
-/* Paints are serialised. pdf.js refuses to start a render while a cancelled one
-   is still unwinding on the same canvas, and a refused render leaves the canvas
-   cleared — which is the blank sheet. So wait for the old task to settle, and if
-   a paint is ever lost, schedule another rather than leaving the page empty. */
+/* The detail buffer was painted for some earlier zoom. Rather than clear it —
+   which is what made the sheet flash — stretch it to the new zoom so it stays
+   geometrically correct, just soft, until the fresh paint swaps in. */
+function rescaleDetail(){
+  const c=shownDetail();
+  if(!V.win||!V.winZoom){ return; }
+  const r=V.zoom/V.winZoom;
+  c.style.left=(V.win.x0*r).toFixed(1)+'px'; c.style.top=(V.win.y0*r).toFixed(1)+'px';
+  c.style.width=(V.win.w*r).toFixed(1)+'px'; c.style.height=(V.win.h*r).toFixed(1)+'px';
+}
+/* Cheap full-page render, stretched by CSS to whatever the stage is. It costs one
+   render per page and guarantees there is never bare paper on screen. */
+let baseKey=null, baseP=null;
+async function renderBase(){
+  const key=V.pageDoc+'|'+V.pageNo;
+  if(baseKey===key) return;
+  const scale=clamp(Math.sqrt(1.7e6/(V.pw*V.ph)),.05,2);
+  const vp=V.pageObj.getViewport({scale});
+  baseCv.width=Math.max(1,Math.round(vp.width)); baseCv.height=Math.max(1,Math.round(vp.height));
+  try{
+    baseP=V.pageObj.render({canvasContext:baseCtx,viewport:vp}).promise;
+    await baseP;
+    baseKey=key;
+  }catch(e){ baseKey=null; }
+  baseP=null;
+}
+/* The sharp layer. Painted into the OFF-SCREEN buffer and swapped in only when
+   complete, so the visible sheet is never cleared and never flashes. Paints are
+   serialised because pdf.js refuses to render onto a canvas whose previous task
+   is still unwinding, and a refused render would leave that buffer blank. */
 let paintGen=0, renderP=null;
 async function paintPage(){
   if(!V.pageObj||!V.vp) return;
@@ -715,32 +755,42 @@ async function paintPage(){
   if(renderTask){ try{renderTask.cancel()}catch(e){} }
   if(renderP){ try{ await renderP; }catch(e){} }
   if(gen!==paintGen) return;                          /* a newer paint took over */
-  const win=pageWindow();
+  await renderBase();                                 /* no-op once per page */
+  if(gen!==paintGen) return;
+  const win=pageWindow(), zoomAt=V.zoom;
   const s=deviceScale(win.w,win.h); V.dscale=s;
+  const c=spareDetail(), cx=c.getContext('2d');
   const bw=Math.max(1,Math.round(win.w*s)), bh=Math.max(1,Math.round(win.h*s));
-  if(cv.width!==bw||cv.height!==bh){ cv.width=bw; cv.height=bh; }
-  cv.style.left=win.x0+'px'; cv.style.top=win.y0+'px';
-  cv.style.width=win.w+'px'; cv.style.height=win.h+'px';
+  if(c.width!==bw||c.height!==bh){ c.width=bw; c.height=bh; }
   let task;
-  /* render the full-page viewport but shifted so only the window lands on canvas */
+  /* render the full-page viewport, shifted so only the window lands on canvas */
   try{
-    task=V.pageObj.render({canvasContext:ctx,viewport:V.vp,
+    task=V.pageObj.render({canvasContext:cx,viewport:V.vp,
       transform:[s,0,0,s,-win.x0*s,-win.y0*s]});
   }catch(e){ if(gen===paintGen) scheduleRepaint(true); return; }
   renderTask=task; renderP=task.promise;
   try{ await task.promise; }
   catch(e){ if(gen===paintGen) scheduleRepaint(true); return; }
-  if(gen!==paintGen) return;
+  if(gen!==paintGen) return;                          /* stale: leave the view alone */
   renderTask=null; renderP=null;
-  V.win=win;
+  /* atomic swap — position the finished buffer, reveal it, hide the old one */
+  c.style.transform='';
+  c.style.left=win.x0+'px'; c.style.top=win.y0+'px';
+  c.style.width=win.w+'px'; c.style.height=win.h+'px';
+  c.style.visibility='visible';
+  shownDetail().style.visibility='hidden';
+  detIdx=1-detIdx;
+  V.win=win; V.winZoom=zoomAt;
   syncZoomUI();
   drawOverlay();
 }
-/* repaint the window after scrolling out of it, and after a viewport resize */
+/* Repaint after scrolling out of the window, zooming, or resizing. The base layer
+   covers whatever is newly exposed in the meantime, so being late is not jarring
+   and we can afford to wait for the gesture to settle. */
 let winT=null;
 function scheduleRepaint(force){
   clearTimeout(winT);
-  winT=setTimeout(()=>{ if(V.vp&&(force||needRepaint())) paintPage(); },90);
+  winT=setTimeout(()=>{ if(V.vp&&(force||needRepaint())) paintPage(); },130);
 }
 viewport.addEventListener('scroll',()=>{ if(V.vp&&needRepaint()) scheduleRepaint(); },{passive:true});
 window.addEventListener('resize',()=>{ if(V.vp) scheduleRepaint(true); });
@@ -1275,7 +1325,8 @@ async function zCommit(g){
   viewport.scrollLeft=stage.offsetLeft+nx-(g.mx-vr.left);
   viewport.scrollTop =stage.offsetTop +ny-(g.my-vr.top);
   drawOverlay(); syncZoomUI();
-  await paintPage();
+  /* coalesce: a fast wheel or pinch run ends in one sharp paint, not one per notch */
+  scheduleRepaint(true);
 }
 function startPinch(){
   const t=touchPts();

@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. A single self-contained
 `index.html` — no build step, no server. Open it in a browser, or serve the repo
 root as a static site.
 
-**Version 1.3.0**
+**Version 1.4.0**
 
 ## What it does
 
@@ -25,6 +25,20 @@ out the other end.
 
 Built for iPad as much as desktop: Apple Pencil draws while your palm rests on
 the sheet, and pinch-zoom works throughout.
+
+## How the sheet is drawn
+
+Two layers, so panning and zooming stay smooth on large drawings:
+
+- a **base layer** — one cheap full-page render, stretched by CSS, so something
+  correct is always on screen at any zoom;
+- a **detail layer** — a sharp render of just the visible window, double-buffered.
+  The off-screen buffer is painted and swapped in only once it is complete, so the
+  view is never cleared mid-render.
+
+The consequence: a wide sheet at high zoom never asks for a canvas the browser
+refuses to allocate, and the sheet never blanks or flashes while it catches up —
+it only goes momentarily soft.
 
 ## Saving
 
