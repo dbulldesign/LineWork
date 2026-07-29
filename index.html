@@ -483,6 +483,15 @@ body.haspen #penFlag{display:inline}
     </div></div>
     <div class="sec"><h3>Cut list</h3><div class="tw"><table id="cutTbl"></table></div></div>
     <div class="sec"><h3>Bill of materials</h3><div class="tw"><table id="bomTbl"></table></div></div>
+    <div class="sec"><h3>Cost</h3>
+      <div class="body grid2">
+        <div class="f"><label>Labour rate / hour</label><input type="number" id="labRate" min="0" step="1" value="0"></div>
+        <div class="f"><label>Material markup %</label><input type="number" id="matUp" min="0" max="200" step="1" value="0"></div>
+        <div class="f"><label>Hours per LED foot</label><input type="number" id="labFt" min="0" step="0.01" value="0"></div>
+        <div class="f"><label>Hours per feed point</label><input type="number" id="labFeed" min="0" step="0.1" value="0"></div>
+      </div>
+      <div class="body" style="padding-top:0"><div class="hint">Rates live on the library items — open an LED product, channel or supply to price it. Anything unpriced is left out of the total rather than counted as free.</div></div>
+      <div class="tw"><table id="costTbl"></table></div></div>
     <div class="sec"><h3>By zone</h3><div class="tw"><table id="zoneTbl"></table></div></div>
     <div class="sec"><h3>By sheet</h3><div class="tw"><table id="sheetTbl"></table></div></div>
     <div class="sec"><h3>Drivers placed <span class="c" id="cDrv">0</span></h3>
@@ -493,6 +502,7 @@ body.haspen #penFlag{display:inline}
       <button class="btn" id="btnCsvZone">Export zone rollup</button>
       <button class="btn" id="btnCsvDrv">Export driver schedule</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
+      <button class="btn" id="btnCsvCost">Export cost</button>
       <button class="btn" id="btnPdf">Export marked-up PDF</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
     </div></div>
@@ -552,7 +562,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.16.0';
+const APP_VER='1.17.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -792,6 +802,15 @@ function applyProject(d){
   const tids=new Set(P.treat.map(t=>t.id));
   P.ann.forEach(a=>{ if(a.type==='driver') a.serves=a.serves.filter(id=>tids.has(id)); });
   P.maxHome=Math.max(0,+P.maxHome||0)||240;
+  /* costs, added in 1.17 */
+  ['rate','matUp','labFt','labFeed','labEa'].forEach(k=>{ P[k]=Math.max(0,+P[k]||0); });
+  P.cur=String(P.cur||'$').slice(0,3);
+  P.minOff=Math.max(0,+P.minOff||0);
+  if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
+  if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
+  [['fix',['cost']],['ch',['cost','clipCost','capCost','joinCost']],['psu',['cost']]].forEach(([k,fields])=>{
+    P[k].forEach(o=>fields.forEach(f=>{ o[f]=Math.max(0,+o[f]||0); }));
+  });
   P.panels=Object.assign({left:true,right:true,swap:false},P.panels);
   if(typeof P.width==='number') V.width=clamp(P.width,.5,12);
   if(typeof P.fingerDraws==='boolean') V.fingerDraws=P.fingerDraws;
@@ -2890,6 +2909,9 @@ function showInspector(a){
     h+='<div class="f"><label>Symbol</label><select data-f2="sym">'
       +CNT_SYMS.map(s=>'<option value="'+esc(s.v)+'"'+(s.v===(a.sym||'●')?' selected':'')+'>'+esc(s.t)+'</option>').join('')
       +'</select></div>';
+    h+='<div class="f"><label>Rate each — priced for the whole '+esc(a.grp||'COUNT')+' group</label>'
+      +'<input type="number" min="0" step="0.01" data-rate="'+esc(a.grp||'COUNT')+'" value="'
+      +(+((P.cntRate||{})[a.grp||'COUNT'])||0)+'"></div>';
     h+='<button class="btn" data-act="cnt">Keep counting this group</button>';
     h+='<div class="hint">Renaming the group here moves only this stamp. Counts tally into the BOM.</div>';
   }
@@ -2930,6 +2952,11 @@ function showInspector(a){
     const v=parseLen(el.value);
     a[el.dataset.len]=(isFinite(v)&&v>=0)?v:0;
     drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  });
+  $$('[data-rate]',bd).forEach(el=>el.oninput=()=>{
+    P.cntRate=P.cntRate||{};
+    P.cntRate[el.dataset.rate]=Math.max(0,+el.value||0);
+    renderBom(); markDirty();
   });
   $$('[data-f2]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.f2]=el.value; drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty(); });
   $$('[data-srv]',bd).forEach(el=>el.onchange=()=>{
@@ -3028,7 +3055,7 @@ const SORTS={
   ann:[{v:'order',t:'Order drawn'},{v:'type',t:'Kind'},{v:'len',t:'Length'},{v:'tag',t:'Treatment tag'}],
   treat:[{v:'order',t:'Order added'},{v:'tag',t:'Tag'},{v:'type',t:'TYPE'},{v:'zone',t:'Zone #'},
          {v:'len',t:'Length'},{v:'room',t:'Room'},{v:'sheet',t:'Sheet'},{v:'detail',t:'Detail'}],
-  lib:[{v:'order',t:'Order added'},{v:'name',t:'Name'},{v:'kind',t:'Kind'}],
+  lib:[{v:'order',t:'Order added'},{v:'name',t:'Name'},{v:'kind',t:'Kind'},{v:'cost',t:'Rate'}],
 };
 function sortState(key){ P.sort=P.sort||{}; return P.sort[key]||{by:'order',dir:1}; }
 function setSort(key,by,dir){
@@ -3544,7 +3571,8 @@ function renderLib(){
   const st=sortState('lib');
   const order=list=>{
     if(st.by==='order'&&st.dir>0) return list;
-    const key=x=>st.by==='name'?x.name:st.by==='kind'?(x.kind||x.stock!==undefined?'':'')||(x.kind||''):0;
+    const key=x=>st.by==='name'?x.name:st.by==='cost'?rateOf(x)
+      :st.by==='kind'?(x.kind||x.stock!==undefined?'':'')||(x.kind||''):0;
     return sortBy(list,key,st);
   };
   const ls=$('#libSort'); if(ls){ ls.innerHTML=sortSelect('lib'); wireSortSelects(ls); }
@@ -3553,16 +3581,19 @@ function renderLib(){
   order(P.fix).forEach(f=>F.appendChild(libRow(f.name,
     (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+f.wft+' W/ft · cuts in '+fmtRun(f.cut)
     +(f.kind==='fixture'?' fixed lengths':' increments')+' · feed max '+fmtRun(f.feed)
+    +(rateOf(f)?' · <b style="color:var(--amber)">'+esc(money(f.cost))+(f.kind==='fixture'?' ea':'/ft')+'</b>':'')
     +usedBy('fixId',f.id),
     ()=>editFix(f),()=>delLib('fixId',f,'LED product',P.fix,x=>{P.fix=x}))));
   const C=$('#chList'); C.innerHTML=''; $('#cCh').textContent=P.ch.length;
   order(P.ch).forEach(c=>C.appendChild(libRow(c.name,
     (c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')+' · clips '+fmtLen(c.clip)+' o.c.'
+    +(rateOf(c)?' · <b style="color:var(--amber)">'+esc(money(c.cost))+(c.stock?'/length':'/ft')+'</b>':'')
     +usedBy('chId',c.id),
     ()=>editCh(c),()=>delLib('chId',c,'channel',P.ch,x=>{P.ch=x}))));
   const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
   order(P.psu).forEach(p=>S.appendChild(libRow(p.name,
-    p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')+usedBy('psuId',p.id),
+    p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')
+    +(rateOf(p)?' · <b style="color:var(--amber)">'+esc(money(p.cost))+' ea</b>':'')+usedBy('psuId',p.id),
     ()=>editPsu(p),()=>delLib('psuId',p,'power supply',P.psu,x=>{P.psu=x}))));
 }
 async function editFix(f){
@@ -3578,11 +3609,13 @@ async function editFix(f){
     {k:'cut',label:'Cut increment / unit length',val:fmtLen(f.cut),row:'r2',
       hint:unitHint()+' — this is also the shortest usable piece.'},
     {k:'feed',label:'Maximum run per feed',val:fmtLen(f.feed),row:'r2',hint:'Voltage-drop limit from the cut sheet.'},
+    {k:'cost',type:'num',label:'Rate',val:f.cost||0,step:0.01,
+      hint:(f.kind==='fixture'?'Per fixture.':'Per foot.')+' Leave at 0 and it shows as unpriced rather than free.'},
     {k:'note',label:'Note',val:f.note}
   ]});
   if(!r) return;
   Object.assign(f,{name:r.name||'Unnamed',kind:r.kind||'tape',volts:+r.volts||24,wft:+r.wft||0,
-    cut:parseLen(r.cut)||0,feed:parseLen(r.feed)||1e9,note:r.note});
+    cut:parseLen(r.cut)||0,feed:parseLen(r.feed)||1e9,cost:Math.max(0,+r.cost||0),note:r.note});
   if(isNew) P.fix.push(f);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -3593,10 +3626,18 @@ async function editCh(c){
     {k:'r1',type:'row'},
     {k:'stock',label:'Stock length bought',val:fmtLen(c.stock),row:'r1',hint:unitHint()},
     {k:'clip',label:'Clip spacing o.c.',val:fmtLen(c.clip),row:'r1'},
+    {k:'r2',type:'row'},
+    {k:'cost',type:'num',label:c.stock?'Rate per stock length':'Rate per foot',val:c.cost||0,step:0.01,row:'r2'},
+    {k:'clipCost',type:'num',label:'Rate per clip',val:c.clipCost||0,step:0.01,row:'r2'},
+    {k:'r3',type:'row'},
+    {k:'capCost',type:'num',label:'Rate per end cap',val:c.capCost||0,step:0.01,row:'r3'},
+    {k:'joinCost',type:'num',label:'Rate per splice plate',val:c.joinCost||0,step:0.01,row:'r3'},
     {k:'note',label:'Note',val:c.note}
   ],note:'Channel is always cut to length on site — the stock length only says how it is bought, it never rounds the run.'});
   if(!r) return;
-  Object.assign(c,{name:r.name||'Unnamed',stock:parseLen(r.stock)||0,clip:parseLen(r.clip)||20,note:r.note});
+  Object.assign(c,{name:r.name||'Unnamed',stock:parseLen(r.stock)||0,clip:parseLen(r.clip)||20,
+    cost:Math.max(0,+r.cost||0),clipCost:Math.max(0,+r.clipCost||0),
+    capCost:Math.max(0,+r.capCost||0),joinCost:Math.max(0,+r.joinCost||0),note:r.note});
   if(isNew) P.ch.push(c);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -3607,10 +3648,12 @@ async function editPsu(p){
     {k:'r1',type:'row'},
     {k:'volts',type:'num',label:'Volts',val:p.volts,row:'r1'},
     {k:'watts',type:'num',label:'Rated watts',val:p.watts,row:'r1'},
+    {k:'cost',type:'num',label:'Rate each',val:p.cost||0,step:0.01},
     {k:'c2',type:'check',cap:'Class 2 output (96 W ceiling)',val:p.c2}
   ]});
   if(!r) return;
-  Object.assign(p,{name:r.name||'Unnamed',volts:+r.volts||24,watts:+r.watts||0,c2:!!r.c2});
+  Object.assign(p,{name:r.name||'Unnamed',volts:+r.volts||24,watts:+r.watts||0,
+    cost:Math.max(0,+r.cost||0),c2:!!r.c2});
   if(isNew) P.psu.push(p);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -3635,51 +3678,84 @@ function pieceData(){
     for(let run=1;run<=r.qty;run++){
       if(r.cut>0) rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
         item:r.f.name,len:r.cut,note:r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length',
-        locked:r.locked,chId:null});
+        locked:r.locked,chId:null,detail:t.detail||''});
       if(r.stock>0){
         let rem=r.L,i=1;
         while(rem>1e-6){
           const p=Math.min(rem,r.stock);
           rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:'channel',item:r.c.name,len:p,
             note:(Math.abs(p-r.stock)<1e-6?'full stock length':'off-cut piece '+i),locked:false,
-            chId:r.c.id,stock:r.stock});
+            chId:r.c.id,stock:r.stock,detail:t.detail||''});
           rem-=p; i++;
         }
       }
     }
+  });
+  /* ---- piece marks ----
+     The shop cuts from a label, not from a spreadsheet row. Each piece gets a
+     mark inside its own treatment and kind, and knows how many there are, so
+     "COVE Z1-3" and "3 of 7" mean the same thing on the bench as here.
+     Numbering runs per tag, not per treatment: two treatments can legitimately
+     share TYPE + Zone, and two pieces on the bench cannot share a mark. */
+  const seq={}, tally={};
+  rows.forEach(r=>{ const k=r.tag+'|'+r.kind; tally[k]=(tally[k]||0)+1; });
+  rows.forEach(r=>{
+    const k=r.tag+'|'+r.kind;
+    seq[k]=(seq[k]||0)+1;
+    r.seq=seq[k]; r.of=tally[k];
+    r.mark=(r.tag==='—'?'PC':r.tag)+'-'+r.seq+(r.kind==='channel'?'C':'');
   });
   return rows;
 }
 /* First-fit-decreasing bin packing: the standard shop approach of cutting the
    longest piece first out of a fresh length. Not optimal, but within a few
    percent of it and predictable to follow on site. */
-function nestPieces(pieces,stock){
+function nestPieces(pieces,stock,minOff){
   const bins=[];
+  const keep=Math.max(0,+minOff||0);
   pieces.slice().sort((a,b)=>b-a).forEach(p=>{
-    let b=bins.find(x=>x.left>=p-1e-6);
+    const fits=bins.filter(x=>x.left>=p-1e-6);
+    /* Best fit, not first fit, when a minimum usable off-cut is set: filling the
+       tightest bin leaves the remaining off-cuts long enough to be worth keeping
+       rather than turning several of them into unusable slivers. */
+    let b=null;
+    if(fits.length){
+      b=keep>0
+        ? fits.reduce((best,x)=>(x.left-p<best.left-p?x:best),fits[0])
+        : fits[0];
+    }
     if(!b){ b={left:stock,cuts:[]}; bins.push(b); }
     b.left-=p; b.cuts.push(p);
   });
   return bins;
 }
+/* Nesting has always run job-wide, across every treatment sharing a channel.
+   Some shops cut per floor or per treatment instead, so the scope is a choice —
+   and the yield report now separates an off-cut worth keeping from scrap. */
+const NEST_SCOPES=[{v:'job',t:'Whole job — fewest lengths bought'},
+  {v:'zone',t:'Per zone — off-cuts stay on their floor'},
+  {v:'treat',t:'Per treatment — nothing shared between runs'}];
 function nestData(){
   const by={};
-  /* group on the channel id the piece was produced from — tags are TYPE + Zone
-     and two treatments may legitimately share one */
+  const scope=P.nestBy==='zone'||P.nestBy==='treat'?P.nestBy:'job';
+  const minOff=Math.max(0,+P.minOff||0);
   pieceData().filter(r=>r.kind==='channel'&&r.chId).forEach(r=>{
     const c=P.ch.find(x=>x.id===r.chId)||P.ch[0];
-    by[r.chId]=by[r.chId]||{name:c.name,stock:+r.stock||+c.stock||0,pieces:[]};
-    by[r.chId].pieces.push(r.len);
+    const scopeKey=scope==='zone'?(r.zone||'(no zone)'):scope==='treat'?r.tag:'';
+    const k=r.chId+'|'+scopeKey;
+    by[k]=by[k]||{name:c.name,scope:scopeKey,stock:+r.stock||+c.stock||0,pieces:[]};
+    by[k].pieces.push(r.len);
   });
   const out=[];
   Object.values(by).forEach(g=>{
     if(!g.stock) return;
-    const bins=nestPieces(g.pieces,g.stock);
+    const bins=nestPieces(g.pieces,g.stock,minOff);
     const used=g.pieces.reduce((a,b)=>a+b,0), bought=bins.length*g.stock;
-    out.push({name:g.name,stock:g.stock,bins,used,bought,
-      yield:bought?used/bought:0,waste:bought-used});
+    const reusable=bins.reduce((s,b)=>s+(b.left>=minOff&&minOff>0?b.left:0),0);
+    out.push({name:g.name,scope:g.scope,stock:g.stock,bins,used,bought,minOff,
+      yield:bought?used/bought:0,waste:bought-used,reusable,scrap:bought-used-reusable});
   });
-  return out;
+  return out.sort((a,b)=>String(a.name+a.scope).localeCompare(String(b.name+b.scope)));
 }
 /* totals grouped by an arbitrary key — zone, sheet, type */
 function rollup(keyFn,labelFn){
@@ -3694,18 +3770,25 @@ function rollup(keyFn,labelFn){
   return Object.entries(g).map(([k,v])=>Object.assign({key:k},v))
     .sort((a,b)=>String(a.label).localeCompare(String(b.label)));
 }
-function bomData(){
-  const waste=1+clamp((+P.waste||0)/100,0,.5);
+/* One aggregation, two readers: the BOM prints it, the cost model prices it.
+   They used to be able to disagree; now they cannot. */
+function bomAgg(){
   const led={},chn={},clip={},cap={},join={},pw={};
   P.treat.forEach(t=>{
     const r=calc(t); if(r.L<=0) return;
-    const kf=r.f.id; led[kf]=led[kf]||{n:r.f.name,ft:0,runs:0,w:0}; led[kf].ft+=r.tot.cut/12; led[kf].runs+=r.qty; led[kf].w+=r.tot.watts;
-    if(r.stock>0){ const kc=r.c.id; chn[kc]=chn[kc]||{n:r.c.name,pc:0,ft:0,stock:r.stock}; chn[kc].pc+=r.tot.pieces; chn[kc].ft+=r.tot.chLen/12;
-      cap[kc]=cap[kc]||{n:r.c.name,q:0}; cap[kc].q+=r.tot.caps;
-      join[kc]=join[kc]||{n:r.c.name,q:0}; join[kc].q+=r.tot.joiners; }
-    if(r.clips){ const kc=r.c.id; clip[kc]=clip[kc]||{n:r.c.name,q:0}; clip[kc].q+=r.tot.clips; }
-    if(r.psuQty){ const kp=r.ps.id; pw[kp]=pw[kp]||{n:r.ps.name,q:0,w:0}; pw[kp].q+=r.psuQty; pw[kp].w+=r.tot.watts; }
+    const kf=r.f.id; led[kf]=led[kf]||{id:kf,n:r.f.name,kind:r.kind,ft:0,runs:0,w:0,units:0};
+    led[kf].ft+=r.tot.cut/12; led[kf].runs+=r.qty; led[kf].w+=r.tot.watts; led[kf].units+=r.tot.units;
+    if(r.stock>0){ const kc=r.c.id; chn[kc]=chn[kc]||{id:kc,n:r.c.name,pc:0,ft:0,stock:r.stock}; chn[kc].pc+=r.tot.pieces; chn[kc].ft+=r.tot.chLen/12;
+      cap[kc]=cap[kc]||{id:kc,n:r.c.name,q:0}; cap[kc].q+=r.tot.caps;
+      join[kc]=join[kc]||{id:kc,n:r.c.name,q:0}; join[kc].q+=r.tot.joiners; }
+    if(r.clips){ const kc=r.c.id; clip[kc]=clip[kc]||{id:kc,n:r.c.name,q:0}; clip[kc].q+=r.tot.clips; }
+    if(r.psuQty){ const kp=r.ps.id; pw[kp]=pw[kp]||{id:kp,n:r.ps.name,q:0,w:0}; pw[kp].q+=r.psuQty; pw[kp].w+=r.tot.watts; }
   });
+  return {led,chn,clip,cap,join,pw};
+}
+function bomData(){
+  const waste=1+clamp((+P.waste||0)/100,0,.5);
+  const {led,chn,clip,cap,join,pw}=bomAgg();
   const rows=[];
   Object.values(led).forEach(v=>rows.push(['LED',v.n,P.units==='metric'?'m':'ft',
     P.units==='metric'?(v.ft*0.3048*waste).toFixed(2):(v.ft*waste).toFixed(2),
@@ -3726,6 +3809,87 @@ function bomData(){
   /* counted items are quantities like any other — they belong in the same list */
   countTotals().forEach(c=>rows.push(['Count',c.sym+'  '+c.grp,'ea',c.n,c.sheets]));
   return rows;
+}
+/* ---- cost ----
+   Prices live on the library items, so a company standard priced once carries
+   into every job. Nothing is invented: an item with no rate shows as unpriced
+   rather than as zero, because a zero total reads as "free" and gets issued. */
+const money=v=>{
+  if(v==null||!isFinite(v)) return '—';
+  const s=Math.abs(v).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+  return (v<0?'-':'')+(P.cur||'$')+s;
+};
+const rateOf=(o,k)=>{ const v=+((o||{})[k||'cost']); return isFinite(v)&&v>0?v:0; };
+function costRows(){
+  const waste=1+clamp((+P.waste||0)/100,0,.5);
+  const {led,chn,clip,cap,join,pw}=bomAgg();
+  const rows=[];   /* {cat,item,qty,unit,rate,total,unpriced} */
+  const add=(cat,item,qty,unit,rate,note)=>{
+    if(!(qty>0)) return;
+    rows.push({cat,item,qty,unit,rate,total:rate*qty,unpriced:!(rate>0),note:note||''});
+  };
+  Object.values(led).forEach(v=>{
+    const f=P.fix.find(x=>x.id===v.id)||{};
+    /* fixtures are priced each, tape and neon by the foot */
+    if(v.kind==='fixture') add('LED',v.n,Math.ceil(v.units*waste),'ea',rateOf(f),'incl waste');
+    else add('LED',v.n,v.ft*waste,'ft',rateOf(f),'incl waste');
+  });
+  Object.values(chn).forEach(v=>{
+    const c=P.ch.find(x=>x.id===v.id)||{};
+    if(v.stock>0) add('Channel',v.n+' — stock lengths',Math.ceil(v.pc*waste),'ea',rateOf(c),'bought as '+fmtLen(v.stock));
+    else add('Channel',v.n,v.ft*waste,'ft',rateOf(c));
+  });
+  Object.values(clip).forEach(v=>{ const c=P.ch.find(x=>x.id===v.id)||{};
+    add('Mounting','Clips — '+v.n,v.q,'ea',rateOf(c,'clipCost')); });
+  Object.values(cap).forEach(v=>{ const c=P.ch.find(x=>x.id===v.id)||{};
+    add('Mounting','End caps — '+v.n,v.q,'ea',rateOf(c,'capCost')); });
+  Object.values(join).forEach(v=>{ const c=P.ch.find(x=>x.id===v.id)||{};
+    add('Mounting','Splice plates — '+v.n,v.q,'ea',rateOf(c,'joinCost')); });
+  Object.values(pw).forEach(v=>{ const p=P.psu.find(x=>x.id===v.id)||{};
+    add('Power',v.n,v.q,'ea',rateOf(p)); });
+  countTotals().forEach(c=>add('Count',c.sym+'  '+c.grp,c.n,'ea',+((P.cntRate||{})[c.grp])||0));
+  return rows;
+}
+function costTotals(){
+  const rows=costRows();
+  const mat=rows.reduce((s,r)=>s+r.total,0);
+  const unpriced=rows.filter(r=>r.unpriced).length;
+  /* labour is hours, not a percentage — a 400 ft job is not twice the labour of
+     a 200 ft job with twice the feeds */
+  let ledFt=0, feeds=0, pieces=0;
+  P.treat.forEach(t=>{ const r=calc(t); if(r.L<=0) return;
+    ledFt+=r.tot.cut/12; feeds+=r.tot.feeds; pieces+=r.tot.pieces; });
+  const counted=countTotals().reduce((s,c)=>s+c.n,0);
+  const hFt=Math.max(0,+P.labFt||0), hFeed=Math.max(0,+P.labFeed||0), hEa=Math.max(0,+P.labEa||0);
+  const hours=ledFt*hFt+feeds*hFeed+counted*hEa;
+  const rate=Math.max(0,+P.rate||0);
+  const labour=hours*rate;
+  const up=clamp((+P.matUp||0)/100,0,2);
+  const markup=mat*up;
+  const total=mat+markup+labour;
+  return {rows,mat,markup,labour,hours,rate,total,unpriced,ledFt,feeds,pieces,counted,
+    perFt:ledFt>0?total/ledFt:null};
+}
+function renderCost(){
+  const el=$('#costTbl'); if(!el) return;
+  const c=costTotals();
+  if(!c.rows.length&&!c.labour){ el.innerHTML='<tr><td class="hint" style="padding:12px">Nothing to price yet. Put rates on the library items and this fills in.</td></tr>'; return; }
+  const st=sortState('cost');
+  const ord=st.by==='order'?c.rows:sortBy(c.rows,r=>({cat:r.cat,item:r.item,qty:r.qty,rate:r.rate,total:r.total}[st.by]),st);
+  el.innerHTML='<tr>'+thSort('cost','cat','Cat.')+thSort('cost','item','Item')+thSort('cost','qty','Qty','n')
+    +thSort('cost','rate','Rate','n')+thSort('cost','total','Total','n')+'</tr>'
+    +ord.map(r=>'<tr><td><span class="pill">'+esc(r.cat)+'</span></td>'
+      +'<td>'+esc(r.item)+(r.unpriced?'<div class="hint" style="color:var(--flag)">no rate set</div>':(r.note?'<div class="hint">'+esc(r.note)+'</div>':''))+'</td>'
+      +'<td class="n">'+(r.unit==='ft'?r.qty.toFixed(2):r.qty)+' '+esc(r.unit)+'</td>'
+      +'<td class="n">'+(r.rate>0?money(r.rate):'—')+'</td>'
+      +'<td class="n">'+(r.rate>0?money(r.total):'—')+'</td></tr>').join('')
+    +'<tr><td colspan="4">Material</td><td class="n">'+money(c.mat)+'</td></tr>'
+    +(c.markup>0?'<tr><td colspan="4">Material markup '+(+P.matUp||0)+'%</td><td class="n">'+money(c.markup)+'</td></tr>':'')
+    +'<tr><td colspan="4">Labour — '+c.hours.toFixed(1)+' h @ '+money(c.rate)+'/h</td><td class="n">'+money(c.labour)+'</td></tr>'
+    +'<tr class="tot"><td colspan="4">Total'+(c.perFt!=null?'  ·  '+money(c.perFt)+' per LED ft':'')+'</td>'
+    +'<td class="n">'+money(c.total)+'</td></tr>'
+    +(c.unpriced?'<tr><td colspan="5" class="hint" style="color:var(--flag)">'+c.unpriced
+      +' item'+(c.unpriced===1?'':'s')+' have no rate set — they are excluded from the total, not counted as free.</td></tr>':'');
 }
 function renderBom(){
   const c=$('#cutTbl');
@@ -3765,7 +3929,7 @@ function renderBom(){
   $('#bomTbl').innerHTML='<tr>'+thSort('bom','cat','Cat.')+thSort('bom','item','Item')
     +thSort('bom','qty','Qty','n')+thSort('bom','unit','Unit')+'</tr>'
     +bord.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
-  renderRollups(); renderPieces();
+  renderRollups(); renderPieces(); renderCost();
   wireThSorts();
 }
 function rollTable(el,head,rows){
@@ -3816,16 +3980,18 @@ function renderPieces(){
   if(!pc.length){ pt.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; }
   else{
     const pst=sortState('piece');
-    const pord=pst.by==='order'?pc:sortBy(pc,r=>({tag:r.tag,zone:r.zone||'\uffff',run:r.run,
+    const pord=pst.by==='order'?pc:sortBy(pc,r=>({tag:r.tag,zone:r.zone||'\uffff',run:r.run,mark:r.mark,
       item:r.item,len:r.len,note:r.note}[pst.by]),pst);
-    pt.innerHTML='<tr>'+thSort('piece','tag','Tag')+thSort('piece','zone','Zone')
+    pt.innerHTML='<tr>'+thSort('piece','mark','Mark')+thSort('piece','tag','Tag')+thSort('piece','zone','Zone')
       +thSort('piece','run','Run','n')+thSort('piece','item','Item')
       +thSort('piece','len','Cut to','n')+thSort('piece','note','Note')+'</tr>'
-      +pord.map(r=>'<tr><td><span class="tag">'+esc(r.tag)+'</span></td><td>'+esc(r.zone||'—')
+      +pord.map(r=>'<tr><td><span class="tag">'+esc(r.mark)+'</span>'
+        +'<div class="hint">'+r.seq+' of '+r.of+'</div></td>'
+        +'<td>'+esc(r.tag)+'</td><td>'+esc(r.zone||'—')
         +'</td><td class="n">'+r.run+'</td><td>'+esc(r.item)+'<div class="hint">'+esc(r.kind)+'</div></td>'
         +'<td class="n" style="color:var(--amber)">'+esc(fmtLen(r.len))+'</td>'
         +'<td class="hint">'+esc(r.note)+(r.locked?' · locked':'')+'</td></tr>').join('')
-      +'<tr class="tot"><td colspan="4">'+pc.length+' pieces</td><td class="n">'
+      +'<tr class="tot"><td colspan="5">'+pc.length+' pieces</td><td class="n">'
       +fmtRun(pc.reduce((a,b)=>a+b.len,0))+'</td><td></td></tr>';
   }
   const nest=nestData(), nt=$('#nestTbl');
@@ -3833,18 +3999,27 @@ function renderPieces(){
   else{
     let h='<tr><th>Channel</th><th class="n">Stock #</th><th>Cut from it</th><th class="n">Off-cut left</th></tr>';
     nest.forEach(g=>g.bins.forEach((b,i)=>{
-      h+='<tr><td>'+(i?'':esc(g.name)+'<div class="hint">'+esc(fmtLen(g.stock))+' stock</div>')
+      const keep=g.minOff>0&&b.left>=g.minOff;
+      h+='<tr><td>'+(i?'':esc(g.name)+'<div class="hint">'+esc(fmtLen(g.stock))+' stock'
+        +(g.scope?' · '+esc(g.scope):'')+'</div>')
         +'</td><td class="n">'+(i+1)+'</td><td class="mono">'+b.cuts.map(c=>esc(fmtRun(c))).join('  +  ')
-        +'</td><td class="n"'+(b.left>1?' style="color:var(--flag)"':'')+'>'+esc(fmtRun(b.left))+'</td></tr>';
+        +'</td><td class="n"'+(keep?' style="color:var(--ok,#8FC46A)"':(b.left>1?' style="color:var(--flag)"':''))
+        +'>'+esc(fmtRun(b.left))+(keep?' ↺':'')+'</td></tr>';
     }));
     nt.innerHTML=h;
   }
   const yt=$('#yieldTbl');
   if(!nest.length){ yt.innerHTML=''; }
-  else yt.innerHTML='<tr><th>Channel</th><th class="n">Needed</th><th class="n">Bought</th><th class="n">Waste</th><th class="n">Yield</th></tr>'
-    +nest.map(g=>'<tr><td>'+esc(g.name)+'</td><td class="n">'+fmtRun(g.used)+'</td><td class="n">'
-      +g.bins.length+' × '+fmtLen(g.stock)+'</td><td class="n"'+(g.yield<.8?' style="color:var(--flag)"':'')+'>'
-      +fmtRun(g.waste)+'</td><td class="n">'+(g.yield*100).toFixed(0)+'%</td></tr>').join('');
+  else yt.innerHTML='<tr><th>Channel</th><th class="n">Needed</th><th class="n">Bought</th>'
+    +'<th class="n">Re-usable</th><th class="n">Scrap</th><th class="n">Yield</th></tr>'
+    +nest.map(g=>'<tr><td>'+esc(g.name)+(g.scope?'<div class="hint">'+esc(g.scope)+'</div>':'')
+      +'</td><td class="n">'+fmtRun(g.used)+'</td><td class="n">'
+      +g.bins.length+' × '+fmtLen(g.stock)+'</td>'
+      +'<td class="n">'+(g.minOff>0?fmtRun(g.reusable):'—')+'</td>'
+      +'<td class="n"'+(g.yield<.8?' style="color:var(--flag)"':'')+'>'+fmtRun(g.minOff>0?g.scrap:g.waste)+'</td>'
+      +'<td class="n">'+(g.yield*100).toFixed(0)+'%</td></tr>').join('')
+    +(nest.some(g=>g.minOff>0)?'<tr><td colspan="6" class="hint">An off-cut of '
+      +esc(fmtLen(nest[0].minOff))+' or more is counted as re-usable, and ↺ marks it in the nesting above.</td></tr>':'');
 }
 function csv(rows){ return rows.map(r=>r.map(v=>{ v=String(v??''); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(',')).join('\n'); }
 function download(name,text,mime){
@@ -3984,6 +4159,18 @@ $('#btnCsvCut').onclick=()=>{
       r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
       (r.tot.chLen/12).toFixed(2),r.tot.pieces,r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes]); });
   exportBox(slug(P.name)+'-cutlist.csv',csv(rows));
+};
+$('#btnCsvCost').onclick=()=>{
+  const c=costTotals();
+  const rows=[['Category','Item','Qty','Unit','Rate','Total','Note']];
+  c.rows.forEach(r=>rows.push([r.cat,r.item,r.unit==='ft'?r.qty.toFixed(3):r.qty,r.unit,
+    r.rate>0?r.rate.toFixed(2):'',r.rate>0?r.total.toFixed(2):'',r.unpriced?'NO RATE SET':r.note]));
+  rows.push([]);
+  rows.push(['','Material','','','',c.mat.toFixed(2),'']);
+  rows.push(['','Material markup','',(+P.matUp||0)+'%','',c.markup.toFixed(2),'']);
+  rows.push(['','Labour',c.hours.toFixed(2),'h',c.rate.toFixed(2),c.labour.toFixed(2),'']);
+  rows.push(['','Total','','','',c.total.toFixed(2),c.perFt!=null?(c.perFt.toFixed(2)+' per LED ft'):'']);
+  exportBox(slug(P.name)+'-cost.csv',csv(rows));
 };
 $('#btnCsvBom').onclick=()=>{
   const rows=[['Category','Item','Qty','Unit','Note']].concat(bomData().map(r=>[r[0],r[1],r[3],r[2],r[4]]));
@@ -4187,15 +4374,17 @@ async function openProjectFile(file){
 }
 $('#btnPdf').onclick=exportSheetPdf;
 $('#btnCsvPieces').onclick=()=>{
-  const rows=[['Tag','Type','Zone','Run','Kind','Item','Cut length (ft)','Cut length (in)','Note','Locked']];
-  pieceData().forEach(r=>rows.push([r.tag,r.type,r.zone,r.run,r.kind,r.item,
+  const rows=[['Mark','Piece','Of','Tag','Type','Zone','Detail','Run','Kind','Item',
+    'Cut length (ft)','Cut length (in)','Note','Locked']];
+  pieceData().forEach(r=>rows.push([r.mark,r.seq,r.of,r.tag,r.type,r.zone,r.detail||'',r.run,r.kind,r.item,
     (r.len/12).toFixed(3),r.len.toFixed(2),r.note,r.locked?'yes':'no']));
   exportBox(slug(P.name)+'-pieces.csv',csv(rows));
 };
 $('#btnCsvNest').onclick=()=>{
-  const rows=[['Channel','Stock length (ft)','Stock #','Cuts (ft)','Off-cut left (ft)','Yield %']];
-  nestData().forEach(g=>g.bins.forEach((b,i)=>rows.push([g.name,(g.stock/12).toFixed(3),i+1,
-    b.cuts.map(c=>(c/12).toFixed(3)).join(' + '),(b.left/12).toFixed(3),(g.yield*100).toFixed(1)])));
+  const rows=[['Channel','Scope','Stock length (ft)','Stock #','Cuts (ft)','Off-cut left (ft)','Re-usable','Yield %']];
+  nestData().forEach(g=>g.bins.forEach((b,i)=>rows.push([g.name,g.scope||'whole job',(g.stock/12).toFixed(3),i+1,
+    b.cuts.map(c=>(c/12).toFixed(3)).join(' + '),(b.left/12).toFixed(3),
+    (g.minOff>0&&b.left>=g.minOff)?'yes':'no',(g.yield*100).toFixed(1)])));
   exportBox(slug(P.name)+'-nesting.csv',csv(rows));
 };
 $('#btnCsvDrv').onclick=()=>{
@@ -4277,6 +4466,9 @@ $('#projInput').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f
 $('#projName').oninput=e=>{P.name=e.target.value;markDirty()};
 $('#projNo').oninput=e=>{P.no=e.target.value;markDirty()};
 $('#waste').oninput=e=>{P.waste=+e.target.value||0;renderBom();markDirty()};
+[['labRate','rate'],['matUp','matUp'],['labFt','labFt'],['labFeed','labFeed']].forEach(([id,k])=>{
+  const el=$('#'+id); if(el) el.oninput=e=>{ P[k]=Math.max(0,+e.target.value||0); renderCost(); markDirty(); };
+});
 $('#loadF').oninput=e=>{P.load=+e.target.value||80;renderTreatments();renderBom();markDirty()};
 $('#unitBtn').onclick=()=>{
   P.units=P.units==='metric'?'imperial':'metric';
@@ -4412,6 +4604,8 @@ function boot(keepDoc){
   $('#projName').value=P.name||''; $('#projNo').value=P.no||'';
   $('#unitBtn').textContent=(P.units||'imperial').toUpperCase();
   $('#waste').value=P.waste??5; $('#loadF').value=P.load??80;
+  $('#labRate').value=P.rate??0; $('#matUp').value=P.matUp??0;
+  $('#labFt').value=P.labFt??0; $('#labFeed').value=P.labFeed??0;
   const sel=$('#scalePreset');
   sel.innerHTML='<option value="">Set scale…</option><optgroup label="Imperial">'
     +SCALES.slice(0,13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')
@@ -4507,6 +4701,17 @@ function settingsHtml(){
   if(setTab==='est') return '<div class="setgrp"><h4>Allowances</h4>'
     +setRow('Material waste','Added to ordered quantities in the BOM.',setNum('waste',P.waste??5,0,50,1,'%'))
     +setRow('Supply load ceiling','Never load a driver past this share of its rating.',setNum('load',P.load??80,40,100,5,'%'))
+    +'</div><div class="setgrp"><h4>Nesting</h4>'
+    +setRow('Nest off-cuts across','Whether a length bought for one zone may be cut for another.',
+      setSel('nestBy',NEST_SCOPES,P.nestBy||'job'))
+    +setRow('Smallest off-cut worth keeping','Shorter than this and the remainder is scrap, not stock.',
+      '<input type="text" data-set="minOff" value="'+esc(P.minOff?fmtLen(P.minOff):'')+'" placeholder="0">')
+    +'</div><div class="setgrp"><h4>Labour</h4>'
+    +setRow('Hours per LED foot','',setNum('labFt',P.labFt||0,0,10,0.01,'h'))
+    +setRow('Hours per feed point','',setNum('labFeed',P.labFeed||0,0,40,0.1,'h'))
+    +setRow('Hours per counted item','Applied to every count stamp.',setNum('labEa',P.labEa||0,0,40,0.1,'h'))
+    +setRow('Labour rate','Per hour.',setNum('rate',P.rate||0,0,1000,1,P.cur||'$'))
+    +setRow('Material markup','Added to material, not to labour.',setNum('matUp',P.matUp||0,0,200,1,'%'))
     +'</div><div class="setgrp"><h4>Drivers</h4>'
     +setRow('Longest home run','A placed driver further than this from what it feeds is flagged.',
       '<input type="text" data-set="maxHome" value="'+esc(fmtLen(+P.maxHome||240))+'">')
@@ -4571,6 +4776,10 @@ function applySetting(el){
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'maxHome': { const v=parseLen(val); P.maxHome=(isFinite(v)&&v>0)?v:240;
       drawOverlay(); renderBom(); break; }
+    case 'nestBy': P.nestBy=val; renderBom(); break;
+    case 'minOff': { const v=parseLen(val); P.minOff=(isFinite(v)&&v>0)?v:0; renderBom(); break; }
+    case 'labFt': case 'labFeed': case 'labEa': case 'rate': case 'matUp':
+      P[k]=Math.max(0,+val||0); boot(true); break;
     case 'chipScale': P.chipScale=+val||1; setDrawScale(1); drawOverlay(); break;
     case 'width': V.width=+val; P.width=+val; break;
     case 'waste': P.waste=clamp(+val||0,0,50); $('#waste').value=P.waste; renderBom(); stats(); break;
@@ -4617,6 +4826,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
+  bomAgg,costRows,costTotals,money,rateOf,renderCost,
   cloudPath,nextRev,driverLoad,driverRows,placeDriver,nearestPtOn,driverLabel,
   compareSheets,compareRevisions,cloudRects,readTitleblock,scanTitleblocks,sheetLabel,
   countTotals,countsOf,countIndex,placeCount,countSyms:CNT_SYMS,
