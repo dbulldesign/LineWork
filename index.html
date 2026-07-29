@@ -287,6 +287,7 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="cal" title="Calibrate scale (C)"><svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/></svg></button>
     <span class="sep"></span>
     <button class="tool" data-tool="line" title="Dimension / linear run (L)"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg></button>
+    <button class="tool" data-tool="arc" title="Arc length — click start, a point along the curve, then the end (A)"><svg viewBox="0 0 24 24"><path d="M3 19a16 16 0 0118 0"/><circle cx="3" cy="19" r="1.9"/><circle cx="12" cy="11.6" r="1.9"/><circle cx="21" cy="19" r="1.9"/></svg></button>
     <button class="tool" data-tool="poly" title="Poly length — click each corner, per-segment lengths (G)"><svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg></button>
     <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
     <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
@@ -421,7 +422,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.8.0';
+const APP_VER='1.9.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -900,17 +901,52 @@ function curScale(){ return V.docId? scaleOf(V.docId,V.page) : null; }
 function inPerPt(){ const s=curScale(); return s? s.ratio/72 : null; }
 function ptLen(a,b){ return Math.hypot(b[0]-a[0],b[1]-a[1]); }
 function realLen(a,b){ const k=inPerPt(); return k? ptLen(a,b)*k : null; }
+/* Circular arc through three points: start, a point along it, and the end.
+   Curved coves are laid out to a radius, so measuring one as an arc is both
+   fewer clicks and more accurate than chasing it with a polyline. */
+function arcOf(a){
+  const p=a&&a.pts;
+  if(!p||p.length<3) return null;
+  const [ax,ay]=p[0],[bx,by]=p[1],[cx,cy]=p[2];
+  const d=2*(ax*(by-cy)+bx*(cy-ay)+cx*(ay-by));
+  if(Math.abs(d)<1e-9) return null;                     /* three points in a line */
+  const s1=ax*ax+ay*ay, s2=bx*bx+by*by, s3=cx*cx+cy*cy;
+  const ux=(s1*(by-cy)+s2*(cy-ay)+s3*(ay-by))/d;
+  const uy=(s1*(cx-bx)+s2*(ax-cx)+s3*(bx-ax))/d;
+  const r=Math.hypot(ax-ux,ay-uy);
+  if(!isFinite(r)||r<=0) return null;
+  const TAU=Math.PI*2, norm=t=>((t%TAU)+TAU)%TAU;
+  const a0=Math.atan2(ay-uy,ax-ux), a1=Math.atan2(by-uy,bx-ux), a2=Math.atan2(cy-uy,cx-ux);
+  const toEnd=norm(a2-a0), toMid=norm(a1-a0);
+  /* sweep the way that actually passes through the middle point */
+  const ccw=toMid<=toEnd;
+  const sweep=ccw?toEnd:toEnd-TAU;
+  return {c:[ux,uy],r,a0,a2,sweep,len:r*Math.abs(sweep)};
+}
+/* sample an arc into points so it can be drawn and hit-tested like a polyline */
+function arcPts(a,n){
+  const g=arcOf(a); if(!g) return a.pts.slice();
+  n=n||Math.max(12,Math.min(96,Math.ceil(Math.abs(g.sweep)/(Math.PI/48))));
+  const out=[];
+  for(let i=0;i<=n;i++){ const t=g.a0+g.sweep*(i/n); out.push([g.c[0]+g.r*Math.cos(t),g.c[1]+g.r*Math.sin(t)]); }
+  return out;
+}
 /* a closed poly measures the run back to its first vertex as well */
 const canClose=a=>!!a&&a.type==='line'&&!a.free&&a.pts.length>2;
-function annPts(a){ return (a.closed&&canClose(a))? a.pts.concat([a.pts[0]]) : a.pts; }
+function annPts(a){
+  if(a.type==='arc') return arcPts(a);
+  return (a.closed&&canClose(a))? a.pts.concat([a.pts[0]]) : a.pts;
+}
 function annLen(a){
   const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
+  if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
   const pts=annPts(a); let t=0;
   for(let i=1;i<pts.length;i++) t+=ptLen(pts[i-1],pts[i]);
   return t*k;
 }
 /* per-segment breakdown, in drawing order — the poly-length readout */
 function annSegs(a){
+  if(a.type==='arc'){ const k=inPerPt(),g=arcOf(a); return g?[{a:a.pts[0],b:a.pts[2],len:k?g.len*k:null}]:[]; }
   const k=inPerPt(), pts=annPts(a), out=[];
   for(let i=1;i<pts.length;i++) out.push({a:pts[i-1],b:pts[i],len:k?ptLen(pts[i-1],pts[i])*k:null});
   return out;
@@ -1018,6 +1054,20 @@ function drawAnn(a,selected,isDraft){
       g+=chip((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2+CHIP_H,'CALIBRATED',col);
     }
   }
+  if(a.type==='arc'){
+    const g0=arcOf(a), sp2=annPts(a).map(sp);
+    g+='<polyline points="'+sp2.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
+      +'" fill="none" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'" stroke-linecap="round"/>';
+    g+=pts.map((p,i)=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)
+      +'" fill="'+(i===1?col:'#171512')+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
+    const tot=annLen(a), tg=a.treat&&P.treat.find(t=>t.id===a.treat);
+    const mid=sp2[Math.floor(sp2.length/2)]||pts[1];
+    if(g0){
+      const rr=inPerPt()?fmtRun(g0.r*inPerPt()):'—';
+      g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col);
+      g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col);
+    }
+  }
   if(a.type==='ink'){
     g+=inkPath(pts,a.pts,(a.w||2)*V.zoom*1.5,col);
   }
@@ -1106,7 +1156,7 @@ function hitTest(sx,sy,tol){
   const list=pageAnns().slice().reverse();
   for(const a of list){
     const pts=annPts(a).map(sp);
-    if(a.type==='line'||a.type==='cal'||a.type==='ink'){
+    if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'){
       for(let i=1;i<pts.length;i++) if(distSeg([sx,sy],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
     }else if(a.type==='box'||a.type==='tbox'){
       const x1=Math.min(pts[0][0],pts[1][0]),x2=Math.max(pts[0][0],pts[1][0]);
@@ -1230,12 +1280,14 @@ function ortho(a,b,on){ if(!on) return b; const dx=b[0]-a[0],dy=b[1]-a[1];
 
 /* the dimension and poly-length tools share one annotation type; poly is tap-only */
 const isLineTool=t=>t==='line'||t==='poly';
+const isMeasureTool=t=>isLineTool(t)||t==='arc';
 function setTool(t){
   V.tool=t; $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   viewport.classList.toggle('pan',t==='pan'); viewport.classList.toggle('draw',t!=='pan');
   const names={pan:'Select / pan',cal:'Calibrate — drag along a known dimension',
     line:'Dimension — drag to trace a curved run, or tap each corner',
     poly:'Poly length — click each corner, ⏎ or double-click to finish, or close the loop',
+    arc:'Arc length — click the start, a point along the curve, then the end',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
     text:'Text — tap to place a note on the sheet',
     tbox:'Text box — drag a box, the text wraps inside it',
@@ -1329,6 +1381,11 @@ stage.addEventListener('pointermove',e=>{
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>1.4) press.free.push(q); });
       V.draft.pts=press.free; drawOverlay(); liveLen(V.draft); return; }
   }
+  if(V.draft&&V.draft.type==='arc'&&!press){
+    V.draft.pts[Math.min(V.arcN||1,2)]=p;
+    if((V.arcN||1)<2) V.draft.pts[2]=p;
+    drawOverlay(); liveLen(V.draft); return;
+  }
   if(V.draft&&!press&&(V.draft.type==='line'||V.draft.type==='cal')){   /* hover preview between taps */
     const n=V.draft.pts.length; V.draft.pts[n-1]=ortho(V.draft.pts[n-2],p,e.shiftKey); drawOverlay(); liveLen(V.draft); return; }
   const k=inPerPt();
@@ -1361,6 +1418,7 @@ function endPointer(e){
     if(pr.moved&&V.draft){ V.draft.pts=[V.draft.pts[0],V.draft.pts[1],V.draft.pts[1].slice()]; finishDraft(); }
     else tapVertex(p,e);
     return; }
+  if(tool==='arc'){ tapArc(p); return; }
   if(isLineTool(tool)){
     if(tool==='poly') tapVertex(p,e);              /* poly is click-only: a slight drag is still a vertex */
     else if(pr.free&&pr.free.length>2) commitFreehand(pr.free);
@@ -1381,6 +1439,27 @@ function tapVertex(p,e){
     V.draft.pts[V.draft.pts.length-1]=ortho(a,p,e.shiftKey);
     if(V.tool==='cal'){ finishDraft(); return; }
     V.draft.pts.push(V.draft.pts[V.draft.pts.length-1].slice());
+  }
+  drawOverlay(); liveLen(V.draft);
+}
+function tapArc(p){
+  if(!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
+  if(!V.draft||V.draft.type!=='arc'){
+    V.draft={id:'d',type:'arc',doc:V.docId,page:V.page,pts:[p,p.slice(),p.slice()],color:V.color,w:V.width};
+    V.arcN=1;
+  }else{
+    V.arcN=(V.arcN||1)+1;
+    V.draft.pts[Math.min(V.arcN-1,2)]=p;
+    if(V.arcN>=3){
+      const d=V.draft; V.draft=null; V.arcN=0;
+      if(!arcOf(d)){ toast('Those three points are in a line — use the dimension tool'); drawOverlay(); return; }
+      snap();
+      const a={id:uid('a_'),type:'arc',doc:d.doc,page:d.page,pts:d.pts.map(q=>q.slice()),
+        color:d.color,w:d.w,text:''};
+      P.ann.push(a); V.sel=a.id;
+      drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+      return;
+    }
   }
   drawOverlay(); liveLen(V.draft);
 }
@@ -1536,11 +1615,11 @@ stage.addEventListener('contextmenu',e=>{
   showCtx(e.clientX,e.clientY,h?ctxForAnn(h):ctxForSheet());
 });
 function ctxForAnn(a){
-  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box'};
+  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length'};
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
-  const L=a.type==='line'?annLen(a):null;
+  const L=(a.type==='line'||a.type==='arc')?annLen(a):null;
   const items=[{hd:names[a.type]+(L!=null?'  ·  '+fmtLen(L):'')}];
-  if(a.type==='line') items.push(t
+  if(a.type==='line'||a.type==='arc') items.push(t
     ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
     : {id:'mk',t:'Create treatment from this',fn:()=>treatFromAnn(a)});
   if(canClose(a)) items.push({id:'lp',t:a.closed?'Open loop':'Close loop',fn:()=>{ snap(); a.closed=!a.closed;
@@ -1746,10 +1825,21 @@ function showInspector(a){
   const box=$('#inspector');
   if(!a){ box.classList.remove('show'); return; }
   box.classList.add('show');
-  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration line',text:'Text',tbox:'Text box'};
+  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration line',text:'Text',tbox:'Text box',arc:'Arc length'};
   $('#insTitle').textContent=(a.type==='line'&&a.poly?'Poly length':names[a.type])||'Markup';
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   let h='';
+  if(a.type==='arc'){
+    const g0=arcOf(a), k=inPerPt();
+    h+='<div class="kv"><span>Arc length</span><b class="hi">'+fmtLen(annLen(a))+'</b></div>';
+    h+='<div class="kv"><span>Radius</span><b>'+(g0&&k?fmtLen(g0.r*k):'—')+'</b></div>';
+    h+='<div class="kv"><span>Included angle</span><b>'+(g0?(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°':'—')+'</b></div>';
+    h+='<div class="kv"><span>Chord</span><b>'+(k?fmtLen(ptLen(a.pts[0],a.pts[2])*k):'—')+'</b></div>';
+    const t2=a.treat&&P.treat.find(x=>x.id===a.treat);
+    h+= t2? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t2))+'</button>'
+          : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
+    h+='<div class="hint">Drag the middle handle to change the bow, the ends to move it.</div>';
+  }
   if(a.type==='line'){
     const L=annLen(a), segs=annSegs(a);
     h+='<div class="kv"><span>Measured</span><b class="hi">'+fmtLen(L)+'</b></div>';
@@ -1827,6 +1917,7 @@ function renderAnnList(){
     const t=a.treat&&P.treat.find(x=>x.id===a.treat);
     const segs=a.type==='line'?annSegs(a).length:0;
     const label=a.type==='line'?(fmtLen(annLen(a))+(a.poly&&segs>1?'  ·  '+segs+' seg':''))
+      :a.type==='arc'?fmtLen(annLen(a))
       :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
@@ -1995,6 +2086,7 @@ function renderTreatments(){
         +(t.annId?'<button class="btn sm" data-a="loc">Show on drawing</button><button class="btn sm" data-a="unlink">Unlink dimension</button>'
                  :'<button class="btn sm" data-a="link">Link selected dimension</button>')
         +'<button class="btn sm" data-a="dup">Duplicate</button>'
+        +'<button class="btn sm" data-a="across">Copy to sheets…</button>'
         +'<button class="btn sm" data-a="del" style="color:var(--flag);margin-left:auto">Delete</button>'
       +'</div></div>';
     el.querySelector('.hd').onclick=()=>{ el.classList.toggle('on'); };
@@ -2036,14 +2128,15 @@ function renderTreatments(){
     $$('[data-a]',el).forEach(b=>b.onclick=async()=>{
       const a=b.dataset.a;
       if(a==='del'){ snap(); if(t.annId){const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat;} P.treat=P.treat.filter(x=>x.id!==t.id); renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty(); }
-      if(a==='dup'){ const c2=JSON.parse(JSON.stringify(t)); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t); P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
+      if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t); P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
+      if(a==='across') await dupAcross(t);
       if(a==='loc'){ const an=P.ann.find(x=>x.id===t.annId);
         if(!an){ toast('No dimension linked to this treatment'); return; }
         await goToAnn(an,true);
         if(coarse) document.body.classList.remove('ro');   /* get the sheet on screen on a tablet */
         toast('Showing '+tagOf(t)+' on '+((P.docs.find(d=>d.id===an.doc)||{}).name||'the sheet')); }
       if(a==='unlink'){ const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat; t.manual=lenOf(t); t.annId=null; renderTreatments(); drawOverlay(); renderAnnList(); markDirty(); openTreat(t.id); }
-      if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&x.type==='line');
+      if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'));
         if(!an){ toast('Select a dimension on the drawing first'); return; }
         P.treat.forEach(o=>{ if(o.annId===an.id) o.annId=null; });
         t.annId=an.id; an.treat=t.id; t.docId=an.doc; t.page=an.page;
@@ -2052,6 +2145,50 @@ function renderTreatments(){
     h.appendChild(el);
   });
   stats();
+}
+/* Repeating floors: copy a treatment — and the markup it measures — onto other
+   sheets or pages in one go, keeping the geometry so it lands in the same place. */
+async function dupAcross(t){
+  const src=t.annId?P.ann.find(x=>x.id===t.annId):null;
+  const targets=[];
+  P.docs.forEach(d=>{
+    const pages=Math.max(1,+d.pages||1);
+    for(let pg=1;pg<=pages;pg++){
+      if(d.id===t.docId&&pg===(t.page||1)) continue;          /* skip where it already is */
+      targets.push({v:d.id+'|'+pg,t:d.name.replace(/\.pdf$/i,'')+(pages>1?' · p'+pg:'')});
+    }
+  });
+  if(!targets.length){ toast('Import another sheet first — nowhere else to copy to'); return; }
+  const r=await dlg({title:'Copy '+tagOf(t)+' to sheets',fields:[
+    {k:'to',type:'select',label:'Sheet and page',opts:targets,val:targets[0].v},
+    {k:'all',type:'check',cap:'Copy to every other sheet and page instead',val:false},
+    {k:'zone',label:'Zone # for the copies',val:t.zone||'',ph:'leave blank to keep '+(t.zone||'none')},
+    {k:'mark',type:'check',cap:'Copy the markup too, in the same position',val:!!src}
+  ],ok:'Copy',note:(src?'The measured markup will be copied so the length carries over. ':'This treatment has no markup, so its typed length is copied. ')
+    +'Tags stay TYPE + Zone, so give the copies their own zone if they need one.'});
+  if(!r) return;
+  const list=r.all?targets:targets.filter(x=>x.v===r.to);
+  snap();
+  let n=0;
+  list.forEach(x=>{
+    const [doc,pg]=x.v.split('|');
+    const c=clone(t);
+    c.id=uid('t_'); c.tag='L-'+pad(P.seq++);
+    c.docId=doc; c.page=+pg; c.annId=null;
+    if(String(r.zone||'').trim()) c.zone=String(r.zone).trim().toUpperCase();
+    c.manual=lenOf(t);
+    if(r.mark&&src){
+      const a2=clone(src);
+      a2.id=uid('a_'); a2.doc=doc; a2.page=+pg; a2.treat=c.id;
+      delete a2.hidden;
+      P.ann.push(a2);
+      c.annId=a2.id; c.manual=0;
+    }
+    P.treat.push(c); n++;
+  });
+  invalidateAnns();
+  renderTreatments(); renderAnnList(); renderSheets(); renderBom(); drawOverlay(); stats(); markDirty();
+  toast('Copied '+tagOf(t)+' to '+n+' sheet'+(n===1?'':'s'));
 }
 function outHtml(r,t){
   const kindName={tape:'LED tape',fixture:'Fixtures',neon:'Neon flex'}[r.kind]||'LED';
@@ -2585,7 +2722,8 @@ $$('.tab').forEach(b=>b.onclick=()=>{ $$('.tab').forEach(x=>x.classList.remove('
 $('#btnOpen').onclick=$('#btnOpen2').onclick=()=>$('#fileInput').click();
 $('#fileInput').onchange=e=>{ openFiles([...e.target.files]); e.target.value=''; };
 $('#btnAddTreat').onclick=()=>{ const t=newTreat(null); renderTreatments(); renderBom(); openTreat(t.id,true); };
-$('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&x.type==='line'); if(!a){toast('Select a dimension on the drawing first');return;} treatFromAnn(a); };
+$('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'));
+  if(!a){toast('Select a dimension or arc on the drawing first');return;} treatFromAnn(a); };
 $('#togL').onclick=()=>document.body.classList.toggle('lo');
 $('#togR').onclick=()=>document.body.classList.toggle('ro');
 $('#zIn').onclick=()=>zoomBy(1.25); $('#zOut').onclick=()=>zoomBy(.8); $('#zFit').onclick=()=>fitPage();
@@ -2636,7 +2774,7 @@ document.addEventListener('keydown',e=>{
     return; }
   if(k==='enter'&&V.draft) finishDraft();
   if(k==='v') setTool('pan'); if(k==='c') setTool('cal'); if(k==='l') setTool('line');
-  if(k==='g') setTool('poly');
+  if(k==='g') setTool('poly'); if(k==='a') setTool('arc');
   if(k==='b') setTool('box'); if(k==='n') setTool('note'); if(k==='k') setTool('link');
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
   if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
@@ -2678,6 +2816,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   fmtRun,fmtFtIn,chipFontSize:CHIP_FS,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
+  arcOf,arcPts,annPts,dupAcross,
   render(){boot()}};
 (async()=>{ await loadProject(); loadHist(); boot(); setTool('pan');
   if(!PDF_OK) toast('The PDF engine did not load — check vendor/pdf.min.js');
