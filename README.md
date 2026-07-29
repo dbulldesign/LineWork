@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.12.0**
+**Version 1.13.0**
 
 ## What it does
 
@@ -63,10 +63,11 @@ Feed points are computed from the product's voltage-drop limit, and can be
 overridden per treatment. Setting fewer than the limit allows is flagged rather
 than silently accepted.
 
-A run sits between two cut points — the next shortest and the next longest
-increment. The Calculated panel offers both (marking which is nearest); picking
-one **locks** the cut for that treatment, so re-measuring the markup no longer
-moves it. Unlock to go back to following the measurement.
+A run sits between two cut points. The Calculated panel offers **next shortest**,
+**nearest** and **next longest**, each in decimal feet and in inches, with how far
+each is from the measurement. Picking one **locks** the cut for that treatment, so
+re-measuring the markup no longer moves it. Unlock to go back to following the
+measurement.
 
 Treatment tags are built from **TYPE** and **Zone #** — set those and the tag
 becomes e.g. `COVE Z2`, shown on the drawing, in the cut list and in exports.
@@ -107,8 +108,18 @@ size.
 ## Working on a busy sheet
 
 Markups can be hidden by kind while measuring, and coloured automatically by
-TYPE or Zone # instead of by hand. Treatments filter by tag, type, zone, room or
-product. The footer carries a running total for the page you are on as well as
+TYPE or Zone # instead of by hand. Every list and table sorts — the markup list,
+treatments, the library, the cut list, BOM, rollups and the piece list — and the
+order is remembered. Treatments also filter by tag, type, zone, room or product.
+
+**Content-aware labels** keep measurement labels from stacking on top of each
+other when two runs sit close together; each steps aside to the nearest clear
+slot. Drag any label to place it yourself and a leader line ties it back to its
+measurement — everything else then avoids where you put it. The setting can be
+turned off if you would rather labels sat exactly where the measurement puts them.
+
+Runs are editable point by point: double-click a run to break it at that point,
+⌥-click a handle to remove one, or use the right-click menu for both. The footer carries a running total for the page you are on as well as
 the whole job. A light theme is available for printing and for bright site
 conditions.
 

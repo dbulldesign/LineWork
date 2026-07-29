@@ -69,6 +69,10 @@ header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1)
 .btn.pri{background:var(--amber);border-color:var(--amber);color:#20170A;font-weight:600}
 .btn.pri:hover{background:#ffbf55}
 .btn.ghost{background:none}
+/* ghost + pri used to leave dark text on a dark ground; ghost buttons that can
+   be on/off use this instead */
+.btn.ghost.pri{background:none;color:var(--amber);border-color:var(--amber);font-weight:600}
+.btn.ghost.pri:hover{background:var(--s3)}
 .btn.sm{padding:3px 7px;font-size:11px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 input[type=text],input[type=number],select,textarea{background:var(--bg);border:1px solid var(--line2);padding:5px 7px;border-radius:2px;width:100%}
@@ -178,12 +182,23 @@ input.up{text-transform:uppercase}
 .f label{display:block;font-size:8.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
 .out{background:var(--bg);border:1px solid var(--line);margin-top:10px}
 .out h4{margin:0;padding:6px 9px;font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line);background:var(--s2)}
+.sortsel{width:100%;padding:3px 5px;font-size:11px}
+.thsort{cursor:pointer;user-select:none;white-space:nowrap}
+.thsort:hover{color:var(--txt)}
+.thsort.on{color:var(--amber)}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:4px 9px;border-bottom:1px dotted var(--line)}
 /* cut-point picker in the Calculated block */
 .pick{display:flex;flex-wrap:wrap;gap:5px;align-items:center;padding:8px 9px;border-bottom:1px dotted var(--line)}
 .pick .pl{font-size:9.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);flex:0 0 100%}
 .pick .btn{font-size:11px}
 .pick .btn b{font-family:var(--mono);margin-left:5px}
+/* three cut options side by side, each showing feet and inches */
+.pick .cutopt{display:flex;flex-direction:column;align-items:flex-start;gap:1px;flex:1 1 30%;
+  min-width:96px;padding:5px 7px;text-align:left;line-height:1.25}
+.pick .cutopt .cl{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;opacity:.75}
+.pick .cutopt .cv{font-family:var(--mono);font-size:12.5px;font-weight:600}
+.pick .cutopt .ci{font-family:var(--mono);font-size:10.5px;opacity:.8}
+.pick .cutopt .cd{font-family:var(--mono);font-size:9.5px;opacity:.6}
 .note.ok{color:var(--ok)}
 /* per-segment poly readout — scrolls once a run gets long */
 .seglist{max-height:168px;overflow:auto;margin:5px 0;border:1px solid var(--line);background:var(--s2)}
@@ -235,9 +250,13 @@ input.up{text-transform:uppercase}
 /* ---------- pen & touch ---------- */
 #penDot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:1.5px solid var(--flag);border-radius:50%;pointer-events:none;display:none;z-index:4;mix-blend-mode:difference}
 #penDot.show{display:block}
-#calNag{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:7;display:flex;align-items:center;gap:9px;
-  background:var(--s1);border:1px solid var(--flag);border-left:3px solid var(--flag);padding:8px 11px;border-radius:3px;
-  box-shadow:0 12px 34px rgba(0,0,0,.5);font-size:12px;color:var(--txt);max-width:min(92%,620px)}
+/* A banner in the layout rather than a floating overlay — it used to sit on top
+   of the toolbar and swallow clicks meant for it. */
+#calNag{flex:0 0 auto;display:flex;align-items:center;gap:9px;flex-wrap:wrap;
+  background:var(--s1);border-bottom:1px solid var(--line2);border-left:3px solid var(--flag);
+  padding:7px 12px;font-size:12px;color:var(--txt)}
+#calNag b{color:var(--flag)}
+#calNag button{margin-left:auto}
 #calNag .k{font-family:var(--mono);border:1px solid var(--line2);border-radius:2px;padding:0 4px;color:var(--dim)}
 #drawbar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:none;align-items:center;gap:7px;background:var(--s1);border:1px solid var(--line2);padding:7px 8px 7px 13px;border-radius:3px;box-shadow:0 12px 34px rgba(0,0,0,.55);z-index:6}
 #drawbar.show{display:flex}
@@ -294,12 +313,14 @@ body.haspen #penFlag{display:inline}
     <h3>Show markups</h3>
     <div class="body" id="layerBox" style="display:flex;flex-wrap:wrap;gap:4px"></div>
     <div class="body" style="padding-top:0">
+      <button class="btn sm" id="btnSmart" style="width:100%;margin-bottom:5px"></button>
       <select id="codeMode" style="width:100%"></select>
       <div id="codeKey" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"></div>
     </div>
   </div>
   <div class="sec">
     <h3>Markups on sheet <span class="c" id="cAnn">0</span></h3>
+    <div class="body" style="padding-bottom:6px"><div id="annSort"></div></div>
     <div id="annList"></div>
     <div class="empty" id="annEmpty">Set a scale, then measure runs with the dimension tool.</div>
   </div>
@@ -346,6 +367,11 @@ body.haspen #penFlag{display:inline}
     <span class="num" id="pgLabel" style="font-size:11px;color:var(--dim)">— / —</span>
     <button class="btn sm ghost" id="pgNext">▶</button>
   </div>
+  <div id="calNag" style="display:none">
+    <b>Set the scale first.</b> Pick a standard scale, or trace a dimension you trust with the ruler
+    <span class="k">C</span> — every length depends on it.
+    <button class="btn sm pri" id="calNagGo">Calibrate now</button>
+  </div>
   <div id="viewport" class="pan">
     <div id="stage" style="display:none"><canvas id="pdfBase"></canvas><canvas id="pdfCanvas"></canvas><canvas id="pdfCanvas2"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
     <div id="penDot"></div>
@@ -360,11 +386,6 @@ body.haspen #penFlag{display:inline}
   </div>
   <!-- overlays live in <main>, not #viewport: children of the scroll container
        would drift with the content instead of staying pinned to the viewer -->
-  <div id="calNag" style="display:none">
-    <b>Set the scale first.</b> Pick a standard scale, or trace a dimension you trust with the ruler
-    <span class="k">C</span> — every length depends on it.
-    <button class="btn sm pri" id="calNagGo">Calibrate now</button>
-  </div>
   <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbClose">Close loop</button><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
   <div id="inspector">
     <div class="hd"><span id="insTitle">Markup</span><button class="btn sm ghost" id="insClose" style="margin-left:auto;padding:0 6px">✕</button></div>
@@ -382,6 +403,7 @@ body.haspen #penFlag{display:inline}
   <div class="pane on" id="pTreat">
     <div class="sec"><div class="body" style="padding-bottom:0">
       <input type="search" id="treatFind" placeholder="Filter by tag, type, zone, room, product…" style="width:100%">
+      <div id="treatSort" style="margin-top:5px"></div>
       <div class="hint" id="treatFindHint" style="margin-top:4px;display:none"></div>
     </div></div>
     <div class="sec"><h3>Runs &amp; treatments <span class="c" id="cTreat">0</span></h3>
@@ -398,6 +420,7 @@ body.haspen #penFlag{display:inline}
       <input type="file" id="libInput" accept=".json,application/json" hidden>
       <button class="btn" id="btnLibSave">Save library file</button>
       <button class="btn" id="btnLibOpen">Import library</button>
+      <div id="libSort" style="flex:1 1 100%"></div>
     </div><div class="hint" style="padding:0 12px 10px">Keep your company's products in one file and load it into every project.</div></div>
     <div class="sec"><div class="empty">Seeded with generic placeholder products. Replace the cut increment, watts per foot, maximum feed run, and stock lengths with the values from your actual manufacturer's cut sheet before issuing anything.</div></div>
   </div>
@@ -463,7 +486,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.12.0';
+const APP_VER='1.13.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1123,11 +1146,83 @@ const chipW=txt=>String(txt).length*CHIP_FS*.62+CHIP_FS;
 /* the sheet is white in light mode, so label backgrounds flip with the theme */
 let OVL='#171512';
 const syncOvl=()=>{ OVL=document.body.classList.contains('light')?'#FFFFFF':'#171512'; };
-function chip(x,y,txt,col,anchor){
-  const w=chipW(txt), h=CHIP_H;
-  let cx=x-w/2; if(anchor==='l') cx=x+8;
-  return '<g><rect x="'+cx.toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2.5" fill="'+OVL+'" fill-opacity=".95" stroke="'+col+'" stroke-opacity=".8"/>'
-    +'<text x="'+(cx+w/2).toFixed(1)+'" y="'+(y+CHIP_FS*.37).toFixed(1)+'" fill="'+col+'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="600" font-size="'+CHIP_FS+'" text-anchor="middle">'+esc(txt)+'</text></g>';
+/* ---- measurement labels ----
+   Labels are queued rather than drawn inline so they can be laid out together:
+   two markups close to each other used to stack their labels on top of one
+   another. With content-aware placement on, a label steps aside to the nearest
+   clear slot; a label you have dragged yourself is left exactly where you put it
+   and everything else avoids it. */
+let CHIPQ=null, LAST_CHIPS=[];
+function chip(x,y,txt,col,anchor,owner,role){
+  const rec={x,y,w:chipW(txt),h:CHIP_H,txt,col,anchor,owner:owner||null,role:role||'sub',manual:false};
+  if(CHIPQ){ CHIPQ.push(rec); return ''; }
+  return chipSvg(rec);
+}
+const chipBox=r=>{
+  const x1=r.anchor==='l'?r.x+8:r.x-r.w/2;
+  return {x1,y1:r.y-r.h/2,x2:x1+r.w,y2:r.y+r.h/2};
+};
+function chipSvg(r){
+  const b=chipBox(r);
+  return '<g'+(r.owner?' data-lbl="'+r.owner.id+'"':'')+'>'
+    +'<rect x="'+b.x1.toFixed(1)+'" y="'+b.y1.toFixed(1)+'" width="'+r.w.toFixed(1)+'" height="'+r.h.toFixed(1)
+    +'" rx="2.5" fill="'+OVL+'" fill-opacity=".95" stroke="'+r.col+'" stroke-opacity="'+(r.manual?'1':'.8')+'"'
+    +(r.manual?' stroke-dasharray="4 2"':'')+'/>'
+    +'<text x="'+(b.x1+r.w/2).toFixed(1)+'" y="'+(r.y+CHIP_FS*.37).toFixed(1)+'" fill="'+r.col
+    +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="600" font-size="'+CHIP_FS
+    +'" text-anchor="middle">'+esc(r.txt)+'</text></g>';
+}
+/* leader line back to the measurement when a label has been moved away */
+function chipLeader(r){
+  const b=chipBox(r), cx=(b.x1+b.x2)/2, cy=(b.y1+b.y2)/2;
+  const d=Math.hypot(cx-r.ax,cy-r.ay);
+  if(d<r.h*1.2) return '';
+  return '<line x1="'+r.ax.toFixed(1)+'" y1="'+r.ay.toFixed(1)+'" x2="'+cx.toFixed(1)+'" y2="'+cy.toFixed(1)
+    +'" stroke="'+r.col+'" stroke-width="1" stroke-opacity=".45" stroke-dasharray="3 3"/>';
+}
+function layoutChips(q){
+  const smart=P.smart!==false;
+  q.forEach(r=>{
+    r.ax=r.x; r.ay=r.y;                       /* where the label belongs */
+    const off=r.owner&&r.role==='total'&&r.owner.lblOff;
+    if(off){ r.x+=off[0]*V.zoom; r.y+=off[1]*V.zoom; r.manual=true; }
+  });
+  const placed=q.filter(r=>r.manual).map(chipBox);
+  const clash=b=>placed.some(o=>!(b.x2<o.x1-2||b.x1>o.x2+2||b.y2<o.y1-1||b.y1>o.y2+1));
+  if(smart){
+    /* try the natural spot, then step alternately below and above */
+    q.filter(r=>!r.manual).sort((a,b)=>a.y-b.y).forEach(r=>{
+      const step=r.h+3, y0=r.y;
+      let best=null;
+      for(let k=0;k<7&&!best;k++){
+        for(const dy of (k===0?[0]:[k*step,-k*step])){
+          r.y=y0+dy;
+          if(!clash(chipBox(r))){ best=chipBox(r); break; }
+        }
+      }
+      if(!best){ r.y=y0; best=chipBox(r); }
+      placed.push(best);
+    });
+  }
+  LAST_CHIPS=q.filter(r=>r.owner&&r.role==='total').map(r=>({box:chipBox(r),a:r.owner}));
+  return q.map(r=>(r.manual?chipLeader(r):'')+chipSvg(r)).join('');
+}
+function withChips(fn){
+  const prev=CHIPQ; CHIPQ=[];
+  let body='';
+  try{ body=fn(); }finally{
+    const q=CHIPQ; CHIPQ=prev;
+    body+=layoutChips(q);
+  }
+  return body;
+}
+/* the label box under a stage-space point, if any */
+function hitChipAt(sx,sy){
+  for(let i=LAST_CHIPS.length-1;i>=0;i--){
+    const c=LAST_CHIPS[i], b=c.box;
+    if(sx>=b.x1&&sx<=b.x2&&sy>=b.y1&&sy<=b.y2) return c;
+  }
+  return null;
 }
 /* greedy wrap for text boxes; honours the author's own line breaks */
 function wrapText(s,cols){
@@ -1154,9 +1249,12 @@ function drawOverlay(){
   if(!V.vp){ ov.innerHTML=''; return; }
   invalidateAnns();          /* cheap: the key check re-filters only when needed */
   const list=pageAnns().filter(annVisible);
-  let s='';
-  for(const a of list) s+=drawAnn(a,a.id===V.sel);
-  if(V.draft) s+=drawAnn(V.draft,false,true);
+  let s=withChips(()=>{
+    let b='';
+    for(const a of list) b+=drawAnn(a,a.id===V.sel);
+    if(V.draft) b+=drawAnn(V.draft,false,true);
+    return b;
+  });
   if(V.snapHit&&(isMeasureTool(V.tool)||V.tool==='cal')){
     const q=sp(V.snapHit);
     s+='<g stroke="#8FC46A" stroke-width="1.6" fill="none">'
@@ -1196,7 +1294,7 @@ function drawAnn(a,selected,isDraft){
         let lbl=sg.len==null?'—':fmtLen(sg.len);
         if(px<chipW(lbl)*.85) lbl=sg.len==null?'—':fmtRun(sg.len);
         if(px<chipW(lbl)*.85) return;
-        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col);
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg');
       });
     }
     const tot=annLen(a);
@@ -1206,7 +1304,7 @@ function drawAnn(a,selected,isDraft){
       const lbl=(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot))
         +(a.poly&&n>1?'  ('+n+' seg'+(loop?', closed':'')+')':'');
       const last=pts[pts.length-1];
-      g+=chip(last[0],last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8),lbl,tg?'#F2A93B':col);
+      g+=chip(last[0],last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8),lbl,tg?'#F2A93B':col,null,a,'total');
     }else{
       g+=chip((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2+CHIP_H,'CALIBRATED',col);
     }
@@ -1221,8 +1319,8 @@ function drawAnn(a,selected,isDraft){
     const mid=sp2[Math.floor(sp2.length/2)]||pts[1];
     if(g0){
       const rr=inPerPt()?fmtRun(g0.r*inPerPt()):'—';
-      g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col);
-      g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col);
+      g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,null,a,'total');
+      g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col,null,a,'sub');
     }
   }
   if(a.type==='ink'){
@@ -1390,12 +1488,60 @@ function hitHandle(sx,sy,tol){
   for(let i=0;i<pts.length;i++) if(Math.hypot(sx-pts[i][0],sy-pts[i][1])<r) return {a,i};
   return null;
 }
+/* ---- adding and removing vertices ----
+   A traced run is never right first time: you need to break a segment where the
+   cove turns, or drop a point you over-clicked. */
+const editablePts=a=>a&&(a.type==='line'||a.type==='box'||a.type==='tbox')&&!a.free;
+/* which segment of a is nearest this stage-space point, and how far away */
+function nearestSeg(a,sx,sy){
+  const pts=annPts(a).map(sp);
+  let best=-1,bd=Infinity;
+  for(let i=1;i<pts.length;i++){
+    const d=distSeg([sx,sy],pts[i-1],pts[i]);
+    if(d<bd){ bd=d; best=i; }
+  }
+  return {i:best,d:bd};
+}
+function addPointTo(a,pdfPt,sx,sy){
+  if(!editablePts(a)||a.type!=='line'){ toast('Points can only be added to a dimension or poly run'); return false; }
+  const seg=nearestSeg(a,sx,sy);
+  if(seg.i<1){ toast('Click on the run where the point should go'); return false; }
+  snap();
+  /* on a closed loop the last segment runs back to the first point, so clamp */
+  const at=Math.min(seg.i,a.pts.length);
+  a.pts.splice(at,0,snapped(pdfPt));
+  if(!a.poly&&a.pts.length>2) a.poly=true;         /* it is a poly run now */
+  invalidateAnns();
+  V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('Point added — '+(a.pts.length)+' points');
+  return true;
+}
+function delPointFrom(a,i){
+  if(!editablePts(a)||a.type!=='line'){ toast('Points can only be removed from a dimension or poly run'); return false; }
+  if(a.pts.length<=2){ toast('A run needs at least two points — delete the markup instead'); return false; }
+  snap();
+  a.pts.splice(i,1);
+  if(a.pts.length<3){ delete a.closed; if(a.poly) delete a.poly; }
+  invalidateAnns();
+  drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('Point removed — '+a.pts.length+' points');
+  return true;
+}
+
 /* apply an in-progress drag of a markup or one of its vertices */
 function editMove(e){
   const p=toPt(e), a=edit.a;
   if(!edit.did){
     if(Math.hypot(e.clientX-edit.cx,e.clientY-edit.cy)<3) return;
     snap(); edit.did=true;                                     /* one undo entry per drag */
+  }
+  if(edit.mode==='label'){
+    /* offset kept in zoom-independent units so the label stays put as you zoom */
+    const dx=(e.clientX-edit.cx)/Math.max(V.zoom,.01), dy=(e.clientY-edit.cy)/Math.max(V.zoom,.01);
+    a.lblOff=[edit.base[0]+dx,edit.base[1]+dy];
+    drawOverlay();
+    return;
   }
   if(edit.mode==='move'){
     const dx=p[0]-edit.last[0], dy=p[1]-edit.last[1];
@@ -1481,9 +1627,22 @@ stage.addEventListener('pointerdown',e=>{
 
   if(V.tool==='pan'||!isDrawInput(e)){                    /* finger always pans while a draw tool is live */
     if(V.tool==='pan'){
+      /* a label can be dragged out of the way, and takes precedence over the
+         markup underneath it */
+      const lc=hitChipAt(sc[0],sc[1]);
+      if(lc){
+        if(V.sel!==lc.a.id){ V.sel=lc.a.id; showInspector(lc.a); renderAnnList(); }
+        drawOverlay();
+        edit={mode:'label',a:lc.a,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false,
+          base:(lc.a.lblOff||[0,0]).slice(),sx:sc[0],sy:sc[1]};
+        return;
+      }
       /* a handle on the selected markup drags that one vertex... */
       const hh=hitHandle(sc[0],sc[1],tol);
-      if(hh){ edit={mode:'vertex',a:hh.a,i:hh.i,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
+      if(hh){
+        /* alt-click a handle to drop that point */
+        if(e.altKey){ delPointFrom(hh.a,hh.i); return; }
+        edit={mode:'vertex',a:hh.a,i:hh.i,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
         return; }
       /* ...anywhere else on a markup selects it and drags the whole thing */
       const h=hitTest(sc[0],sc[1],tol);
@@ -1517,7 +1676,9 @@ stage.addEventListener('pointermove',e=>{
     if(now-(V._hoverAt||0)>50){
       V._hoverAt=now;
       const sc=toS(e);
-      stage.style.cursor=hitHandle(sc[0],sc[1],7)?'crosshair':(hitTest(sc[0],sc[1],7)?'move':'');
+      stage.style.cursor=hitChipAt(sc[0],sc[1])?'grab'
+        :hitHandle(sc[0],sc[1],7)?'crosshair'
+        :(hitTest(sc[0],sc[1],7)?'move':'');
     }
   }else stage.style.cursor='';
   const p=toPt(e);
@@ -1595,7 +1756,13 @@ stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot'
 
 function tapVertex(p,e){
   if(isLineTool(V.tool)&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
-  p=snapped(p);
+  const raw=p; p=snapped(p);
+  /* If snapping would land on the vertex just placed, keep the raw click: the
+     duplicate would be filtered out on commit and the point would vanish. */
+  if(V.draft&&V.draft.pts.length>=2){
+    const prev=V.draft.pts[V.draft.pts.length-2];
+    if(prev&&ptLen(prev,p)<0.6&&ptLen(prev,raw)>=0.6){ p=raw; V.snapHit=null; }
+  }
   if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
     color:V.tool==='cal'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined};
   else{
@@ -1608,7 +1775,11 @@ function tapVertex(p,e){
 }
 function tapArc(p){
   if(!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
-  p=snapped(p);
+  const raw=p; p=snapped(p);
+  if(V.draft&&V.draft.type==='arc'){
+    const used=V.draft.pts.slice(0,Math.max(1,V.arcN||1));
+    if(used.some(q=>ptLen(q,p)<0.6)&&!used.some(q=>ptLen(q,raw)<0.6)){ p=raw; V.snapHit=null; }
+  }
   if(!V.draft||V.draft.type!=='arc'){
     V.draft={id:'d',type:'arc',doc:V.docId,page:V.page,pts:[p,p.slice(),p.slice()],color:V.color,w:V.width};
     V.arcN=1;
@@ -1630,10 +1801,12 @@ function tapArc(p){
 }
 stage.addEventListener('dblclick',e=>{
   if(V.draft&&V.draft.type==='line'){ e.preventDefault(); finishDraft(); return; }
-  /* double-click any text-bearing markup to edit it in place */
   if(V.tool==='pan'){
     const sc=toS(e), h=hitTest(sc[0],sc[1],9);
-    if(h&&/^(text|tbox|note|box|link)$/.test(h.type)){ e.preventDefault(); editAnnText(h); }
+    /* double-click any text-bearing markup to edit it in place */
+    if(h&&/^(text|tbox|note|box|link)$/.test(h.type)){ e.preventDefault(); editAnnText(h); return; }
+    /* double-click a run to break it at that point */
+    if(h&&h.type==='line'&&editablePts(h)){ e.preventDefault(); addPointTo(h,toPt(e),sc[0],sc[1]); }
   }
 });
 /* the shared text editor for every markup that carries words */
@@ -1791,6 +1964,15 @@ function ctxForAnn(a){
     drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
   if(a.type==='link'&&a.target) items.push({id:'op',t:'Open linked drawing',fn:()=>openDoc(a.target.doc,a.target.page,true)});
   if(/^(note|box|text|tbox|link)$/.test(a.type)) items.push({id:'ed',t:'Edit text…',fn:()=>editAnnText(a)});
+  if(editablePts(a)&&a.type==='line'&&ctxPt){
+    const sc=V.vp?sp(ctxPt):null;
+    const vi=sc?a.pts.findIndex(q=>{ const s2=sp(q); return Math.hypot(s2[0]-sc[0],s2[1]-sc[1])<12; }):-1;
+    if(vi>=0&&a.pts.length>2)
+      items.push({id:'dp',t:'Delete this point ('+(vi+1)+' of '+a.pts.length+')',fn:()=>delPointFrom(a,vi)});
+    if(vi<0&&sc) items.push({id:'ap',t:'Add a point here',fn:()=>addPointTo(a,ctxPt,sc[0],sc[1])});
+  }
+  if(a.lblOff) items.push({id:'lr',t:'Put the label back',fn:()=>{
+    snap(); delete a.lblOff; drawOverlay(); markDirty(); }});
   items.push({id:'hd',t:a.hidden?'Show this markup':'Hide this markup',fn:()=>{
     snap(); a.hidden=!a.hidden;
     if(a.hidden&&V.sel===a.id){ V.sel=null; showInspector(null); }
@@ -2037,6 +2219,8 @@ function showInspector(a){
         +(sg.len==null?'—':fmtLen(sg.len))+'</b></div>').join('')+'</div>';
     }
     if(canClose(a)) h+='<button class="btn" data-act="loop">'+(a.closed?'Open loop':'Close loop')+'</button>';
+    if(editablePts(a)) h+='<div class="hint">'+a.pts.length+' points. Double-click the run to add one, '
+      +(a.pts.length>2?'⌥-click a handle to delete one, ':'')+'or right-click for both.</div>';
     h+= t? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t))+'</button>'
          : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
   }
@@ -2115,7 +2299,7 @@ const LAYERS=[['line','Dimensions'],['arc','Arcs'],['box','Boxes'],['text','Text
 const layerOn=type=>!(P.hide&&P.hide[type]);
 const annVisible=a=>layerOn(a.type)&&!a.hidden;
 function renderLayers(){
-  renderCodeKey();
+  renderCodeKey(); syncSmartBtn();
   const box=$('#layerBox'); if(!box) return;
   const counts={};
   P.ann.filter(a=>a.doc===V.docId&&a.page===V.page).forEach(a=>{counts[a.type]=(counts[a.type]||0)+1;});
@@ -2128,6 +2312,61 @@ function renderLayers(){
     P.hide[k]=layerOn(k);
     if(V.sel){ const sa=P.ann.find(x=>x.id===V.sel); if(sa&&!annVisible(sa)){ V.sel=null; showInspector(null); } }
     renderLayers(); drawOverlay(); renderAnnList(); markDirty();
+  });
+}
+
+/* ---- sorting ----
+   Every list and table can be ordered. State lives on the project so an
+   estimator's preferred order survives a reload. */
+const SORTS={
+  ann:[{v:'order',t:'Order drawn'},{v:'type',t:'Kind'},{v:'len',t:'Length'},{v:'tag',t:'Treatment tag'}],
+  treat:[{v:'order',t:'Order added'},{v:'tag',t:'Tag'},{v:'type',t:'TYPE'},{v:'zone',t:'Zone #'},
+         {v:'len',t:'Length'},{v:'room',t:'Room'},{v:'sheet',t:'Sheet'}],
+  lib:[{v:'order',t:'Order added'},{v:'name',t:'Name'},{v:'kind',t:'Kind'}],
+};
+function sortState(key){ P.sort=P.sort||{}; return P.sort[key]||{by:'order',dir:1}; }
+function setSort(key,by,dir){
+  P.sort=P.sort||{};
+  const cur=sortState(key);
+  P.sort[key]={by,dir:dir!==undefined?dir:(cur.by===by?-cur.dir:1)};
+  markDirty();
+}
+/* stable: fall back to the original index so equal keys keep their order */
+function sortBy(list,keyFn,st){
+  return list.map((x,i)=>({x,i})).sort((a,b)=>{
+    const ka=keyFn(a.x),kb=keyFn(b.x);
+    let c=0;
+    if(typeof ka==='number'&&typeof kb==='number') c=ka-kb;
+    else c=String(ka==null?'':ka).localeCompare(String(kb==null?'':kb),undefined,{numeric:true});
+    return c*st.dir||a.i-b.i;
+  }).map(o=>o.x);
+}
+function sortSelect(key,cls){
+  const st=sortState(key);
+  return '<select class="sortsel '+(cls||'')+'" data-sort="'+key+'">'
+    +SORTS[key].map(o=>'<option value="'+o.v+'"'+(o.v===st.by?' selected':'')+'>'+o.t+(o.v===st.by?(st.dir>0?' ↑':' ↓'):'')+'</option>').join('')
+    +'</select>';
+}
+function wireSortSelects(root){
+  $$('[data-sort]',root||document).forEach(el=>{
+    el.onchange=()=>{
+      const key=el.dataset.sort, st=sortState(key);
+      /* choosing the current field again flips direction */
+      setSort(key,el.value,el.value===st.by?-st.dir:1);
+      renderAnnList(); renderTreatments(); renderLib();
+    };
+  });
+}
+/* clickable table headers */
+function thSort(tableKey,col,label,cls){
+  const st=sortState(tableKey);
+  const on=st.by===col;
+  return '<th class="'+(cls||'')+' thsort'+(on?' on':'')+'" data-tsort="'+tableKey+'" data-col="'+col+'">'
+    +esc(label)+(on?(st.dir>0?' ↑':' ↓'):'')+'</th>';
+}
+function wireThSorts(){
+  $$('[data-tsort]').forEach(th=>{
+    th.onclick=()=>{ setSort(th.dataset.tsort,th.dataset.col); renderBom(); };
   });
 }
 
@@ -2150,8 +2389,18 @@ function renderSheets(){
 function renderAnnList(){
   renderLayers();
   const h=$('#annList'); h.innerHTML='';
-  const list=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page&&a.type!=='cal');
-  $('#cAnn').textContent=list.length; $('#annEmpty').style.display=list.length?'none':'';
+  const raw=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page&&a.type!=='cal');
+  const st=sortState('ann');
+  const key=a=>{
+    if(st.by==='type') return (a.type==='line'&&a.poly?'poly':a.type);
+    if(st.by==='len') return annLen(a)||0;
+    if(st.by==='tag'){ const t=a.treat&&P.treat.find(x=>x.id===a.treat); return t?tagOf(t):'\uffff'; }
+    return 0;
+  };
+  const list=st.by==='order'&&st.dir>0?raw:sortBy(raw,key,st);
+  $('#annSort').innerHTML=raw.length?sortSelect('ann'):'';
+  wireSortSelects($('#annSort'));
+  $('#cAnn').textContent=raw.length; $('#annEmpty').style.display=raw.length?'none':'';
   list.forEach(a=>{
     const t=a.treat&&P.treat.find(x=>x.id===a.treat);
     const segs=a.type==='line'?annSegs(a).length:0;
@@ -2286,7 +2535,19 @@ function renderTreatments(){
   const h=$('#treatList'); const open=$$('.card.on').map(c=>c.dataset.id);
   h.innerHTML='';
   const q=(($('#treatFind')||{}).value||'').trim();
-  const shown=P.treat.filter(t=>treatMatch(t,q));
+  const st=sortState('treat');
+  const key=t=>{
+    if(st.by==='tag') return tagOf(t);
+    if(st.by==='type') return t.type||'\uffff';
+    if(st.by==='zone') return t.zone||'\uffff';
+    if(st.by==='len') return lenOf(t)||0;
+    if(st.by==='room') return t.room||'\uffff';
+    if(st.by==='sheet') return ((P.docs.find(d=>d.id===t.docId)||{}).name||'\uffff')+' p'+(t.page||1);
+    return 0;
+  };
+  const matched=P.treat.filter(t=>treatMatch(t,q));
+  const shown=st.by==='order'&&st.dir>0?matched:sortBy(matched,key,st);
+  const ts=$('#treatSort'); if(ts){ ts.innerHTML=sortSelect('treat'); wireSortSelects(ts); }
   $('#cTreat').textContent=q?shown.length+'/'+P.treat.length:P.treat.length;
   $('#treatEmpty').style.display=P.treat.length?'none':'';
   const fh=$('#treatFindHint');
@@ -2469,18 +2730,29 @@ function outHtml(r,t){
      treatment, so re-measuring the markup no longer moves the cut. */
   let pick='';
   if(r.inc>0&&r.L>0){
-    /* A run only ever sits between two cut points, and "nearest" is always one of
-       them — so offer the two real choices and mark which one is nearest. */
-    const near=Math.abs(r.opts.near-r.opts.down)<1e-6?'down':'up';
-    const cand=[['Next shortest',r.opts.down],['Next longest',r.opts.up]];
+    /* Shortest, nearest and longest, each with feet and inches. Nearest always
+       coincides with one of the other two — it is called out so it is obvious
+       which way the rounding goes. */
+    const nearIsUp=Math.abs(r.opts.near-r.opts.up)<1e-6;
+    const cand=[
+      ['down','Next shortest',r.opts.down,false],
+      ['near','Nearest',r.opts.near,true],
+      ['up','Next longest',r.opts.up,false]];
     pick='<div class="pick"><span class="pl">Cut point — pick one to lock it for this run</span>'
-      +cand.map(([l,v],i)=>{
-        const isNear=(i===0?'down':'up')===near, on=Math.abs(r.cut-v)<1e-6;
-        return v>0?'<button class="btn sm'+(on?' pri':'')+'" data-cut="'+v.toFixed(4)+'">'
-          +esc(l)+(isNear?' · nearest':'')+' <b>'+esc(fmtRun(v))+'</b></button>':'';
+      +cand.map(([k,l,v,isNear])=>{
+        if(!(v>0)) return '';
+        const on=Math.abs(r.cut-v)<1e-6&&(!r.locked||k!=='near'||nearIsUp===(k==='up'));
+        const sub=k==='near'?(nearIsUp?'rounds up':'rounds down'):(k==='down'?'-'+fmtRun(r.L-v):'+'+fmtRun(v-r.L));
+        return '<button class="btn cutopt'+(Math.abs(r.cut-v)<1e-6?' pri':'')+'" data-cut="'+v.toFixed(4)+'" data-opt="'+k+'">'
+          +'<span class="cl">'+esc(l)+'</span>'
+          +'<span class="cv">'+esc((v/12).toFixed(2))+' ft</span>'
+          +'<span class="ci">'+esc(inchTxt(v))+' in</span>'
+          +'<span class="cd">'+esc(sub)+'</span></button>';
       }).join('')
-      +(r.locked?'<button class="btn sm" data-cut="0" title="Go back to following the measurement">Unlock</button>':'')
       +'</div>'
+      +'<div class="pick"><span class="pl">Measured '+esc(fmtLen(r.L))+'</span>'
+      +(r.locked?'<button class="btn sm" data-cut="0" title="Go back to following the measurement">Unlock</button>'
+                :'<span class="hint">Not locked — the cut follows the measurement.</span>')+'</div>'
       +(r.locked?'<div class="note ok"><span>🔒</span><span>Cut locked at '+esc(fmtLen(r.cut))
         +' — measured '+esc(fmtLen(r.L))+'. Re-measuring the markup will not change it.</span></div>':'');
   }
@@ -2547,20 +2819,27 @@ function libRow(txt,sub,onclick,onDel){
   return el;
 }
 function renderLib(){
+  const st=sortState('lib');
+  const order=list=>{
+    if(st.by==='order'&&st.dir>0) return list;
+    const key=x=>st.by==='name'?x.name:st.by==='kind'?(x.kind||x.stock!==undefined?'':'')||(x.kind||''):0;
+    return sortBy(list,key,st);
+  };
+  const ls=$('#libSort'); if(ls){ ls.innerHTML=sortSelect('lib'); wireSortSelects(ls); }
   const F=$('#fixList'); F.innerHTML=''; $('#cFix').textContent=P.fix.length;
   const kindLbl={tape:'Tape',fixture:'Fixture',neon:'Neon'};
-  P.fix.forEach(f=>F.appendChild(libRow(f.name,
+  order(P.fix).forEach(f=>F.appendChild(libRow(f.name,
     (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+f.wft+' W/ft · cuts in '+fmtRun(f.cut)
     +(f.kind==='fixture'?' fixed lengths':' increments')+' · feed max '+fmtRun(f.feed)
     +usedBy('fixId',f.id),
     ()=>editFix(f),()=>delLib('fixId',f,'LED product',P.fix,x=>{P.fix=x}))));
   const C=$('#chList'); C.innerHTML=''; $('#cCh').textContent=P.ch.length;
-  P.ch.forEach(c=>C.appendChild(libRow(c.name,
+  order(P.ch).forEach(c=>C.appendChild(libRow(c.name,
     (c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')+' · clips '+fmtLen(c.clip)+' o.c.'
     +usedBy('chId',c.id),
     ()=>editCh(c),()=>delLib('chId',c,'channel',P.ch,x=>{P.ch=x}))));
   const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
-  P.psu.forEach(p=>S.appendChild(libRow(p.name,
+  order(P.psu).forEach(p=>S.appendChild(libRow(p.name,
     p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')+usedBy('psuId',p.id),
     ()=>editPsu(p),()=>delLib('psuId',p,'power supply',P.psu,x=>{P.psu=x}))));
 }
@@ -2727,9 +3006,17 @@ function bomData(){
 function renderBom(){
   const c=$('#cutTbl');
   if(!P.treat.length){ c.innerHTML='<tr><td class="hint" style="padding:14px">Nothing measured yet.</td></tr>'; $('#bomTbl').innerHTML=''; return; }
-  let h='<tr><th>Tag</th><th>Type</th><th>Zone</th><th>Location</th><th>Product</th><th class="n">Runs</th><th class="n">Field</th><th class="n">Cut</th><th class="n">W</th><th class="n">Feeds</th></tr>';
+  let h='<tr>'+thSort('cut','tag','Tag')+thSort('cut','type','Type')+thSort('cut','zone','Zone')
+    +thSort('cut','room','Location')+thSort('cut','prod','Product')+thSort('cut','qty','Runs','n')
+    +thSort('cut','L','Field','n')+thSort('cut','cut','Cut','n')+thSort('cut','w','W','n')
+    +thSort('cut','feeds','Feeds','n')+'</tr>';
   let tl=0,tw=0,tf=0;
-  P.treat.forEach(t=>{
+  const cst=sortState('cut');
+  const ckey=t=>{ const r=calc(t);
+    return {tag:tagOf(t),type:t.type||'\uffff',zone:t.zone||'\uffff',room:t.room||t.name||'\uffff',
+      prod:r.f.name,qty:r.qty,L:r.L,cut:r.tot.cut,w:r.tot.watts,feeds:r.tot.feeds}[cst.by];
+  };
+  (cst.by==='order'?P.treat:sortBy(P.treat,ckey,cst)).forEach(t=>{
     const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts; tf+=r.tot.feeds;
     h+='<tr><td><span class="tag">'+esc(tagOf(t))+'</span></td>'
       +'<td>'+(t.type?'<span class="typ">'+esc(t.type)+'</span>':'<span class="hint">—</span>')+'</td>'
@@ -2743,15 +3030,23 @@ function renderBom(){
   h+='<tr class="tot"><td colspan="6">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
   c.innerHTML=h;
   const rows=bomData();
-  $('#bomTbl').innerHTML='<tr><th>Cat.</th><th>Item</th><th class="n">Qty</th><th>Unit</th></tr>'
-    +rows.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
+  const bst=sortState('bom');
+  const bord=bst.by==='order'?rows:sortBy(rows,r=>({cat:r[0],item:r[1],qty:parseFloat(r[3])||0,unit:r[2]}[bst.by]),bst);
+  $('#bomTbl').innerHTML='<tr>'+thSort('bom','cat','Cat.')+thSort('bom','item','Item')
+    +thSort('bom','qty','Qty','n')+thSort('bom','unit','Unit')+'</tr>'
+    +bord.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
   renderRollups(); renderPieces();
+  wireThSorts();
 }
 function rollTable(el,head,rows){
   if(!rows.length){ el.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; return; }
-  let h='<tr><th>'+head+'</th><th class="n">Runs</th><th class="n">LED</th><th class="n">Channel</th><th class="n">W</th><th class="n">Feeds</th><th class="n">Supplies</th></tr>';
+  const key=el.id==='zoneTbl'?'roll_zone':'roll_sheet';
+  const st=sortState(key);
+  let h='<tr>'+thSort(key,'label',head)+thSort(key,'runs','Runs','n')+thSort(key,'led','LED','n')
+    +thSort(key,'ch','Channel','n')+thSort(key,'watts','W','n')+thSort(key,'feeds','Feeds','n')
+    +thSort(key,'psu','Supplies','n')+'</tr>';
   const tot={runs:0,led:0,ch:0,watts:0,feeds:0,psu:0};
-  rows.forEach(v=>{
+  (st.by==='order'?rows:sortBy(rows,v=>v[st.by],st)).forEach(v=>{
     ['runs','led','ch','watts','feeds','psu'].forEach(k=>tot[k]+=v[k]);
     h+='<tr><td>'+esc(v.label)+'</td><td class="n">'+v.runs+'</td><td class="n">'+fmtRun(v.led)
       +'</td><td class="n">'+fmtRun(v.ch)+'</td><td class="n">'+v.watts.toFixed(0)
@@ -2772,8 +3067,13 @@ function renderPieces(){
   const pt=$('#pieceTbl');
   if(!pc.length){ pt.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; }
   else{
-    pt.innerHTML='<tr><th>Tag</th><th>Zone</th><th class="n">Run</th><th>Item</th><th class="n">Cut to</th><th>Note</th></tr>'
-      +pc.map(r=>'<tr><td><span class="tag">'+esc(r.tag)+'</span></td><td>'+esc(r.zone||'—')
+    const pst=sortState('piece');
+    const pord=pst.by==='order'?pc:sortBy(pc,r=>({tag:r.tag,zone:r.zone||'\uffff',run:r.run,
+      item:r.item,len:r.len,note:r.note}[pst.by]),pst);
+    pt.innerHTML='<tr>'+thSort('piece','tag','Tag')+thSort('piece','zone','Zone')
+      +thSort('piece','run','Run','n')+thSort('piece','item','Item')
+      +thSort('piece','len','Cut to','n')+thSort('piece','note','Note')+'</tr>'
+      +pord.map(r=>'<tr><td><span class="tag">'+esc(r.tag)+'</span></td><td>'+esc(r.zone||'—')
         +'</td><td class="n">'+r.run+'</td><td>'+esc(r.item)+'<div class="hint">'+esc(r.kind)+'</div></td>'
         +'<td class="n" style="color:var(--amber)">'+esc(fmtLen(r.len))+'</td>'
         +'<td class="hint">'+esc(r.note)+(r.locked?' · locked':'')+'</td></tr>').join('')
@@ -2826,7 +3126,8 @@ function overlaySvgFor(pageObj,doc,pg,scale){
   setDrawScale(clamp(vp.width/1100,1,5));
   let body='';
   try{
-    for(const a of P.ann.filter(x=>x.doc===doc&&x.page===pg&&!x.hidden)) body+=drawAnn(a,false);
+    body=withChips(()=>P.ann.filter(x=>x.doc===doc&&x.page===pg&&annVisible(x))
+      .map(a=>drawAnn(a,false)).join(''));
   }finally{ setDrawScale(1); Object.assign(V,keep); invalidateAnns(); }
   return '<svg xmlns="http://www.w3.org/2000/svg" width="'+vp.width+'" height="'+vp.height
     +'" viewBox="0 0 '+vp.width+' '+vp.height+'">'+body+'</svg>';
@@ -3112,6 +3413,18 @@ function applyTheme(){
 }
 $('#btnTheme').onclick=()=>{ P.theme=P.theme==='light'?'dark':'light'; applyTheme(); markDirty(); };
 $('#calNagGo').onclick=()=>{ setTool('cal'); toast('Drag along a dimension you can read on the sheet'); };
+function syncSmartBtn(){
+  const b=$('#btnSmart'); if(!b) return;
+  const on=P.smart!==false;
+  b.classList.toggle('pri',on);
+  b.textContent=on?'⊞ Content-aware labels: on':'⊞ Content-aware labels: off';
+  b.title=on?'Labels step aside so they do not overlap. Drag any label to place it yourself.'
+           :'Labels sit where the measurement puts them, overlapping if they must.';
+}
+$('#btnSmart').onclick=()=>{
+  P.smart=P.smart===false; syncSmartBtn(); drawOverlay(); markDirty();
+  toast(P.smart!==false?'Labels will move out of each other\u2019s way':'Labels left where they land');
+};
 $('#codeMode').innerHTML=CODE_MODES.map(m=>'<option value="'+m.v+'">'+m.t+'</option>').join('');
 $('#codeMode').onchange=e=>{ P.code=e.target.value; renderCodeKey(); drawOverlay(); renderAnnList(); markDirty(); };
 $('#treatFind').oninput=()=>renderTreatments();
@@ -3216,6 +3529,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
+  addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
   render(){boot()}};
