@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.21.0**
+**Version 1.21.1**
 
 ## What it does
 
@@ -75,6 +75,10 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 - Tap targets are sized for a thumb, form fields are 16 px so iOS never zooms the
   page when you tap into one, and the titleblock clears the clock and battery when
   the app is installed to the home screen.
+- **The version is in the titleblock**, next to the name, and tapping it opens
+  About. An installed copy opens from its own cache, so it also checks what is on
+  the server: the chip turns amber with an arrow when a newer build is waiting,
+  and the answer is always to close the app fully and reopen it.
 
 ## Reading the drawings
 
@@ -250,5 +254,6 @@ than counted — `⌘Y`, or `⌥`-click the undo button.
 ## Versioning
 
 `APP_VER` at the top of the script is the application version, shown in the
-titleblock and recorded in every saved project. `FILE_VER` is the project-file
+titleblock on every screen size — tap it for About — and recorded in every saved
+project. `FILE_VER` is the project-file
 schema, and only changes when the saved shape changes incompatibly.

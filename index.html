@@ -59,7 +59,12 @@ header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1)
 .ckey{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--dim);
   border:1px solid var(--line);border-radius:2px;padding:1px 5px 1px 3px}
 .ckey i{width:9px;height:9px;border-radius:1px;display:inline-block}
-.ver{font-family:var(--mono);font-size:9.5px;color:var(--faint);border:1px solid var(--line2);border-radius:2px;padding:0 3px;vertical-align:2px}
+.ver{font-family:var(--mono);font-size:9.5px;color:var(--faint);border:1px solid var(--line2);border-radius:2px;padding:0 3px;vertical-align:2px;cursor:pointer;background:none}
+.ver:hover{color:var(--dim);border-color:var(--faint)}
+/* A newer build is on the server; this copy is running from its cache. The id
+   selector is deliberate: `.tb .mark span` sets the faint colour and would
+   otherwise out-specify a class here. */
+#verTag.upd,.ver.upd{color:var(--amber);border-color:var(--amber)}
 .tb .mark span{font-size:9px;letter-spacing:.16em;color:var(--faint);text-transform:uppercase;line-height:1.1}
 .glyph{width:22px;height:22px;flex:none}
 .cell{padding:7px 14px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;min-width:0}
@@ -309,8 +314,11 @@ input.up{text-transform:uppercase}
   body.railL .mobtog#togL,body.railR .mobtog#togR{background:var(--amber);border-color:var(--amber);color:#20170A}
   /* the header carries the sheet and the actions; the project fields live in
      Project and in Settings, where there is room for them */
-  .tb .mark span{display:none}
+  /* the tagline goes, the version stays — it is the first thing you check when
+     an installed copy might be serving an old build from its cache */
+  .tb .mark span:not(.ver){display:none}
   .tb .mark{padding:0 10px}
+  .tb .mark .ver{font-size:11px;padding:2px 5px}
   .cell.opt{display:none}
   header.tb{overflow-x:auto}
   /* zoom, fit and the page arrows are needed constantly, so they leave the
@@ -665,7 +673,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.21.0';
+const APP_VER='1.21.1';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -706,10 +714,24 @@ async function checkForUpdate(){
     if(!r.ok) return null;
     const t=await r.text();
     const m=/const APP_VER='([^']+)'/.exec(t);
-    if(!m||m[1]===APP_VER) return null;
+    UPDATE.checked=true;
+    if(!m||m[1]===APP_VER){ UPDATE.latest=null; syncVerTag(); return null; }
+    UPDATE.latest=m[1];
+    syncVerTag();
     toast('Version '+m[1]+' is available — close and reopen LineWork to load it');
     return m[1];
   }catch(e){ return null; }
+}
+const UPDATE={checked:false,latest:null};
+function syncVerTag(){
+  const el=$('#verTag'); if(!el) return;
+  const newer=UPDATE.latest;
+  el.classList.toggle('upd',!!newer);
+  el.textContent='v'+APP_VER+(newer?' →':'');
+  el.title=newer
+    ? 'Running '+APP_VER+' from this device\u2019s cache — '+newer+' is on the server. Close and reopen LineWork to load it.'
+    : 'Linework '+APP_VER+'  ·  build '+APP_BUILD+'  ·  project file schema v'+FILE_VER
+      +(UPDATE.checked?'  ·  up to date':'')+'  —  tap for details';
 }
 
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -6134,8 +6156,10 @@ document.addEventListener('keydown',e=>{
   if(k==='arrowright') $('#pgNext').click(); if(k==='arrowleft') $('#pgPrev').click();
 });
 
-$('#verTag').textContent='v'+APP_VER;
-$('#verTag').title='Linework '+APP_VER+'  ·  build '+APP_BUILD+'  ·  project file schema v'+FILE_VER;
+/* the version is a button: it opens About, which says what is running, what the
+   project-file schema is, and whether a newer build is waiting */
+$('#verTag').onclick=()=>{ setTab='about'; openSettings(); };
+syncVerTag();
 const BLANK_H2=$('#blank').querySelector('h2').textContent;
 const BLANK_P=$('#blank').querySelector('p').textContent;
 function boot(keepDoc){
@@ -6287,6 +6311,12 @@ function settingsHtml(){
     +'</div>';
   return '<div class="setgrp"><h4>Linework</h4>'
     +setRow('Version',APP_BUILD+' build','<span class="val">'+APP_VER+'</span>')
+    +setRow('Latest available',UPDATE.latest
+        ? 'Close and reopen LineWork to load it — an installed copy opens from its cache.'
+        : (UPDATE.checked?'This is the current build.':'Not checked yet.'),
+      '<span class="val" style="'+(UPDATE.latest?'color:var(--amber)':'')+'">'
+      +(UPDATE.latest?UPDATE.latest:(UPDATE.checked?'up to date':'—'))+'</span>'
+      +' <button class="btn sm" id="setUpd">Check now</button>')
     +setRow('Project file schema','Older files load and are brought forward.','<span class="val">v'+FILE_VER+'</span>')
     +setRow('PDF engine',PDF_OK?'Vendored, works offline':'Not loaded','<span class="val">'+(PDF_OK?'pdf.js':'missing')+'</span>')
     +setRow('Offline','Installed copies open without a network.',
@@ -6306,7 +6336,14 @@ function renderSettings(){
     const cl=$('#setPdfClear');
     if(cl) cl.onclick=async()=>{ await pdfForget(); renderSettings(); };
   },0);
-  setTimeout(()=>{ const hb=$('#setHist'); if(hb) hb.onclick=showHistory; },0);
+  setTimeout(()=>{
+    const hb=$('#setHist'); if(hb) hb.onclick=showHistory;
+    const ub=$('#setUpd');
+    if(ub) ub.onclick=async()=>{ ub.textContent='Checking…';
+      const v=await checkForUpdate();
+      if(!v&&!UPDATE.checked) toast('Could not reach the server to check');
+      renderSettings(); };
+  },0);
   $('#setNav').innerHTML=SET_TABS.map(t=>'<button data-tab="'+t.k+'"'+(t.k===setTab?' class="on"':'')+'>'+esc(t.t)+'</button>').join('');
   $$('#setNav button').forEach(b=>b.onclick=()=>{ setTab=b.dataset.tab; renderSettings(); });
   const body=$('#setBody');
@@ -6406,7 +6443,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
   setMulti,toggleMulti,multiAnns,inMulti,alignMulti,distributeMulti,annBox,shiftAnn,aligns:ALIGNS,
   narrowUI,railOpen,setRail,closeRails,startLongPress,cancelLongPress,syncMultiBtn,syncFingerBtn,
-  probeInsets,checkForUpdate,
+  probeInsets,checkForUpdate,syncVerTag,update:UPDATE,
   approveTreat,unapproveTreat,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
