@@ -383,6 +383,8 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="line" title="Dimension / linear run (L)"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg></button>
     <button class="tool" data-tool="arc" title="Arc length — click start, a point along the curve, then the end (A)"><svg viewBox="0 0 24 24"><path d="M3 19a16 16 0 0118 0"/><circle cx="3" cy="19" r="1.9"/><circle cx="12" cy="11.6" r="1.9"/><circle cx="21" cy="19" r="1.9"/></svg></button>
     <button class="tool" data-tool="poly" title="Poly length — click each corner, per-segment lengths (G)"><svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg></button>
+    <button class="tool" data-tool="area" title="Region — trace a room for its area, perimeter and cove run (R)"><svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg></button>
+    <button class="tool" data-tool="count" title="Count — stamp and tally a symbol (M)"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg></button>
     <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
     <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
     <button class="tool" data-tool="erase" title="Erase markups (E)"><svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg></button>
@@ -540,7 +542,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.14.0';
+const APP_VER='1.15.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -761,6 +763,14 @@ function applyProject(d){
   P.seq=Math.max(1,+P.seq||1,hi+1); P.waste=+P.waste||0; P.load=+P.load||80;
   if(typeof d.scrollZoom!=='boolean') P.scrollZoom=pref;
   P.chipScale=clamp(+P.chipScale||1,.5,3);
+  P.areaOff=Math.max(0,+P.areaOff||0);
+  /* regions and counts arrived in 1.15 — coerce anything hand-edited */
+  P.ann.forEach(a=>{
+    if(a.type==='area'){ a.off=Math.max(0,+a.off||0); if(!Array.isArray(a.pts)) a.pts=[]; }
+    if(a.type==='count'){ a.grp=String(a.grp||'COUNT').toUpperCase(); a.sym=String(a.sym||'●').slice(0,2); }
+  });
+  P.ann=P.ann.filter(a=>a&&Array.isArray(a.pts)&&a.pts.length&&
+    !(a.type==='area'&&a.pts.length<3));
   P.panels=Object.assign({left:true,right:true,swap:false},P.panels);
   if(typeof P.width==='number') V.width=clamp(P.width,.5,12);
   if(typeof P.fingerDraws==='boolean') V.fingerDraws=P.fingerDraws;
@@ -1155,13 +1165,99 @@ function arcPts(a,n){
 }
 /* a closed poly measures the run back to its first vertex as well */
 const canClose=a=>!!a&&a.type==='line'&&!a.free&&a.pts.length>2;
+const isClosedType=a=>!!a&&(a.type==='area'||a.type==='cloud');
 function annPts(a){
   if(a.type==='arc') return arcPts(a);
+  if(isClosedType(a)) return a.pts.length>2?a.pts.concat([a.pts[0]]):a.pts;
   return (a.closed&&canClose(a))? a.pts.concat([a.pts[0]]) : a.pts;
+}
+/* ---- closed regions ----
+   A room traced as a region gives three numbers that matter: its area, its
+   perimeter, and the run of cove that sits a fixed distance in from the wall.
+   Offsetting a corner inward shortens each adjoining edge by d/tan(θ/2), which
+   is what makes the third number more than perimeter-minus-a-guess. */
+function polyMetrics(pts,k,offIn){
+  const n=pts.length;
+  if(n<3||!k) return null;
+  let a2=0, per=0;
+  for(let i=0;i<n;i++){
+    const p=pts[i], q=pts[(i+1)%n];
+    a2+=p[0]*q[1]-q[0]*p[1];
+    per+=ptLen(p,q);
+  }
+  const area=Math.abs(a2)/2*k*k;              /* square inches */
+  const perim=per*k;
+  const d=Math.max(0,+offIn||0);
+  let cove=perim;
+  if(d>0){
+    let cut=0, ok=true;
+    for(let i=0;i<n;i++){
+      const prev=pts[(i-1+n)%n], cur=pts[i], next=pts[(i+1)%n];
+      const v1=[prev[0]-cur[0],prev[1]-cur[1]], v2=[next[0]-cur[0],next[1]-cur[1]];
+      const m1=Math.hypot(v1[0],v1[1]), m2=Math.hypot(v2[0],v2[1]);
+      if(!m1||!m2){ ok=false; break; }
+      let th=Math.acos(clamp((v1[0]*v2[0]+v1[1]*v2[1])/(m1*m2),-1,1));
+      if(th<1e-3||Math.abs(Math.PI-th)<1e-6) continue;    /* straight through */
+      cut+=2*d/Math.tan(th/2);
+    }
+    cove=ok?Math.max(0,perim-cut):perim;
+  }
+  return {area,perim,cove,off:d,n};
+}
+const areaMetrics=a=>polyMetrics(a.pts,inPerPt(),a.off||0);
+/* +1 when the ring is wound counter-clockwise, where the right-hand normal
+   points outward — which way "inward" is depends on it */
+function ringDir(pts){
+  let s=0;
+  for(let i=0;i<pts.length;i++){ const p=pts[i],q=pts[(i+1)%pts.length]; s+=p[0]*q[1]-q[0]*p[1]; }
+  return s>=0?1:-1;
+}
+/* square inches -> the unit the job is quoted in */
+function fmtArea(sqIn){
+  if(sqIn==null||!isFinite(sqIn)) return '—';
+  return P.units==='metric' ? (sqIn*MM*MM/1e6).toFixed(2)+' m²' : (sqIn/144).toFixed(1)+' sq ft';
+}
+/* Parallel run: offset a traced path sideways. A double-row cove is drawn once
+   and offset, rather than traced twice and never quite matching. */
+function offsetPts(pts,dPt,closed){
+  const n=pts.length;
+  if(n<2||!isFinite(dPt)) return null;
+  const segs=[];
+  const last=closed?n:n-1;
+  for(let i=0;i<last;i++){
+    const a=pts[i], b=pts[(i+1)%n];
+    const dx=b[0]-a[0], dy=b[1]-a[1], m=Math.hypot(dx,dy);
+    if(m<1e-9) continue;
+    const nx=dy/m*dPt, ny=-dx/m*dPt;         /* right-hand normal */
+    segs.push({a:[a[0]+nx,a[1]+ny],b:[b[0]+nx,b[1]+ny],d:[dx/m,dy/m]});
+  }
+  if(!segs.length) return null;
+  const meet=(s1,s2)=>{
+    const den=s1.d[0]*s2.d[1]-s1.d[1]*s2.d[0];
+    if(Math.abs(den)<1e-6) return null;       /* near-parallel: no usable miter */
+    const t=((s2.a[0]-s1.a[0])*s2.d[1]-(s2.a[1]-s1.a[1])*s2.d[0])/den;
+    const p=[s1.a[0]+s1.d[0]*t,s1.a[1]+s1.d[1]*t];
+    /* a hairpin turn miters off to infinity — fall back to the blunt join */
+    const lim=Math.abs(dPt)*8+1;
+    return (Math.hypot(p[0]-s1.b[0],p[1]-s1.b[1])>lim)?null:p;
+  };
+  const out=[];
+  if(!closed) out.push(segs[0].a.slice());
+  for(let i=0;i<segs.length-(closed?0:1);i++){
+    const s1=segs[i], s2=segs[(i+1)%segs.length];
+    const p=meet(s1,s2)||[(s1.b[0]+s2.a[0])/2,(s1.b[1]+s2.a[1])/2];
+    out.push(p);
+  }
+  if(!closed) out.push(segs[segs.length-1].b.slice());
+  else out.unshift(out.pop());                /* the first vertex is the last join */
+  return out;
 }
 function annLen(a){
   const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
   if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
+  /* for a region the length that matters downstream is the cove run, not the
+     perimeter — that is what a treatment linked to it should order */
+  if(a.type==='area'){ const m=areaMetrics(a); return m?m.cove:null; }
   const pts=annPts(a); let t=0;
   for(let i=1;i<pts.length;i++) t+=ptLen(pts[i-1],pts[i]);
   return t*k;
@@ -1409,6 +1505,48 @@ function drawAnn(a,selected,isDraft){
         g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col,null,a,'sub');
     }
   }
+  if(a.type==='area'){
+    const ring=annPts(a).map(sp);
+    g+='<polygon points="'+ring.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
+      +'" fill="'+col+'" fill-opacity=".10" stroke="'+col+'" stroke-width="'+W.toFixed(2)
+      +'" stroke-linejoin="round"/>';
+    const m=areaMetrics(a);
+    /* the cove line the numbers describe, drawn where it will actually sit */
+    if(m&&m.off>0&&!isDraft){
+      const ins=offsetPts(a.pts,-(m.off/(inPerPt()||1))*ringDir(a.pts),true);
+      if(ins&&ins.length>2){
+        const ip=ins.concat([ins[0]]).map(sp);
+        g+='<polyline points="'+ip.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
+          +'" fill="none" stroke="'+col+'" stroke-width="'+(W*.8).toFixed(2)
+          +'" stroke-dasharray="6 4" stroke-opacity=".8"/>';
+      }
+    }
+    if(!isDraft&&P.segLabels!==false&&ring.length<=13){
+      annSegs(a).forEach((sg,si)=>{
+        const A=sp(sg.a),B=sp(sg.b), px=Math.hypot(B[0]-A[0],B[1]-A[1]);
+        const lbl=sg.len==null?'—':fmtRun(sg.len);
+        if(px<chipW(lbl)*.9) return;
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si);
+      });
+    }
+    if(m){
+      const xs=ring.map(p=>p[0]), ys=ring.map(p=>p[1]);
+      const cx=(Math.min(...xs)+Math.max(...xs))/2, cy=(Math.min(...ys)+Math.max(...ys))/2;
+      const tg=a.treat&&P.treat.find(t=>t.id===a.treat);
+      g+=chip(cx,cy-CHIP_H*.6,(tg?tagOf(tg)+'  ':'')+fmtArea(m.area),tg?'#F2A93B':col,null,a,'total');
+      g+=chip(cx,cy+CHIP_H*.6,'P '+fmtRun(m.perim)+(m.off>0?'  ·  cove '+fmtRun(m.cove):''),col,null,a,'sub');
+    }
+  }
+  if(a.type==='count'){
+    const [x,y]=pts[0], R=8*W_MUL;
+    g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+R.toFixed(1)+'" fill="'+OVL
+      +'" fill-opacity=".9" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>'
+      +'<text x="'+x.toFixed(1)+'" y="'+(y+R*.42).toFixed(1)+'" fill="'+col
+      +'" font-family="Helvetica Neue,Helvetica,Arial,sans-serif" font-size="'+(R*1.15).toFixed(1)
+      +'" text-anchor="middle">'+esc(a.sym||'●')+'</text>';
+    if(P.cntLabels!==false)
+      g+=chip(x,y-R-CHIP_H*.6,(a.grp||'COUNT')+' '+countIndex(a),col,null,a,'total');
+  }
   if(a.type==='ink'){
     g+=inkPath(pts,a.pts,(a.w||2)*V.zoom*1.5,col);
   }
@@ -1477,6 +1615,14 @@ function inkPath(pts,src,base,col){
 }
 
 /* ---- hit testing ---- */
+function ptInPoly(p,ring){
+  let inside=false;
+  for(let i=0,j=ring.length-1;i<ring.length;j=i++){
+    const a=ring[i],b=ring[j];
+    if((a[1]>p[1])!==(b[1]>p[1]) && p[0]<(b[0]-a[0])*(p[1]-a[1])/((b[1]-a[1])||1e-9)+a[0]) inside=!inside;
+  }
+  return inside;
+}
 function distSeg(p,a,b){
   const dx=b[0]-a[0],dy=b[1]-a[1],L2=dx*dx+dy*dy;
   let t=L2?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2:0; t=clamp(t,0,1);
@@ -1497,8 +1643,10 @@ function hitTest(sx,sy,tol){
   const list=pageAnns().filter(annVisible).slice().reverse();
   for(const a of list){
     const pts=annPts(a).map(sp);
-    if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'){
+    if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'||a.type==='area'||a.type==='cloud'){
       for(let i=1;i<pts.length;i++) if(distSeg([sx,sy],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
+      /* a region is a surface, not just its edge — clicking inside it selects it */
+      if((a.type==='area'||a.type==='cloud')&&pts.length>2&&ptInPoly([sx,sy],pts)) return a;
     }else if(a.type==='box'||a.type==='tbox'){
       const x1=Math.min(pts[0][0],pts[1][0]),x2=Math.max(pts[0][0],pts[1][0]);
       const y1=Math.min(pts[0][1],pts[1][1]),y2=Math.max(pts[0][1],pts[1][1]);
@@ -1577,7 +1725,8 @@ function hitHandle(sx,sy,tol){
 /* ---- adding and removing vertices ----
    A traced run is never right first time: you need to break a segment where the
    cove turns, or drop a point you over-clicked. */
-const editablePts=a=>a&&(a.type==='line'||a.type==='box'||a.type==='tbox')&&!a.free;
+const editablePts=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='box'||a.type==='tbox')&&!a.free;
+const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud');
 /* which segment of a is nearest this stage-space point, and how far away */
 function nearestSeg(a,sx,sy){
   const pts=annPts(a).map(sp);
@@ -1589,14 +1738,14 @@ function nearestSeg(a,sx,sy){
   return {i:best,d:bd};
 }
 function addPointTo(a,pdfPt,sx,sy){
-  if(!editablePts(a)||a.type!=='line'){ toast('Points can only be added to a dimension or poly run'); return false; }
+  if(!vertexType(a)||a.free){ toast('Points can only be added to a run or a region'); return false; }
   const seg=nearestSeg(a,sx,sy);
   if(seg.i<1){ toast('Click on the run where the point should go'); return false; }
   snap();
   /* on a closed loop the last segment runs back to the first point, so clamp */
   const at=Math.min(seg.i,a.pts.length);
   a.pts.splice(at,0,snapped(pdfPt));
-  if(!a.poly&&a.pts.length>2) a.poly=true;         /* it is a poly run now */
+  if(a.type==='line'&&!a.poly&&a.pts.length>2) a.poly=true;         /* it is a poly run now */
   invalidateAnns();
   V.sel=a.id;
   drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
@@ -1604,11 +1753,13 @@ function addPointTo(a,pdfPt,sx,sy){
   return true;
 }
 function delPointFrom(a,i){
-  if(!editablePts(a)||a.type!=='line'){ toast('Points can only be removed from a dimension or poly run'); return false; }
-  if(a.pts.length<=2){ toast('A run needs at least two points — delete the markup instead'); return false; }
+  if(!vertexType(a)||a.free){ toast('Points can only be removed from a run or a region'); return false; }
+  const floor=a.type==='line'?2:3;               /* a region stops being one below three */
+  if(a.pts.length<=floor){ toast(a.type==='line'?'A run needs at least two points — delete the markup instead'
+    :'A region needs at least three corners — delete the markup instead'); return false; }
   snap();
   a.pts.splice(i,1);
-  if(a.pts.length<3){ delete a.closed; if(a.poly) delete a.poly; }
+  if(a.type==='line'&&a.pts.length<3){ delete a.closed; if(a.poly) delete a.poly; }
   invalidateAnns();
   drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
   toast('Point removed — '+a.pts.length+' points');
@@ -1671,7 +1822,9 @@ function ortho(a,b,on){ if(!on) return b; const dx=b[0]-a[0],dy=b[1]-a[1];
 
 /* the dimension and poly-length tools share one annotation type; poly is tap-only */
 const isLineTool=t=>t==='line'||t==='poly';
-const isMeasureTool=t=>isLineTool(t)||t==='arc';
+const isMeasureTool=t=>isLineTool(t)||t==='arc'||t==='area';
+/* tools that build a vertex-by-vertex draft */
+const isTapTool=t=>t==='poly'||t==='area'||t==='cloud';
 function setTool(t){
   V.tool=t; $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   viewport.classList.toggle('pan',t==='pan'); viewport.classList.toggle('draw',t!=='pan');
@@ -1679,6 +1832,8 @@ function setTool(t){
     line:'Dimension — drag to trace a curved run, or tap each corner',
     poly:'Poly length — click each corner, ⏎ or double-click to finish, or close the loop',
     arc:'Arc length — click the start, a point along the curve, then the end',
+    area:'Region — click each corner of the room, ⏎ to close it',
+    count:'Count — click to stamp one, and it tallies into the BOM',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
     text:'Text — tap to place a note on the sheet',
     tbox:'Text box — drag a box, the text wraps inside it',
@@ -1794,7 +1949,7 @@ stage.addEventListener('pointermove',e=>{
     if((V.arcN||1)<2) V.draft.pts[2]=p;
     drawOverlay(); liveLen(V.draft); return;
   }
-  if(V.draft&&!press&&(V.draft.type==='line'||V.draft.type==='cal')){   /* hover preview between taps */
+  if(V.draft&&!press&&(V.draft.type==='line'||V.draft.type==='cal'||V.draft.type==='area')){   /* hover preview between taps */
     const n=V.draft.pts.length;
     V.draft.pts[n-1]=snapAt(p)||ortho(V.draft.pts[n-2],p,e.shiftKey);
     drawOverlay(); liveLen(V.draft); return; }
@@ -1821,6 +1976,8 @@ function endPointer(e){
   if(tool==='ink'){ commitInk(); return; }
   if(tool==='erase') return;
   if(tool==='box'||tool==='tbox'){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
+  if(tool==='count'){ if(!pr.moved) placeCount(p); return; }
+  if(tool==='area'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
   if(tool==='link'){ if(!pr.moved) placeLink(p); return; }
   if(tool==='text'){ if(!pr.moved) placeText(p); return; }
@@ -1841,7 +1998,7 @@ stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); if(edit) end
 stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot').classList.remove('show'); });
 
 function tapVertex(p,e){
-  if(isLineTool(V.tool)&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
+  if((isLineTool(V.tool)||V.tool==='area')&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
   const raw=p; p=snapped(p);
   /* If snapping would land on the vertex just placed, keep the raw click: the
      duplicate would be filtered out on commit and the point would vanish. */
@@ -1849,8 +2006,9 @@ function tapVertex(p,e){
     const prev=V.draft.pts[V.draft.pts.length-2];
     if(prev&&ptLen(prev,p)<0.6&&ptLen(prev,raw)>=0.6){ p=raw; V.snapHit=null; }
   }
-  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
-    color:V.tool==='cal'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined};
+  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
+    color:V.tool==='cal'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined,
+    off:V.tool==='area'?(+P.areaOff||0):undefined};
   else{
     const a=V.draft.pts[V.draft.pts.length-2];
     V.draft.pts[V.draft.pts.length-1]=ortho(a,p,e.shiftKey);
@@ -1886,13 +2044,13 @@ function tapArc(p){
   drawOverlay(); liveLen(V.draft);
 }
 stage.addEventListener('dblclick',e=>{
-  if(V.draft&&V.draft.type==='line'){ e.preventDefault(); finishDraft(); return; }
+  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area')){ e.preventDefault(); finishDraft(); return; }
   if(V.tool==='pan'){
     const sc=toS(e), h=hitTest(sc[0],sc[1],9);
     /* double-click any text-bearing markup to edit it in place */
     if(h&&/^(text|tbox|note|box|link)$/.test(h.type)){ e.preventDefault(); editAnnText(h); return; }
     /* double-click a run to break it at that point */
-    if(h&&h.type==='line'&&editablePts(h)){ e.preventDefault(); addPointTo(h,toPt(e),sc[0],sc[1]); }
+    if(h&&vertexType(h)&&!h.free){ e.preventDefault(); addPointTo(h,toPt(e),sc[0],sc[1]); }
   }
 });
 /* the shared text editor for every markup that carries words */
@@ -2030,7 +2188,7 @@ stage.addEventListener('contextmenu',e=>{
   e.preventDefault();
   if(pan){ pan=null; viewport.classList.remove('drag'); }
   if(suppressCtx){ suppressCtx=false; return; }
-  if(V.draft&&V.draft.type==='line'&&V.draft.pts.length>2){ finishDraft(); return; }
+  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area')&&V.draft.pts.length>2){ finishDraft(); return; }
   if(V.draft){ V.draft=null; drawOverlay(); syncDrawbar(); return; }
   const sc=toS(e); ctxPt=toPt(e);
   const h=hitTest(sc[0],sc[1],10);
@@ -2038,22 +2196,73 @@ stage.addEventListener('contextmenu',e=>{
   else { V.sel=null; showInspector(null); drawOverlay(); }
   showCtx(e.clientX,e.clientY,h?ctxForAnn(h):ctxForSheet());
 });
+/* ---- a parallel run ----
+   A double-row cove is one traced path and an offset, not two traces that never
+   quite match. Works on runs and on regions. */
+const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',
+  cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
+  area:'Region',count:'Count',cloud:'Revision cloud'};
+async function offsetAnn(a){
+  if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
+  const k=inPerPt();
+  if(!k){ toast('Set the scale first'); return; }
+  const closed=isClosedType(a)||!!a.closed;
+  const r=await dlg({title:'Parallel run',fields:[
+    {k:'d',label:'Offset distance',val:fmtLen(6),ph:unitHint(),hint:'Centre to centre of the two runs.'},
+    {k:'side',type:'select',label:'Which side',opts:closed
+      ? [{v:'in',t:'Inside the region'},{v:'out',t:'Outside the region'}]
+      : [{v:'right',t:'Right of the direction drawn'},{v:'left',t:'Left of the direction drawn'}],
+      val:closed?'in':'right'},
+    {k:'n',type:'num',label:'How many',val:1,step:1,hint:'More than one gives evenly spaced rows.'},
+    {k:'treat',type:'check',cap:'Also copy the treatment, so it is estimated too',val:!!a.treat}
+  ],ok:'Create',note:'The new run is a markup of its own — measure, edit and delete it independently.'});
+  if(!r) return;
+  const dIn=parseLen(r.d);
+  if(!isFinite(dIn)||dIn<=0){ toast('Could not read that distance'); return; }
+  const count=clamp(Math.round(+r.n||1),1,12);
+  const sign=closed?(r.side==='in'?-ringDir(a.pts):ringDir(a.pts)):(r.side==='left'?-1:1);
+  snap();
+  let made=0, lastId=null;
+  for(let i=1;i<=count;i++){
+    const pts=offsetPts(a.pts,sign*(dIn/k)*i,closed);
+    if(!pts){ continue; }
+    const c=clone(a);
+    c.id=uid('a_'); c.pts=pts; delete c.treat; delete c.lblOffs; delete c.lblOff;
+    P.ann.push(c); lastId=c.id; made++;
+    if(r.treat){
+      const src=a.treat&&P.treat.find(x=>x.id===a.treat);
+      const t2=newTreat(c.id);
+      c.treat=t2.id; t2.docId=c.doc; t2.page=c.page;
+      if(src) Object.assign(t2,{type:src.type,zone:src.zone,name:src.name+' — row '+(i+1),room:src.room,
+        qty:src.qty,fixId:src.fixId,chId:src.chId,psuId:src.psuId,round:src.round,clip:src.clip});
+    }
+  }
+  invalidateAnns();
+  if(!made){ undo(); toast('That offset folds the path back on itself — try a smaller distance'); return; }
+  V.sel=lastId;
+  drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  const s=P.ann.find(x=>x.id===lastId);
+  if(s) showInspector(s);
+  toast(made===1?'Parallel run created':made+' parallel runs created');
+}
 function ctxForAnn(a){
-  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length'};
+  const names=ANN_NAMES;
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
-  const L=(a.type==='line'||a.type==='arc')?annLen(a):null;
+  const L=(a.type==='line'||a.type==='arc'||a.type==='area')?annLen(a):null;
   const items=[{hd:names[a.type]+(L!=null?'  ·  '+fmtLen(L):'')}];
-  if(a.type==='line'||a.type==='arc') items.push(t
+  if(a.type==='count') items.push({id:'cn',t:'Count group '+(a.grp||'COUNT')+'  ·  '+countsOf(a.grp).length+' stamped',off:1});
+  if(vertexType(a)&&!a.free&&a.pts.length>1) items.push({id:'of',t:'Parallel run…',fn:()=>offsetAnn(a)});
+  if(a.type==='line'||a.type==='arc'||a.type==='area') items.push(t
     ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
     : {id:'mk',t:'Create treatment from this',fn:()=>treatFromAnn(a)});
   if(canClose(a)) items.push({id:'lp',t:a.closed?'Open loop':'Close loop',fn:()=>{ snap(); a.closed=!a.closed;
     drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
   if(a.type==='link'&&a.target) items.push({id:'op',t:'Open linked drawing',fn:()=>openDoc(a.target.doc,a.target.page,true)});
   if(/^(note|box|text|tbox|link)$/.test(a.type)) items.push({id:'ed',t:'Edit text…',fn:()=>editAnnText(a)});
-  if(editablePts(a)&&a.type==='line'&&ctxPt){
+  if(vertexType(a)&&!a.free&&ctxPt){
     const sc=V.vp?sp(ctxPt):null;
     const vi=sc?a.pts.findIndex(q=>{ const s2=sp(q); return Math.hypot(s2[0]-sc[0],s2[1]-sc[1])<12; }):-1;
-    if(vi>=0&&a.pts.length>2)
+    if(vi>=0&&a.pts.length>(a.type==='line'?2:3))
       items.push({id:'dp',t:'Delete this point ('+(vi+1)+' of '+a.pts.length+')',fn:()=>delPointFrom(a,vi)});
     if(vi<0&&sc) items.push({id:'ap',t:'Add a point here',fn:()=>addPointTo(a,ctxPt,sc[0],sc[1])});
   }
@@ -2109,13 +2318,20 @@ window.addEventListener('blur',closeCtx);
 
 /* ---- in-progress run bar + ink controls ---- */
 function syncDrawbar(){
-  const d=V.draft, on=d&&(d.type==='line'||d.type==='cal')&&d.pts.length>=2&&!press;
+  const d=V.draft, on=d&&(d.type==='line'||d.type==='cal'||d.type==='area')&&d.pts.length>=2&&!press;
   $('#drawbar').classList.toggle('show',!!on);
   /* closing needs 3 committed vertices — the last point is the live cursor */
   const canLoop=!!on&&d.type==='line'&&d.pts.length>3;
   $('#dbClose').style.display=canLoop?'':'none';
   $('#dbClose').textContent=d&&d.closed?'Open loop':'Close loop';
-  if(on){ const L=annLen(d), n=annSegs(d).length;
+  if(on){
+    if(d.type==='area'){
+      const m=d.pts.length>3?polyMetrics(d.pts.slice(0,-1),inPerPt(),d.off||0):null;
+      $('#dbLen').textContent=m?(fmtArea(m.area)+'  ·  perimeter '+fmtRun(m.perim)
+        +(m.off?'  ·  cove '+fmtRun(m.cove):'')):'region — keep clicking corners';
+      return;
+    }
+    const L=annLen(d), n=annSegs(d).length;
     $('#dbLen').textContent=(L==null?'—':fmtLen(L))+(n>1?'  ·  '+n+' seg':'')+(d.closed?'  ·  closed':''); }
 }
 $('#dbFinish').onclick=()=>finishDraft();
@@ -2153,6 +2369,16 @@ async function finishDraft(){
     const a={id:uid('a_'),type:'line',doc:d.doc,page:d.page,pts,color:d.color,w:d.w||V.width,text:''};
     if(d.poly) a.poly=true;
     if(d.closed&&pts.length>2) a.closed=true;
+    P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+    return;
+  }
+  if(d.type==='area'){
+    let pts=d.pts.slice(0,-1);
+    pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
+    if(pts.length<3){ drawOverlay(); toast('A region needs at least three corners'); return; }
+    snap();
+    const a={id:uid('a_'),type:'area',doc:d.doc,page:d.page,pts,color:d.color,w:d.w||V.width,
+      off:+d.off||0,text:''};
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
   }
@@ -2219,6 +2445,46 @@ async function placeText(p){
     size:clamp(+r.s||11,4,96),color:V.color||COLORS[1],w:V.width};
   P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty(); setTool('pan');
 }
+/* ---- counts ----
+   Downlights, drivers, J-boxes: the things you tally rather than measure. One
+   symbol per group, stamped, and the tally lands in the BOM with everything
+   else so nothing is counted on a napkin. */
+const CNT_SYMS=[{v:'●',t:'● dot'},{v:'▲',t:'▲ triangle'},{v:'■',t:'■ square'},
+  {v:'◆',t:'◆ diamond'},{v:'✚',t:'✚ cross'},{v:'★',t:'★ star'},{v:'D',t:'D — driver'},
+  {v:'J',t:'J — junction box'},{v:'S',t:'S — switch / sensor'}];
+const countsOf=grp=>P.ann.filter(a=>a.type==='count'&&(a.grp||'')===(grp||''));
+const countIndex=a=>countsOf(a.grp).findIndex(x=>x.id===a.id)+1;
+function countTotals(){
+  const g={};
+  P.ann.filter(a=>a.type==='count').forEach(a=>{
+    const k=(a.grp||'COUNT').trim()||'COUNT';
+    g[k]=g[k]||{grp:k,sym:a.sym||'●',n:0,sheets:new Set()};
+    g[k].n++;
+    const d=P.docs.find(x=>x.id===a.doc); g[k].sheets.add(d?d.name.replace(/\.pdf$/i,''):'—');
+  });
+  return Object.values(g).map(v=>({grp:v.grp,sym:v.sym,n:v.n,sheets:[...v.sheets].sort().join(', ')}))
+    .sort((a,b)=>a.grp.localeCompare(b.grp));
+}
+async function placeCount(p){
+  /* the first stamp of a session names the group; the rest just land */
+  if(!V.cntGrp){
+    const groups=countTotals();
+    const r=await dlg({title:'Count',fields:[
+      {k:'grp',label:'What is being counted',val:groups[0]?groups[0].grp:'',ph:'DOWNLIGHT',
+        hint:groups.length?'Already counting: '+groups.map(g=>g.grp+' ('+g.n+')').join(', '):'One group per thing you are tallying.'},
+      {k:'sym',type:'select',label:'Symbol',opts:CNT_SYMS,val:V.cntSym||'●'}
+    ],ok:'Start counting'});
+    if(!r) { setTool('pan'); return; }
+    V.cntGrp=String(r.grp||'COUNT').toUpperCase().trim()||'COUNT';
+    V.cntSym=r.sym||'●';
+  }
+  snap();
+  const a={id:uid('a_'),type:'count',doc:V.docId,page:V.page,pts:[p],grp:V.cntGrp,sym:V.cntSym,
+    color:V.color||COLORS[2],w:V.width};
+  P.ann.push(a); invalidateAnns();
+  drawOverlay(); renderAnnList(); renderBom(); markDirty();
+  $('#stCoord').textContent=V.cntGrp+': '+countsOf(V.cntGrp).length;
+}
 async function placeNote(p){
   const r=await dlg({title:'Note',fields:[{k:'t',type:'textarea',label:'Text',val:''}],ok:'Place'});
   if(!r||!r.t.trim()) return;
@@ -2279,7 +2545,7 @@ function showInspector(a){
   const box=$('#inspector');
   if(!a){ box.classList.remove('show'); return; }
   box.classList.add('show');
-  const names={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',cal:'Calibration line',text:'Text',tbox:'Text box',arc:'Arc length'};
+  const names=ANN_NAMES;
   $('#insTitle').textContent=(a.type==='line'&&a.poly?'Poly length':names[a.type])||'Markup';
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   let h='';
@@ -2297,6 +2563,7 @@ function showInspector(a){
   if(a.type==='line'){
     const L=annLen(a), segs=annSegs(a);
     h+='<div class="kv"><span>Measured</span><b class="hi">'+fmtLen(L)+'</b></div>';
+    if(a.pts.length>1&&!a.free) h+='<button class="btn" data-act="off">Parallel run…</button>';
     h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
     /* Bluebeam-style per-segment readout */
     if(segs.length>1&&!a.free){
@@ -2309,6 +2576,31 @@ function showInspector(a){
       +(a.pts.length>2?'⌥-click a handle to delete one, ':'')+'or right-click for both.</div>';
     h+= t? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t))+'</button>'
          : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
+  }
+  if(a.type==='area'){
+    const m=areaMetrics(a);
+    h+='<div class="kv"><span>Area</span><b class="hi">'+(m?fmtArea(m.area):'—')+'</b></div>';
+    h+='<div class="kv"><span>Perimeter</span><b>'+(m?fmtLen(m.perim):'—')+'</b></div>';
+    h+='<div class="kv"><span>Corners</span><b>'+a.pts.length+'</b></div>';
+    h+='<div class="f"><label>Cove set in from the wall</label><input type="text" data-len="off" value="'
+      +esc(a.off?fmtLen(a.off):'')+'" placeholder="0 — run on the wall line"></div>';
+    h+='<div class="kv"><span>Cove run at that offset</span><b class="hi">'+(m?fmtLen(m.cove):'—')+'</b></div>';
+    if(m&&m.off>0&&m.cove<=0) h+='<div class="note"><span>▲</span><span>That offset is larger than the room — nothing is left to light.</span></div>';
+    h+='<button class="btn" data-act="off">Parallel run…</button>';
+    h+= t? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t))+'</button>'
+         : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
+    h+='<div class="hint">A treatment linked to a region orders the cove run, not the perimeter.</div>';
+  }
+  if(a.type==='count'){
+    const n=countsOf(a.grp).length;
+    h+='<div class="kv"><span>This stamp</span><b class="hi">'+esc(a.grp||'COUNT')+' '+countIndex(a)+'</b></div>';
+    h+='<div class="kv"><span>Counted so far</span><b>'+n+'</b></div>';
+    h+='<div class="f"><label>Count group</label><input type="text" class="up" data-up="grp" value="'+esc(a.grp||'')+'" placeholder="DOWNLIGHT"></div>';
+    h+='<div class="f"><label>Symbol</label><select data-f2="sym">'
+      +CNT_SYMS.map(s=>'<option value="'+esc(s.v)+'"'+(s.v===(a.sym||'●')?' selected':'')+'>'+esc(s.t)+'</option>').join('')
+      +'</select></div>';
+    h+='<button class="btn" data-act="cnt">Keep counting this group</button>';
+    h+='<div class="hint">Renaming the group here moves only this stamp. Counts tally into the BOM.</div>';
   }
   if(a.type==='box'||a.type==='link') h+='<div class="f"><label>Label</label><input type="text" data-f="text" value="'+esc(a.text||'')+'"></div>';
   if(a.type==='text'||a.type==='tbox'){
@@ -2336,12 +2628,27 @@ function showInspector(a){
   $$('[data-n]',bd).forEach(el=>el.oninput=()=>{ a[el.dataset.n]=clamp(+el.value||11,4,96); drawOverlay(); markDirty(); });
   $$('[data-b]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.b]=el.checked; drawOverlay(); markDirty(); });
   $$('[data-f]',bd).forEach(el=>el.oninput=()=>{ a[el.dataset.f]=el.value; drawOverlay(); renderAnnList(); markDirty(); });
+  /* a length typed as a dimension string — "6\"", "0.5 ft", "150mm" */
+  $$('[data-len]',bd).forEach(el=>el.onchange=()=>{
+    const v=parseLen(el.value);
+    a[el.dataset.len]=(isFinite(v)&&v>=0)?v:0;
+    drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  });
+  $$('[data-f2]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.f2]=el.value; drawOverlay(); renderAnnList(); markDirty(); });
+  $$('[data-up]',bd).forEach(el=>el.oninput=()=>{
+    const up=el.value.toUpperCase();
+    if(el.value!==up){ const c=el.selectionStart; el.value=up; try{el.setSelectionRange(c,c)}catch(_){} }
+    a[el.dataset.up]=up; drawOverlay(); renderAnnList(); renderBom(); markDirty();
+  });
   $$('.sw',bd).forEach(el=>el.onclick=()=>{ a.color=el.dataset.c; showInspector(a); drawOverlay(); markDirty(); });
   $$('[data-act]',bd).forEach(el=>el.onclick=()=>{
     const act=el.dataset.act;
     if(act==='del'){ snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(t2=>{ if(t2.annId===a.id) t2.annId=null; }); V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); markDirty(); }
     if(act==='open'&&a.target){ openDoc(a.target.doc,a.target.page); }
     if(act==='mk') treatFromAnn(a);
+    if(act==='off') offsetAnn(a);
+    if(act==='cnt'){ V.cntGrp=a.grp||'COUNT'; V.cntSym=a.sym||'●'; setTool('count');
+      toast('Counting '+V.cntGrp+' — click to stamp'); }
     if(act==='go'){ $$('.tab').find(x=>x.dataset.pane==='pTreat').click(); openTreat(a.treat); }
     if(act==='loop'){ snap(); a.closed=!a.closed; showInspector(a); drawOverlay();
       renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty(); }
@@ -2380,8 +2687,8 @@ function renderCodeKey(){
 /* ---- markup visibility ----
    Notes and text get in the way while measuring, so each kind can be hidden.
    Hidden markups still count in the takeoff — this is about the view only. */
-const LAYERS=[['line','Dimensions'],['arc','Arcs'],['box','Boxes'],['text','Text'],
-  ['tbox','Text boxes'],['note','Notes'],['link','Links'],['ink','Ink']];
+const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
+  ['box','Boxes'],['text','Text'],['tbox','Text boxes'],['note','Notes'],['link','Links'],['ink','Ink']];
 const layerOn=type=>!(P.hide&&P.hide[type]);
 const annVisible=a=>layerOn(a.type)&&!a.hidden;
 function renderLayers(){
@@ -2492,6 +2799,8 @@ function renderAnnList(){
     const segs=a.type==='line'?annSegs(a).length:0;
     const label=a.type==='line'?(fmtLen(annLen(a))+(a.poly&&segs>1?'  ·  '+segs+' seg':''))
       :a.type==='arc'?fmtLen(annLen(a))
+      :a.type==='area'?(m=>m?fmtArea(m.area)+'  ·  P '+fmtRun(m.perim):'region')(areaMetrics(a))
+      :a.type==='count'?((a.grp||'COUNT')+' '+countIndex(a))
       :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
@@ -2741,7 +3050,7 @@ function renderTreatments(){
         if(coarse) document.body.classList.remove('ro');   /* get the sheet on screen on a tablet */
         toast('Showing '+tagOf(t)+' on '+((P.docs.find(d=>d.id===an.doc)||{}).name||'the sheet')); }
       if(a==='unlink'){ const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat; t.manual=lenOf(t); t.annId=null; renderTreatments(); drawOverlay(); renderAnnList(); markDirty(); openTreat(t.id); }
-      if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'));
+      if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'||x.type==='area'));
         if(!an){ toast('Select a dimension on the drawing first'); return; }
         P.treat.forEach(o=>{ if(o.annId===an.id) o.annId=null; });
         t.annId=an.id; an.treat=t.id; t.docId=an.doc; t.page=an.page;
@@ -3087,11 +3396,17 @@ function bomData(){
   Object.values(cap).forEach(v=>rows.push(['Mounting','End caps — '+v.n,'ea',v.q,'2 per run']));
   Object.values(join).filter(v=>v.q).forEach(v=>rows.push(['Mounting','Splice plates — '+v.n,'ea',v.q,'']));
   Object.values(pw).forEach(v=>rows.push(['Power',v.n,'ea',v.q,v.w.toFixed(0)+' W connected @ '+Math.round(P.load)+'% ceiling']));
+  /* counted items are quantities like any other — they belong in the same list */
+  countTotals().forEach(c=>rows.push(['Count',c.sym+'  '+c.grp,'ea',c.n,c.sheets]));
   return rows;
 }
 function renderBom(){
   const c=$('#cutTbl');
-  if(!P.treat.length){ c.innerHTML='<tr><td class="hint" style="padding:14px">Nothing measured yet.</td></tr>'; $('#bomTbl').innerHTML=''; return; }
+  /* counts and other tallies can exist before anything is measured, so the BOM
+     below still gets built — only the cut list has nothing to say */
+  if(!P.treat.length){
+    c.innerHTML='<tr><td class="hint" style="padding:14px">Nothing measured yet.</td></tr>';
+  }else{
   let h='<tr>'+thSort('cut','tag','Tag')+thSort('cut','type','Type')+thSort('cut','zone','Zone')
     +thSort('cut','room','Location')+thSort('cut','prod','Product')+thSort('cut','qty','Runs','n')
     +thSort('cut','L','Field','n')+thSort('cut','cut','Cut','n')+thSort('cut','w','W','n')
@@ -3115,6 +3430,7 @@ function renderBom(){
   });
   h+='<tr class="tot"><td colspan="6">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
   c.innerHTML=h;
+  }
   const rows=bomData();
   const bst=sortState('bom');
   const bord=bst.by==='order'?rows:sortBy(rows,r=>({cat:r[0],item:r[1],qty:parseFloat(r[3])||0,unit:r[2]}[bst.by]),bst);
@@ -3519,8 +3835,8 @@ $('#treatFind').onsearch=()=>renderTreatments();
 $('#btnAddTreat').onclick=()=>{ const t=newTreat(null);
   if($('#treatFind').value){ $('#treatFind').value=''; }   /* never hide the one just added */
   renderTreatments(); renderBom(); openTreat(t.id,true); };
-$('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'));
-  if(!a){toast('Select a dimension or arc on the drawing first');return;} treatFromAnn(a); };
+$('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'||x.type==='area'));
+  if(!a){toast('Select a dimension, arc or region on the drawing first');return;} treatFromAnn(a); };
 /* panel visibility and which side each rail sits on, remembered per project */
 function applyPanels(){
   const p=P.panels||{};
@@ -3593,6 +3909,7 @@ document.addEventListener('keydown',e=>{
   if(k==='b') setTool('box'); if(k==='n') setTool('note'); if(k==='k') setTool('link');
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
   if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
+  if(k==='r') setTool('area'); if(k==='m') setTool('count');
   if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
   /* the rails get out of the way without reaching for the mouse */
   if(k==='['){ setPanel('left',(P.panels||{}).left===false); }
@@ -3685,6 +4002,9 @@ function settingsHtml(){
     +setRow('Default cut rounding','Which way a run rounds to the product\u2019s cut increment.',
       setSel('round',[{v:'',t:'Automatic — up for fixtures, down for tape'},
         {v:'down',t:'Always round down'},{v:'near',t:'Always nearest'},{v:'up',t:'Always round up'}],P.round||''))
+    +'</div><div class="setgrp"><h4>Regions</h4>'
+    +setRow('Cove set in from the wall','Applied to new regions; each one can be changed after.',
+      '<input type="text" data-set="areaOff" value="'+esc(P.areaOff?fmtLen(P.areaOff):'')+'" placeholder="0">')
     +'</div>';
   if(setTab==='labels') return '<div class="setgrp"><h4>Placement</h4>'
     +setRow('Content-aware labels','Labels step aside instead of stacking on each other.',
@@ -3693,6 +4013,8 @@ function settingsHtml(){
       setChk('segLabels',P.segLabels!==false,P.segLabels!==false?'Shown':'Total only'))
     +setRow('Arc radius and angle','Second label under an arc with its radius and included angle.',
       setChk('arcDetail',P.arcDetail!==false,P.arcDetail!==false?'Shown':'Hidden'))
+    +setRow('Count labels','Every stamp named and numbered, or just the symbol.',
+      setChk('cntLabels',P.cntLabels!==false,P.cntLabels!==false?'Shown':'Symbol only'))
     +'</div><div class="setgrp"><h4>Size</h4>'
     +setRow('Label size','Bigger reads better across a room; smaller crowds less.',
       setRange('chipScale',P.chipScale||1,0.7,2,0.05,Math.round((P.chipScale||1)*100)+'%'))
@@ -3759,6 +4081,8 @@ function applySetting(el){
     case 'smart': P.smart=val; syncSmartBtn(); drawOverlay(); break;
     case 'segLabels': P.segLabels=val; drawOverlay(); break;
     case 'arcDetail': P.arcDetail=val; drawOverlay(); break;
+    case 'cntLabels': P.cntLabels=val; drawOverlay(); break;
+    case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'chipScale': P.chipScale=+val||1; setDrawScale(1); drawOverlay(); break;
     case 'width': V.width=+val; P.width=+val; break;
     case 'waste': P.waste=clamp(+val||0,0,50); $('#waste').value=P.waste; renderBom(); stats(); break;
@@ -3804,6 +4128,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
   colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   addPointTo,delPointFrom,nearestSeg,sortState,setSort,sortBy,hitChipAt,lastChips:()=>LAST_CHIPS,
+  polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
+  countTotals,countsOf,countIndex,placeCount,countSyms:CNT_SYMS,
   openSettings,closeSettings,applySetting,applyPanels,setPanel,offsOf,offFor,setDrawScale,
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
