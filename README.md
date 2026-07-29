@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend â€
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.23.0**
+**Version 1.24.0**
 
 ## What it does
 
@@ -176,6 +176,17 @@ and portable. They are kept separately in this browser, so reopening a job on th
 same machine needs no re-import; on another machine, open the project file,
 re-import the same drawings, and every dimension, note and link reattaches by
 filename and size.
+
+## The manual
+
+`?` (or the **?** button in the header) opens a manual covering every tool, what
+each one is for, how the takeoff works, the library and its cutsheets, sheets and
+revisions, exports, iPad gestures, the full shortcut list, and what to check when
+a number looks wrong. **Print or save** turns it into one self-contained page you
+can pin up next to the plotter.
+
+The shortcut list below and the one in the manual are the same list the
+application binds its keys from, so they cannot drift apart.
 
 ## Keyboard
 

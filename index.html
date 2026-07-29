@@ -259,6 +259,35 @@ input.up{text-transform:uppercase}
 /* the settings sheet sits below a dialog raised from it, or its buttons would be
    unclickable behind the settings panel */
 #setScrim{z-index:60}
+/* the manual: contents down one side, the text down the other */
+.manwrap{width:min(920px,96vw);height:min(88vh,900px)}
+.manbody{display:grid;grid-template-columns:200px 1fr;min-height:0;flex:1}
+.mannav{flex-direction:column;align-items:stretch;border-right:1px solid var(--line);border-bottom:0;
+  overflow:auto;padding:8px 8px 12px;gap:2px}
+.mannav button{text-align:left;border-radius:2px;border:1px solid transparent}
+.mannav button.on{color:var(--amber);background:var(--s2);border-color:var(--line2)}
+.mantext{overflow:auto;padding:4px 20px 26px;scroll-behavior:smooth}
+.mantext .lead{color:var(--dim);font-size:13px;line-height:1.7;margin:14px 0 4px}
+.mantext section{padding-top:14px}
+.mantext h3{font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--amber);
+  margin:14px 0 6px;padding-bottom:5px;border-bottom:1px solid var(--line2)}
+.mantext h5{font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin:12px 0 3px}
+.mantext p{line-height:1.7;color:var(--txt);margin:6px 0}
+.mantext ol{margin:6px 0 10px 20px;padding:0;line-height:1.7}
+.mantext li{margin-bottom:5px}
+.mantext table{margin:4px 0 10px}
+.mantext table.man th{width:170px;text-align:left;vertical-align:top;background:none;position:static;
+  color:var(--amber);font-family:var(--ui);font-size:11.5px;letter-spacing:0;text-transform:none;font-weight:600}
+.mantext table.man td{line-height:1.65}
+.mantext table.keys td{padding:4px 8px}
+.mantext table.keys td.kb{width:132px}
+.mantext kbd{font-family:var(--mono);border:1px solid var(--line2);border-radius:3px;padding:1px 6px;
+  background:var(--s2);font-size:11px;color:var(--txt);white-space:nowrap}
+@media(max-width:1180px),(pointer:coarse) and (max-width:1400px){
+  .manbody{grid-template-columns:1fr}
+  .mannav{flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line);max-height:112px}
+  .mantext table.man th{width:120px}
+}
 /* settings: grouped rows, one screen, everything live */
 .setwrap{background:var(--s1);border:1px solid var(--line2);width:min(760px,96vw);max-height:92vh;
   display:flex;flex-direction:column;box-shadow:0 24px 70px rgba(0,0,0,.6);border-radius:3px}
@@ -440,6 +469,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn" id="btnSave" title="Save project file (⌘S)">Save</button>
     <button class="btn" id="btnProj">Project</button>
     <button class="btn" id="btnSet" title="Settings">⚙</button>
+    <button class="btn" id="btnHelp" title="Manual and shortcuts (?)">?</button>
     <button class="btn mobtog" id="togR" title="Show or hide the takeoff rail">Takeoff</button>
     <button class="btn mobtog" id="togSwap" title="Swap the two rails over">⇄</button>
   </div>
@@ -664,6 +694,18 @@ body.haspen #penFlag{display:inline}
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div class="toast" id="toast"></div>
+<div class="scrim" id="manScrim"><div class="setwrap manwrap">
+  <div class="sethd">
+    <b>Manual</b>
+    <span class="hint" id="manVer"></span>
+    <button class="btn sm" id="manPrint">Print or save</button>
+    <button class="btn sm pri" id="manClose">Done</button>
+  </div>
+  <div class="manbody">
+    <nav class="setnav mannav" id="manNav"></nav>
+    <div class="mantext" id="manBody"></div>
+  </div>
+</div></div>
 <div class="scrim" id="setScrim"><div class="setwrap">
   <div class="sethd">
     <b>Settings</b>
@@ -682,7 +724,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.23.0';
+const APP_VER='1.24.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -6583,6 +6625,10 @@ function applyTheme(){
 }
 $('#btnTheme').onclick=()=>{ P.theme=P.theme==='light'?'dark':'light'; applyTheme(); markDirty(); };
 $('#btnSet').onclick=openSettings;
+$('#btnHelp').onclick=()=>openManual();
+$('#manClose').onclick=closeManual;
+$('#manPrint').onclick=printManual;
+$('#manScrim').onclick=e=>{ if(e.target===$('#manScrim')) closeManual(); };
 $('#calNagGo').onclick=()=>{ setTool('cal'); toast('Drag along a dimension you can read on the sheet'); };
 $('#btnScales').onclick=manageScales;
 function syncSmartBtn(){
@@ -6698,6 +6744,10 @@ viewport.addEventListener('drop',e=>{ if(e.dataTransfer.files.length) openFiles(
 /* keyboard */
 document.addEventListener('keydown',e=>{
   if($('#scrim').classList.contains('show')) return;
+  if($('#manScrim').classList.contains('show')){
+    if(e.key==='Escape'){ e.preventDefault(); closeManual(); }
+    return;
+  }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); saveProjectFile(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='o'){ e.preventDefault(); $('#projInput').click(); return; }
   const tag=(e.target.tagName||'').toLowerCase();
@@ -6726,6 +6776,8 @@ document.addEventListener('keydown',e=>{
   if(k==='r') setTool('area'); if(k==='m') setTool('count');
   if(k==='q') setTool('cloud'); if(k==='d'&&!(e.metaKey||e.ctrlKey)) setTool('driver');
   if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
+  /* ? and F1 both open the manual; ? needs shift on most layouts, so match either */
+  if(k==='?'||k==='f1'||(k==='/'&&e.shiftKey)){ e.preventDefault(); openManual(); }
   /* the rails get out of the way without reaching for the mouse */
   if(k==='['){ setPanel('left',(P.panels||{}).left===false); }
   if(k===']'){ setPanel('right',(P.panels||{}).right===false); }
@@ -6748,6 +6800,7 @@ document.addEventListener('keydown',e=>{
 /* the version is a button: it opens About, which says what is running, what the
    project-file schema is, and whether a newer build is waiting */
 $('#verTag').onclick=()=>{ setTab='about'; openSettings(); };
+$('#manVer').textContent='v'+APP_VER;
 syncVerTag();
 const BLANK_H2=$('#blank').querySelector('h2').textContent;
 const BLANK_P=$('#blank').querySelector('p').textContent;
@@ -6786,7 +6839,152 @@ function boot(keepDoc){
   }
 }
 /* ============================================================
-   H) settings
+   H) keys, the manual, and settings
+   ============================================================ */
+/* ---- the shortcut table ----
+   One list, read by the tool tooltips, the manual and the printed sheet, so a key
+   cannot be documented in one place and bound in another. */
+const KEYS=[
+  {g:'Tools',k:'V',t:'Select and pan'},
+  {g:'Tools',k:'C',t:'Calibrate the scale'},
+  {g:'Tools',k:'L',t:'Dimension — drag to trace a curve, or tap each corner'},
+  {g:'Tools',k:'G',t:'Poly length — every segment measured separately'},
+  {g:'Tools',k:'A',t:'Arc length — start, a point along the curve, then the end'},
+  {g:'Tools',k:'R',t:'Region — area, perimeter and the cove run inside it'},
+  {g:'Tools',k:'M',t:'Count — stamp and tally a symbol'},
+  {g:'Tools',k:'Q',t:'Revision cloud with a delta'},
+  {g:'Tools',k:'D',t:'Place a driver'},
+  {g:'Tools',k:'B',t:'Area box'},
+  {g:'Tools',k:'T',t:'Text on the sheet'},
+  {g:'Tools',k:'X',t:'Text box — the text wraps inside it'},
+  {g:'Tools',k:'N',t:'Callout note with a leader'},
+  {g:'Tools',k:'K',t:'Link a shop drawing'},
+  {g:'Tools',k:'P',t:'Pencil ink'},
+  {g:'Tools',k:'E',t:'Erase'},
+  {g:'While measuring',k:'⏎',t:'Finish the run'},
+  {g:'While measuring',k:'Esc',t:'Cancel, clear the selection, back to Select'},
+  {g:'While measuring',k:'⇧ drag',t:'Constrain to horizontal, vertical or 45°'},
+  {g:'While measuring',k:'double-click',t:'Finish a run, or break it at that point'},
+  {g:'While measuring',k:'⌥ click a handle',t:'Delete that point'},
+  {g:'Selection',k:'⇧ click',t:'Add a markup to the selection'},
+  {g:'Selection',k:'⇧ drag',t:'Sweep a selection on bare paper'},
+  {g:'Selection',k:'⌘A',t:'Select every markup on the page'},
+  {g:'Selection',k:'⌫',t:'Delete what is selected'},
+  {g:'Selection',k:'⌘C / ⌘V / ⌘D',t:'Copy, paste, duplicate'},
+  {g:'Edit',k:'⌘Z / ⇧⌘Z',t:'Undo / redo'},
+  {g:'Edit',k:'⌘Y',t:'The history, to jump back several steps'},
+  {g:'View',k:'+ / −',t:'Zoom in and out'},
+  {g:'View',k:'← / →',t:'Previous and next page'},
+  {g:'View',k:'scroll',t:'Zoom at the cursor — ⇧ scroll pans across, ⌥ scroll pans down'},
+  {g:'View',k:'[ / ]',t:'Hide or show the sheets rail / the takeoff rail'},
+  {g:'View',k:'\\',t:'Swap the rails over'},
+  {g:'Files',k:'⌘S / ⌘O',t:'Save / open a project file'},
+  {g:'Files',k:'⌘,',t:'Settings'},
+  {g:'Files',k:'?',t:'This manual'},
+];
+const TOUCH=[
+  ['One finger',"Draws while a drawing tool is chosen, otherwise moves the sheet. The first Apple Pencil stroke switches the finger back to panning; the ✋ button in the toolbar overrides either way."],
+  ['Two fingers',"Pinch to zoom, drag to move the sheet — at any time, whatever tool is chosen."],
+  ['Long press',"The right-click menu, aimed at whatever is under your finger. On a label it is the label's own menu; on a markup, that markup's."],
+  ['Double tap',"Finishes a run, retypes a text markup, or breaks a run at that point."],
+  ['⧉ button',"Add to selection: tap markups to build a set, since there is no shift key."],
+  ['Sheets / Takeoff',"Slide a rail over the drawing; tap the sheet or the dimmed area to send it away."],
+];
+/* ---- the manual ----
+   Written as data so it renders in the app and prints as one page, and so the
+   feature list cannot quietly fall behind what the app does. */
+function manualSections(){
+  return [
+  {id:'start',t:'Getting started',blocks:[
+    {p:'Import a PDF, tell it what the scale is, then measure. Everything else follows from those three steps.'},
+    {steps:[
+      'Import PDF, or drop one on the window. Sheet numbers and names are read from the titleblock where the PDF has a text layer.',
+      'Set the scale: pick a standard scale from the toolbar, or press C and trace a dimension you can read on the sheet. An uncalibrated sheet says so, because every number downstream depends on it.',
+      'Measure a run with L, G or A; trace a room with R.',
+      'Turn a measurement into a treatment — the inspector\u2019s "Create treatment from this", or From selection in the takeoff rail.',
+      'Give the treatment its TYPE and Zone #, pick its product, channel and supply, and read the cut list.',
+    ]},
+    {p:'Drawings are kept in this browser, so reopening a job needs no re-import. The project file is the portable copy: it carries sheets, calibration, markups, treatments and libraries, but never the PDFs.'}]},
+  {id:'measure',t:'Measuring',blocks:[
+    {rows:[
+      ['Dimension (L)','Drag to trace a curve freehand, or tap each corner. Snaps to the drawing\u2019s own corners and endpoints.'],
+      ['Poly length (G)','Tap each corner; every segment is measured and labelled separately, and the run can be closed into a loop.'],
+      ['Arc length (A)','Three points — start, anywhere along the curve, then the end. Reports the arc, its radius and its included angle.'],
+      ['Region (R)','Trace a room for its area, its perimeter, and the cove run at a set distance in from the wall. That inset is real geometry: each corner shortens the adjoining edges by d/tan(θ/2), so a 6" inset on a rectangle takes exactly 8d off.'],
+      ['Parallel run','Offset a traced path sideways — one row or several, either side, optionally copying the treatment too.'],
+      ['Editing','Drag a markup to move it, a handle to reshape it. Double-click a run to break it at that point, ⌥-click a handle to remove one.'],
+      ['Precision','Lengths can read to the nearest 1/8", 1/4", inch or foot. That is display only: cuts, totals and exports stay exact.'],
+    ]}]},
+  {id:'markup',t:'Marking up',blocks:[
+    {rows:[
+      ['Text and text boxes','T places text on the sheet; X drags a box the text wraps inside. Both scale with the drawing.'],
+      ['Notes and boxes','N is a callout with a leader; B is an area box.'],
+      ['Counts (M)','Stamp a symbol for what you tally rather than measure. Name the group once and every stamp after that just lands; each group totals into the BOM.'],
+      ['Revision clouds (Q)','A cloud with a revision delta and a note. Compare revisions diffs two versions of a sheet and clouds what changed.'],
+      ['Drivers (D)','Place a supply, assign the runs it feeds, and see its load against its usable capacity plus the longest home run.'],
+      ['Links (K)','Tie a plan to the shop drawing that details it, with the detail reference that follows the treatment into the cut list.'],
+      ['Turning things','Drag the round grip above a selected text markup, or type an angle in the inspector. Angles snap at 15°.'],
+      ['Line weight','Per markup, from the toolbar or the inspector.'],
+      ['Ink (P)','Freehand, pressure-sensitive with an Apple Pencil.'],
+    ]}]},
+  {id:'labels',t:'Labels',blocks:[
+    {p:'Every measurement carries labels you can move, turn and hide.'},
+    {rows:[
+      ['Content-aware placement','Labels step aside instead of stacking. Drag any label to place it yourself and a leader ties it back.'],
+      ['Turning labels','Flat, or along the run they belong to — per markup, or as the default in Settings. Right-click or long-press one label to turn just that one.'],
+      ['Size','One setting scales every label; the exporter scales them again for the bitmap it is producing.'],
+      ['What is on a label','The run total carries the treatment tag; each segment carries its own length; an arc adds its radius and angle; a region adds its area and perimeter.'],
+    ]}]},
+  {id:'takeoff',t:'Treatments and the takeoff',blocks:[
+    {p:'A treatment is one lighting condition — a cove, a reveal, a toe-kick. Its tag is built from TYPE and Zone #, so COVE Z2 appears on the drawing, in the cut list and in every export.'},
+    {rows:[
+      ['Cut points','Only the LED product has a cut increment. Tape and neon cut in increments; fixtures cannot be cut and round up to whole units; channel is always cut to length. The Calculated panel offers next shortest, nearest and next longest — picking one locks it, rings it, and greys the others until you unlock.'],
+      ['Feed points','Computed from the product\u2019s voltage-drop limit and overridable. Setting fewer than the limit allows is flagged, and a product with no limit on file says so rather than reporting one feed.'],
+      ['Approving','Freezes the cut a treatment was approved at and makes its fields read-only. If the drawing moves afterwards, the treatment and the cut list say so.'],
+      ['Repeating floors','Duplicate, or Copy to sheets — which copies the markup as well, so the length carries over.'],
+      ['Pieces','One row per physical piece, each with a mark like COVE Z1-3 and its place in the set. Off-cuts nest into stock lengths job-wide, per zone or per treatment.'],
+      ['Cost','Rates live on the library items; labour is hours per foot and per feed point at a rate. Anything unpriced is reported as unpriced rather than counted as free.'],
+      ['Alternates','Price the same takeoff with a different product without touching it. Use switches the job over.'],
+      ['Baseline','Freeze the takeoff when it is issued and every later change is reported against it — added, changed, removed, and the cost difference.'],
+    ]}]},
+  {id:'library',t:'The product library',blocks:[
+    {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
+    {rows:[
+      ['check','Confirms a cutsheet link still resolves, and dates it. A response a browser is not allowed to read is reported as exactly that, not as good.'],
+      ['read specs','Paste the cutsheet text or hand it the PDF: volts, watts and lumens per foot, the cut point, the maximum run per feed and stock lengths are pulled out for you to confirm.'],
+      ['Library files','Keep your company\u2019s products in one file and load it into every job, merging or replacing.'],
+    ]}]},
+  {id:'sheets',t:'Sheets and revisions',blocks:[
+    {rows:[
+      ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
+      ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
+      ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Busy sheets','Hide markups by kind, colour them automatically by TYPE or Zone, sort every list and table, and filter treatments.'],
+    ]}]},
+  {id:'out',t:'Getting it out',blocks:[
+    {rows:[
+      ['Workbook','A real .xlsx of every table — cut list, BOM, cost, pieces, nesting, rollups, counts, drivers, alternates, changes and the project settings.'],
+      ['Takeoff report','One printable page: summary, cut list, BOM, cost, pieces with their marks, piece labels for the bench, nesting, rollups, drivers, revisions, what changed since the baseline, and a check-before-issuing list.'],
+      ['CSV','Cut list, BOM, cost, pieces, nesting, drivers and rollups separately.'],
+      ['Marked-up PDF','The sheet with the markups burned in, flat, at your choice of resolution.'],
+      ['Project and library files','The whole takeoff as one file; the products as another.'],
+    ]}]},
+  {id:'touch',t:'On an iPad',blocks:[
+    {p:'With a finger as the pointer the rails slide over the drawing instead of flanking it, the toolbar becomes one swipeable row, and zoom, Fit and the page arrows float over the sheet. Attach a trackpad and the columns come back.'},
+    {rows:TOUCH}]},
+  {id:'keys',t:'Keyboard shortcuts',blocks:[{keys:true}]},
+  {id:'trouble',t:'When something looks wrong',blocks:[
+    {rows:[
+      ['Every length is wrong','The scale is wrong. Trace a second dimension you can read to check it, and remember a page can carry its own scale.'],
+      ['The sheet goes soft while panning','It is catching up. A cheap full-page layer always covers the view, and the sharp layer swaps in when it is ready — it never blanks.'],
+      ['A number is missing','Unset is deliberate: the product\u2019s cutsheet has not been read. Open the item in the library and use read specs.'],
+      ['Markups did not come back','Open the project file, then re-import the same PDFs — markups reattach by filename and size.'],
+      ['The version is behind','An installed copy opens from its own cache. The version chip turns amber when a newer build is on the server; close the app fully and reopen it.'],
+    ]}]},
+  ];
+}
+/* ============================================================
+   settings
    ============================================================
    Every adjustable behaviour in one place, described in the terms of the job
    rather than the code. Changes apply immediately and save with the project. */
@@ -6922,6 +7120,8 @@ function settingsHtml(){
       '<span class="val">'+('serviceWorker' in navigator?'available':'no')+'</span>')
     +setRow('Sheets in this project','','<span class="val">'+P.docs.length+'</span>')
     +setRow('Markups / treatments','','<span class="val">'+P.ann.length+' / '+P.treat.length+'</span>')
+    +setRow('Manual and shortcuts','Every tool, every key, and what to check when a number looks wrong.',
+      '<button class="btn sm" id="setMan">Open the manual</button>')
     +'</div>';
 }
 function renderSettings(){
@@ -6937,6 +7137,8 @@ function renderSettings(){
   },0);
   setTimeout(()=>{
     const hb=$('#setHist'); if(hb) hb.onclick=showHistory;
+    const mb=$('#setMan');
+    if(mb) mb.onclick=()=>{ closeSettings(); openManual(); };
     const ub=$('#setUpd');
     if(ub) ub.onclick=async()=>{ ub.textContent='Checking…';
       const v=await checkForUpdate();
@@ -7003,6 +7205,77 @@ function applySetting(el){
   /* redraw the page so labels like "12 points on this page" stay true */
   if(/^(snap|units|panel)/.test(k)) renderSettings();
 }
+/* ---- the manual on screen ----
+   The same content the printed sheet uses, in a scrolling panel with its own
+   contents list. It reads the shortcut table rather than repeating it. */
+function keyTableHtml(cls){
+  const groups=[];
+  KEYS.forEach(k=>{ let g=groups.find(x=>x.g===k.g); if(!g){ g={g:k.g,rows:[]}; groups.push(g); } g.rows.push(k); });
+  return groups.map(g=>'<h5>'+esc(g.g)+'</h5><table class="'+(cls||'')+'">'
+    +g.rows.map(r=>'<tr><td class="kb"><kbd>'+esc(r.k)+'</kbd></td><td>'+esc(r.t)+'</td></tr>').join('')
+    +'</table>').join('');
+}
+function manualHtml(){
+  return manualSections().map(sec=>'<section id="man_'+sec.id+'"><h3>'+esc(sec.t)+'</h3>'
+    +sec.blocks.map(b=>{
+      if(b.keys) return keyTableHtml('keys');
+      if(b.p) return '<p>'+esc(b.p)+'</p>';
+      if(b.steps) return '<ol>'+b.steps.map(x=>'<li>'+esc(x)+'</li>').join('')+'</ol>';
+      if(b.rows) return '<table class="man"><tbody>'+b.rows.map(r=>'<tr><th>'+esc(r[0])+'</th><td>'+esc(r[1])+'</td></tr>').join('')+'</tbody></table>';
+      return '';
+    }).join('')+'</section>').join('');
+}
+function renderManual(){
+  const nav=$('#manNav'), body=$('#manBody');
+  if(!nav||!body) return;
+  nav.innerHTML=manualSections().map(s2=>'<button data-man="'+s2.id+'">'+esc(s2.t)+'</button>').join('');
+  body.innerHTML='<p class="lead">Linework measures linear lighting off a PDF and gives you a cut list, a bill of '
+    +'materials and a price. Version '+APP_VER+'.</p>'+manualHtml();
+  $$('#manNav button').forEach(b=>b.onclick=()=>{
+    const el=$('#man_'+b.dataset.man);
+    if(el) el.scrollIntoView({behavior:'smooth',block:'start'});
+    $$('#manNav button').forEach(x=>x.classList.toggle('on',x===b));
+  });
+}
+function openManual(id){
+  $('#manScrim').classList.add('show');
+  renderManual();
+  const el=id&&$('#man_'+id);
+  if(el) el.scrollIntoView({block:'start'});
+  else $('#manBody').scrollTop=0;
+}
+/* a function declaration, not a const: the header wiring in section G runs before
+   this section is evaluated and would hit the temporal dead zone */
+function closeManual(){ $('#manScrim').classList.remove('show'); }
+/* the printable version, using the report's stylesheet so it looks like the rest */
+function manualPrintHtml(){
+  const secs=manualSections().map(sec=>'<h2>'+rEsc(sec.t)+'</h2>'
+    +sec.blocks.map(b=>{
+      if(b.keys) return keyTableHtml('keys');
+      if(b.p) return '<p>'+rEsc(b.p)+'</p>';
+      if(b.steps) return '<ol>'+b.steps.map(x=>'<li>'+rEsc(x)+'</li>').join('')+'</ol>';
+      if(b.rows) return '<table>'+b.rows.map(r=>'<tr><th style="width:190px">'+rEsc(r[0])+'</th><td>'+rEsc(r[1])+'</td></tr>').join('')+'</table>';
+      return '';
+    }).join('')).join('');
+  return '<!doctype html><html><head><meta charset="utf-8"><title>Linework '+APP_VER+' — manual</title>'
+    +'<style>'+reportCss()
+    +'h5{font-size:11px;text-transform:uppercase;letter-spacing:.1em;margin:14px 0 4px;color:#555}'
+    +'kbd{font-family:ui-monospace,Menlo,Consolas,monospace;border:1px solid #bbb;border-radius:3px;'
+    +'padding:1px 5px;background:#f4f2ee;font-size:11px;white-space:nowrap}'
+    +'td.kb{width:120px}ol{margin:6px 0 10px 18px}li{margin-bottom:4px}</style></head><body>'
+    +'<h1>Linework</h1><div class="sub">Linear lighting takeoff — manual and shortcut list · version '+APP_VER
+    +' · build '+APP_BUILD+'</div>'+secs
+    +'<footer>Linework '+APP_VER+'. This sheet is generated from the application itself, so the keys it lists are the keys it binds.</footer>'
+    +'</body></html>';
+}
+async function printManual(){
+  const html=manualPrintHtml();
+  const w=window.open('','_blank');
+  if(!w){ download('linework-'+APP_VER+'-manual.html',html,'text/html');
+    toast('Pop-up blocked — the manual was downloaded instead'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} },350);
+}
 function openSettings(){ $('#setScrim').classList.add('show'); renderSettings(); }
 function closeSettings(){ $('#setScrim').classList.remove('show'); }
 $('#setClose').onclick=closeSettings;
@@ -7046,6 +7319,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   setMulti,toggleMulti,multiAnns,inMulti,alignMulti,distributeMulti,annBox,shiftAnn,aligns:ALIGNS,
   narrowUI,railOpen,setRail,closeRails,startLongPress,cancelLongPress,syncMultiBtn,syncFingerBtn,
   probeInsets,checkForUpdate,syncVerTag,update:UPDATE,
+  keys:KEYS,touchGestures:TOUCH,manualSections,manualHtml,manualPrintHtml,keyTableHtml,
+  openManual,closeManual,printManual,
   approveTreat,unapproveTreat,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
