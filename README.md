@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend â€
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.20.0**
+**Version 1.20.1**
 
 ## What it does
 

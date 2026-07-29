@@ -176,6 +176,11 @@ td{padding:5px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 td.n,th.n{text-align:right;font-family:var(--mono)}
 tr.tot td{border-top:1px solid var(--line2);font-weight:600;background:var(--s2)}
 .tw{overflow:auto}
+/* A wide table in a narrow rail should scroll, not squeeze every column into
+   two words per line. Sideways scrolling is the lesser evil. */
+.tw table{min-width:100%;width:max-content}
+.tw td,.tw th{white-space:nowrap}
+.tw td .hint{white-space:normal;max-width:190px}
 
 /* treatment cards */
 .card{border-bottom:1px solid var(--line)}
@@ -578,7 +583,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.20.0';
+const APP_VER='1.20.1';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
