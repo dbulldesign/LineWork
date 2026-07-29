@@ -1,10 +1,10 @@
 # LineWork
 
-Linear lighting takeoff from architectural PDFs. A single self-contained
-`index.html` — no build step, no server. Open it in a browser, or serve the repo
-root as a static site.
+Linear lighting takeoff from architectural PDFs. No build step and no backend —
+serve the repo root as a static site, or open `index.html` directly. pdf.js is
+vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.6.0**
+**Version 1.12.0**
 
 ## What it does
 
@@ -12,8 +12,10 @@ Import a plan, elevation, or millwork shop drawing, calibrate it against a known
 dimension, then measure every linear run and get a cut list and bill of materials
 out the other end.
 
-- **Measure** — dimension runs (drag to trace a curve, or tap each corner) and
-  poly lengths that report each segment separately, with an optional closing leg.
+- **Measure** — dimension runs (drag to trace a curve, or tap each corner), poly
+  lengths that report each segment separately with an optional closing leg, and
+  arcs measured from three points on the curve. Measurements snap to the
+  drawing's own corners and endpoints.
 - **Mark up** — text, text boxes, callout notes, area boxes, freehand ink, and
   links from a plan to the millwork shop drawing that details it. Line weight is
   adjustable per markup. Every markup stays editable: drag it to move, drag a
@@ -21,7 +23,11 @@ out the other end.
 - **Take off** — one treatment per lighting condition, each carrying a TYPE
   designation, its LED product, channel, power supply, and feed points, rolled up
   into a cut list and BOM with waste and supply-load allowances.
-- **Export** — cut list and BOM as CSV, and the whole project as one file.
+- **Order** — a per-piece cut list, off-cut nesting into stock lengths with a
+  yield report, and rollups by zone and by sheet.
+- **Export** — cut list, BOM, piece list, nesting and rollups as CSV; the
+  marked-up sheet as a flat PDF; the whole project as one file; and the product
+  library as its own file to reuse across jobs.
 
 Built for iPad as much as desktop: Apple Pencil draws while your palm rests on
 the sheet, and pinch-zoom works throughout.
@@ -84,6 +90,7 @@ size.
 | `C` | calibrate scale |
 | `L` | dimension run |
 | `G` | poly length |
+| `A` | arc length |
 | `B` | area box |
 | `T` | text |
 | `X` | text box |
@@ -96,6 +103,18 @@ size.
 | `⌘Z` / `⇧⌘Z` | undo / redo |
 | `⌘S` / `⌘O` | save / open project file |
 | `+` `-` | zoom; arrow keys change page |
+
+## Working on a busy sheet
+
+Markups can be hidden by kind while measuring, and coloured automatically by
+TYPE or Zone # instead of by hand. Treatments filter by tag, type, zone, room or
+product. The footer carries a running total for the page you are on as well as
+the whole job. A light theme is available for printing and for bright site
+conditions.
+
+Calibration is the one step that silently invalidates every number downstream,
+so an uncalibrated sheet says so, and a traced scale is checked against standard
+scales — and against the sheet size it implies — before it is applied.
 
 ## Versioning
 

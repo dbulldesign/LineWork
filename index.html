@@ -18,10 +18,23 @@
   --amber:#F2A93B; --amber2:#7A5518;
   --measure:#5AB6DE; --link:#C77BD6; --flag:#E4694F; --ok:#8FC46A;
   --paper:#fbfaf7;
+  --ovl:#171512;      /* label backgrounds drawn on the sheet */
   --ui:'Helvetica Neue',Helvetica,Arial,'Liberation Sans',system-ui,sans-serif;
   /* dimensions and quantities stay monospaced so columns of numbers line up */
   --mono:ui-monospace,'SF Mono',SFMono-Regular,Menlo,Consolas,'Liberation Mono',monospace;
 }
+/* Light theme, for printing and for a sunlit site. Same variables, so every
+   existing rule follows without being duplicated. */
+body.light{
+  --bg:#EDEAE3; --s1:#F7F5F0; --s2:#EFEBE3; --s3:#E3DED4; --s4:#D6CFC2;
+  --line:#CFC7B8; --line2:#B4AA97;
+  --txt:#211D18; --dim:#5C5246; --faint:#857B6B;
+  --amber:#8A5D0C; --amber2:#D9B36A;
+  --measure:#1D6E92; --link:#8A3E9B; --flag:#A83318; --ok:#3B7420;
+  --paper:#ffffff; --ovl:#FFFFFF;
+}
+body.light #viewport{background:#DCD7CC}
+body.light .tool.on{color:#fff}
 *{box-sizing:border-box}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--ui);font-size:13px;overflow:hidden}
@@ -36,6 +49,9 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1);border-bottom:1px solid var(--line2)}
 .tb .mark{display:flex;align-items:center;gap:9px;padding:0 16px;border-right:1px solid var(--line);}
 .tb .mark b{font-weight:700;letter-spacing:-.02em;font-size:15px}
+.ckey{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--dim);
+  border:1px solid var(--line);border-radius:2px;padding:1px 5px 1px 3px}
+.ckey i{width:9px;height:9px;border-radius:1px;display:inline-block}
 .ver{font-family:var(--mono);font-size:9.5px;color:var(--faint);border:1px solid var(--line2);border-radius:2px;padding:0 3px;vertical-align:2px}
 .tb .mark span{font-size:9px;letter-spacing:.16em;color:var(--faint);text-transform:uppercase;line-height:1.1}
 .glyph{width:22px;height:22px;flex:none}
@@ -219,6 +235,10 @@ input.up{text-transform:uppercase}
 /* ---------- pen & touch ---------- */
 #penDot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:1.5px solid var(--flag);border-radius:50%;pointer-events:none;display:none;z-index:4;mix-blend-mode:difference}
 #penDot.show{display:block}
+#calNag{position:absolute;left:50%;top:14px;transform:translateX(-50%);z-index:7;display:flex;align-items:center;gap:9px;
+  background:var(--s1);border:1px solid var(--flag);border-left:3px solid var(--flag);padding:8px 11px;border-radius:3px;
+  box-shadow:0 12px 34px rgba(0,0,0,.5);font-size:12px;color:var(--txt);max-width:min(92%,620px)}
+#calNag .k{font-family:var(--mono);border:1px solid var(--line2);border-radius:2px;padding:0 4px;color:var(--dim)}
 #drawbar{position:absolute;left:50%;bottom:16px;transform:translateX(-50%);display:none;align-items:center;gap:7px;background:var(--s1);border:1px solid var(--line2);padding:7px 8px 7px 13px;border-radius:3px;box-shadow:0 12px 34px rgba(0,0,0,.55);z-index:6}
 #drawbar.show{display:flex}
 #drawbar .rd{font-family:var(--mono);font-size:12px;color:var(--amber);margin-right:4px;white-space:nowrap}
@@ -257,6 +277,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn mobtog" id="togL">Sheets</button>
     <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
     <button class="btn pri" id="btnOpen">Import PDF</button>
+    <button class="btn" id="btnTheme" title="Light or dark">☀︎</button>
     <button class="btn" id="btnSave" title="Save project file (⌘S)">Save</button>
     <button class="btn" id="btnProj">Project</button>
     <button class="btn mobtog" id="togR">Takeoff</button>
@@ -268,6 +289,14 @@ body.haspen #penFlag{display:inline}
     <h3>Sheets <span class="c" id="cSheets">0</span></h3>
     <div id="sheetList"></div>
     <div class="empty" id="sheetEmpty">No drawings loaded. Import a plan, elevation, or millwork shop drawing to begin.</div>
+  </div>
+  <div class="sec">
+    <h3>Show markups</h3>
+    <div class="body" id="layerBox" style="display:flex;flex-wrap:wrap;gap:4px"></div>
+    <div class="body" style="padding-top:0">
+      <select id="codeMode" style="width:100%"></select>
+      <div id="codeKey" style="display:flex;flex-wrap:wrap;gap:5px;margin-top:6px"></div>
+    </div>
   </div>
   <div class="sec">
     <h3>Markups on sheet <span class="c" id="cAnn">0</span></h3>
@@ -331,6 +360,11 @@ body.haspen #penFlag{display:inline}
   </div>
   <!-- overlays live in <main>, not #viewport: children of the scroll container
        would drift with the content instead of staying pinned to the viewer -->
+  <div id="calNag" style="display:none">
+    <b>Set the scale first.</b> Pick a standard scale, or trace a dimension you trust with the ruler
+    <span class="k">C</span> — every length depends on it.
+    <button class="btn sm pri" id="calNagGo">Calibrate now</button>
+  </div>
   <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbClose">Close loop</button><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
   <div id="inspector">
     <div class="hd"><span id="insTitle">Markup</span><button class="btn sm ghost" id="insClose" style="margin-left:auto;padding:0 6px">✕</button></div>
@@ -346,6 +380,10 @@ body.haspen #penFlag{display:inline}
     <button class="tab" data-pane="pCuts">Pieces</button>
   </div>
   <div class="pane on" id="pTreat">
+    <div class="sec"><div class="body" style="padding-bottom:0">
+      <input type="search" id="treatFind" placeholder="Filter by tag, type, zone, room, product…" style="width:100%">
+      <div class="hint" id="treatFindHint" style="margin-top:4px;display:none"></div>
+    </div></div>
     <div class="sec"><h3>Runs &amp; treatments <span class="c" id="cTreat">0</span></h3>
       <div class="body" style="display:flex;gap:6px"><button class="btn" id="btnAddTreat" style="flex:1">Add treatment</button><button class="btn" id="btnFromSel" title="Build from selected dimension">From selection</button></div>
     </div>
@@ -409,6 +447,7 @@ body.haspen #penFlag{display:inline}
   <div class="f" id="stCoord">—</div>
   <div class="f" id="penFlag">✎ Apple Pencil</div>
   <div class="f r" id="stSave">Not saved</div>
+  <div class="f" id="stSheet">—</div>
   <div class="f" id="stTot">0 runs · 0'-0"</div>
 </footer>
 </div>
@@ -424,7 +463,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.11.0';
+const APP_VER='1.12.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1064,6 +1103,9 @@ function syncScaleUI(){
   $('#tbScale').textContent=s?s.label:'not set';
   $('#tbScale').style.color=s?'var(--amber)':'var(--flag)';
   $('#stScale').textContent='Scale: '+(s?s.label:'not set — calibrate before measuring');
+  /* calibration comes before everything else, so say so where it cannot be missed */
+  const bar=$('#calNag');
+  if(bar) bar.style.display=(V.docId&&FILES[V.docId]&&!s)?'':'none';
 }
 
 /* ---- overlay drawing ---- */
@@ -1078,10 +1120,13 @@ const CHIP_BASE=16;
 let CHIP_FS=CHIP_BASE, CHIP_H=Math.round(CHIP_BASE*1.62), W_MUL=1;
 function setDrawScale(m){ CHIP_FS=CHIP_BASE*m; CHIP_H=Math.round(CHIP_FS*1.62); W_MUL=m; }
 const chipW=txt=>String(txt).length*CHIP_FS*.62+CHIP_FS;
+/* the sheet is white in light mode, so label backgrounds flip with the theme */
+let OVL='#171512';
+const syncOvl=()=>{ OVL=document.body.classList.contains('light')?'#FFFFFF':'#171512'; };
 function chip(x,y,txt,col,anchor){
   const w=chipW(txt), h=CHIP_H;
   let cx=x-w/2; if(anchor==='l') cx=x+8;
-  return '<g><rect x="'+cx.toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2.5" fill="#171512" fill-opacity=".95" stroke="'+col+'" stroke-opacity=".8"/>'
+  return '<g><rect x="'+cx.toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2.5" fill="'+OVL+'" fill-opacity=".95" stroke="'+col+'" stroke-opacity=".8"/>'
     +'<text x="'+(cx+w/2).toFixed(1)+'" y="'+(y+CHIP_FS*.37).toFixed(1)+'" fill="'+col+'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="600" font-size="'+CHIP_FS+'" text-anchor="middle">'+esc(txt)+'</text></g>';
 }
 /* greedy wrap for text boxes; honours the author's own line breaks */
@@ -1108,7 +1153,7 @@ function tick(a,b,at){ // drafting slash tick perpendicular-ish at endpoint
 function drawOverlay(){
   if(!V.vp){ ov.innerHTML=''; return; }
   invalidateAnns();          /* cheap: the key check re-filters only when needed */
-  const list=pageAnns();
+  const list=pageAnns().filter(annVisible);
   let s='';
   for(const a of list) s+=drawAnn(a,a.id===V.sel);
   if(V.draft) s+=drawAnn(V.draft,false,true);
@@ -1121,7 +1166,7 @@ function drawOverlay(){
   ov.innerHTML=s;
 }
 function drawAnn(a,selected,isDraft){
-  const col=a.color||'#E4694F', pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
+  const col=colOf(a), pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
   let g='<g opacity="'+o+'">';
   if(selected&&pts.length){
     const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
@@ -1142,7 +1187,7 @@ function drawAnn(a,selected,isDraft){
     }
     /* vertex handles make a tapped poly readable at a glance */
     if(a.type==='line'&&!a.free&&pts.length>2)
-      g+=pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)+'" fill="#171512" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
+      g+=pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)+'" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
     /* per-segment lengths — every segment on a poly, skipping ones too short to label */
     if(!a.free&&(a.poly||pts.length<=8)&&(pts.length>2||isDraft)){
       annSegs(a).forEach(sg=>{
@@ -1199,7 +1244,7 @@ function drawAnn(a,selected,isDraft){
       const wPt=Math.abs(a.pts[1][0]-a.pts[0][0]), sz=a.size||11;
       const lines=wrapText(a.text||'',Math.max(1,Math.floor((wPt-sz*.8)/(sz*.55))));
       g+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2" '
-        +'fill="#171512" fill-opacity="'+(a.fill===false?0:.9)+'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
+        +'fill="'+OVL+'" fill-opacity="'+(a.fill===false?0:.9)+'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
       g+='<clipPath id="cp_'+a.id+'"><rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'"/></clipPath>';
       g+='<g clip-path="url(#cp_'+a.id+')">'+lines.map((l,i)=>
         '<text x="'+(x+fs*.4).toFixed(1)+'" y="'+(y+lh*(i+.9)).toFixed(1)+'" fill="'+col
@@ -1210,7 +1255,7 @@ function drawAnn(a,selected,isDraft){
       const lines=String(a.text||'').split('\n').slice(0,40);
       g+=lines.map((l,i)=>'<text x="'+x.toFixed(1)+'" y="'+(y+lh*i).toFixed(1)+'" fill="'+col
         +'" font-family="Helvetica Neue,Helvetica,Arial,sans-serif" font-size="'+fs.toFixed(1)+'" '
-        +'stroke="#141210" stroke-width="'+(fs*.18).toFixed(2)+'" paint-order="stroke">'+esc(l)+'</text>').join('');
+        +'stroke="'+OVL+'" stroke-width="'+(fs*.18).toFixed(2)+'" paint-order="stroke">'+esc(l)+'</text>').join('');
       if(!lines.length||!String(a.text||'').trim()) g+=chip(x,y,'empty text',col);
     }
   }
@@ -1220,12 +1265,12 @@ function drawAnn(a,selected,isDraft){
     const w=Math.min(230,Math.max(90,Math.max(...lines.map(l=>l.length))*6.1+16)),h=lines.length*13+11;
     g+='<line x1="'+x+'" y1="'+y+'" x2="'+(x+16)+'" y2="'+(y-14)+'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
     g+='<circle cx="'+x+'" cy="'+y+'" r="3" fill="'+col+'"/>';
-    g+='<rect x="'+(x+16)+'" y="'+(y-14-h)+'" width="'+w+'" height="'+h+'" rx="2" fill="#171512" fill-opacity=".94" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
+    g+='<rect x="'+(x+16)+'" y="'+(y-14-h)+'" width="'+w+'" height="'+h+'" rx="2" fill="'+OVL+'" fill-opacity=".94" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
     lines.forEach((l,i)=>{ g+='<text x="'+(x+24)+'" y="'+(y-14-h+16+i*13)+'" fill="#EFE8DB" font-family="Helvetica Neue,Helvetica,Arial,sans-serif" font-size="11">'+esc(l)+'</text>'; });
   }
   if(a.type==='link'){
     const [x,y]=pts[0], t=a.target&&P.docs.find(d=>d.id===a.target.doc);
-    g+='<path d="M'+x+' '+(y-9)+' l9 9 -9 9 -9 -9 z" fill="#171512" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
+    g+='<path d="M'+x+' '+(y-9)+' l9 9 -9 9 -9 -9 z" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
     g+='<path d="M'+(x-3.5)+' '+y+' h7" stroke="'+col+'" stroke-width="'+(W*.95).toFixed(2)+'"/>';
     g+=chip(x,y-20,(t?t.name.replace(/\.pdf$/i,''):'missing')+' p'+(a.target?a.target.page:'?'),col);
   }
@@ -1265,7 +1310,7 @@ const invalidateAnns=()=>{ _pcKey=null; };
 function hitTest(sx,sy,tol){
   if(!V.vp) return null;            /* callable before a sheet is open */
   tol=tol||7;
-  const list=pageAnns().slice().reverse();
+  const list=pageAnns().filter(annVisible).slice().reverse();
   for(const a of list){
     const pts=annPts(a).map(sp);
     if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'){
@@ -1746,6 +1791,10 @@ function ctxForAnn(a){
     drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
   if(a.type==='link'&&a.target) items.push({id:'op',t:'Open linked drawing',fn:()=>openDoc(a.target.doc,a.target.page,true)});
   if(/^(note|box|text|tbox|link)$/.test(a.type)) items.push({id:'ed',t:'Edit text…',fn:()=>editAnnText(a)});
+  items.push({id:'hd',t:a.hidden?'Show this markup':'Hide this markup',fn:()=>{
+    snap(); a.hidden=!a.hidden;
+    if(a.hidden&&V.sel===a.id){ V.sel=null; showInspector(null); }
+    drawOverlay(); renderAnnList(); markDirty(); }});
   if(a.type!=='cal') items.push({id:'lw',t:'Line weight…',fn:async()=>{
     const r=await dlg({title:'Line weight',fields:[{k:'w',type:'select',label:'Weight',
       opts:WEIGHTS.map(x=>({v:x.v,t:x.t+' · '+x.v})),val:wOf(a)}],ok:'Apply'});
@@ -1870,12 +1919,24 @@ async function finishDraft(){
     const L=parseLen(r.len);
     if(!isFinite(L)||L<=0){ toast('Could not read that length'); return; }
     const ratio=L*72/dist;
+    /* Calibration is the one step that silently invalidates every number
+       downstream, so show what it implies and let it be rejected. */
+    const near=SCALES.reduce((best,sc)=>Math.abs(sc[1]-ratio)<Math.abs(best[1]-ratio)?sc:best,SCALES[0]);
+    const off=Math.abs(near[1]-ratio)/near[1];
+    const sheetW=V.pw?fmtRun(V.pw*ratio/72):'—', sheetH=V.ph?fmtRun(V.ph*ratio/72):'—';
+    const ck=await dlg({title:'Check this scale',fields:[
+      {k:'ok',type:'check',cap:'The numbers below look right',val:false}
+    ],ok:'Use this scale',cancel:'Go back',
+      note:'You traced '+fmtLen(L)+'.  That makes the scale '+ratioLabel(ratio)+'.'
+        +(off<0.02?'  That is a standard scale.':'  Nearest standard scale is '+near[0]+' — '+(off*100).toFixed(0)+'% away, so double-check you traced the right dimension.')
+        +'  At this scale the whole sheet is '+sheetW+' × '+sheetH+'.'});
+    if(!ck||!ck.ok){ toast('Scale not applied — trace the dimension again'); drawOverlay(); return; }
     snap();
     /* the calibration line is scaffolding — the scale is what we keep, so the
        line comes off the drawing as soon as it has done its job */
     P.ann=P.ann.filter(x=>x.type!=='cal');
     setScale(ratio,r.all);
-    toast('Scale set to '+ratioLabel(ratio));
+    toast('Scale set to '+ratioLabel(ratio)+' — verify against a second known dimension');
     setTool('line');
   }
 }
@@ -2018,6 +2079,58 @@ function showInspector(a){
 }
 $('#insClose').onclick=()=>{ V.sel=null; showInspector(null); drawOverlay(); };
 
+/* ---- automatic colour coding ----
+   Colouring by type or zone by hand does not survive a busy sheet, so derive it.
+   A markup's own colour still wins when coding is off. */
+const CODE_MODES=[{v:'off',t:'Manual colours'},{v:'type',t:'Colour by TYPE'},{v:'zone',t:'Colour by Zone #'}];
+function codeKeyFor(a){
+  if(!P.code||P.code==='off') return null;
+  const t=a.treat&&P.treat.find(x=>x.id===a.treat);
+  if(!t) return null;
+  const k=(P.code==='zone'?t.zone:t.type)||'';
+  return k.trim()||null;
+}
+/* stable colour per key: the same type always gets the same swatch */
+function codeColor(key){
+  let h=0;
+  for(let i=0;i<key.length;i++) h=(h*31+key.charCodeAt(i))|0;
+  return COLORS[Math.abs(h)%COLORS.length];
+}
+const colOf=a=>{ const k=codeKeyFor(a); return k?codeColor(k):(a.color||'#E4694F'); };
+function renderCodeKey(){
+  const box=$('#codeKey'); if(!box) return;
+  const sel=$('#codeMode'); if(sel) sel.value=P.code||'off';
+  if(!P.code||P.code==='off'){ box.innerHTML=''; return; }
+  const keys=new Set();
+  P.treat.forEach(t=>{ const k=((P.code==='zone'?t.zone:t.type)||'').trim(); if(k) keys.add(k); });
+  box.innerHTML=[...keys].sort().map(k=>'<span class="ckey"><i style="background:'+codeColor(k)+'"></i>'+esc(k)+'</span>').join('')
+    ||'<div class="hint">Give treatments a '+(P.code==='zone'?'Zone #':'TYPE')+' to colour them.</div>';
+}
+
+/* ---- markup visibility ----
+   Notes and text get in the way while measuring, so each kind can be hidden.
+   Hidden markups still count in the takeoff — this is about the view only. */
+const LAYERS=[['line','Dimensions'],['arc','Arcs'],['box','Boxes'],['text','Text'],
+  ['tbox','Text boxes'],['note','Notes'],['link','Links'],['ink','Ink']];
+const layerOn=type=>!(P.hide&&P.hide[type]);
+const annVisible=a=>layerOn(a.type)&&!a.hidden;
+function renderLayers(){
+  renderCodeKey();
+  const box=$('#layerBox'); if(!box) return;
+  const counts={};
+  P.ann.filter(a=>a.doc===V.docId&&a.page===V.page).forEach(a=>{counts[a.type]=(counts[a.type]||0)+1;});
+  box.innerHTML=LAYERS.filter(([k])=>counts[k]).map(([k,label])=>
+    '<button class="btn sm'+(layerOn(k)?' pri':'')+'" data-layer="'+k+'">'+esc(label)+' '+counts[k]+'</button>').join('')
+    ||'<div class="hint">No markups on this page yet.</div>';
+  $$('[data-layer]',box).forEach(b=>b.onclick=()=>{
+    P.hide=P.hide||{};
+    const k=b.dataset.layer;
+    P.hide[k]=layerOn(k);
+    if(V.sel){ const sa=P.ann.find(x=>x.id===V.sel); if(sa&&!annVisible(sa)){ V.sel=null; showInspector(null); } }
+    renderLayers(); drawOverlay(); renderAnnList(); markDirty();
+  });
+}
+
 /* ---- left rail lists ---- */
 function renderSheets(){
   const h=$('#sheetList'); h.innerHTML='';
@@ -2035,6 +2148,7 @@ function renderSheets(){
   });
 }
 function renderAnnList(){
+  renderLayers();
   const h=$('#annList'); h.innerHTML='';
   const list=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page&&a.type!=='cal');
   $('#cAnn').textContent=list.length; $('#annEmpty').style.display=list.length?'none':'';
@@ -2046,7 +2160,9 @@ function renderAnnList(){
       :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
-    el.innerHTML='<span class="pill" style="border-color:'+a.color+';color:'+a.color+'">'+kind+'</span>'
+    el.style.opacity=annVisible(a)?'':'.45';
+    const ec=colOf(a);
+    el.innerHTML='<span class="pill" style="border-color:'+ec+';color:'+ec+'">'+kind+'</span>'
       +'<div style="flex:1;min-width:0"><div class="t">'+esc(String(label).slice(0,34))+'</div>'
       +(t?'<div class="s">'+esc(tagOf(t)+' · '+t.name)+'</div>':'')+'</div>';
     el.onclick=()=>{ V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList();
@@ -2158,12 +2274,25 @@ function openTreat(id,focus){
   const el=$('.card[data-id="'+id+'"]'); if(el){ el.scrollIntoView({block:'nearest'}); if(focus){ const i=el.querySelector('[data-t="name"]'); if(i){i.focus();i.select();} } }
 }
 
+function treatMatch(t,q){
+  if(!q) return true;
+  const r=calc(t), d=P.docs.find(x=>x.id===t.docId);
+  const hay=[tagOf(t),t.type,t.zone,t.name,t.room,t.notes,r.f.name,r.c.name,r.ps.name,d&&d.name]
+    .filter(Boolean).join(' ').toLowerCase();
+  /* every whitespace-separated term must appear, so "cove z2" narrows */
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
+}
 function renderTreatments(){
   const h=$('#treatList'); const open=$$('.card.on').map(c=>c.dataset.id);
   h.innerHTML='';
-  $('#cTreat').textContent=P.treat.length;
+  const q=(($('#treatFind')||{}).value||'').trim();
+  const shown=P.treat.filter(t=>treatMatch(t,q));
+  $('#cTreat').textContent=q?shown.length+'/'+P.treat.length:P.treat.length;
   $('#treatEmpty').style.display=P.treat.length?'none':'';
-  P.treat.forEach(t=>{
+  const fh=$('#treatFindHint');
+  if(fh){ fh.style.display=q?'':'none';
+    fh.textContent=q?(shown.length?'Showing '+shown.length+' of '+P.treat.length+' treatments':'Nothing matches "'+q+'"'):''; }
+  shown.forEach(t=>{
     const r=calc(t);
     const el=document.createElement('div'); el.className='card'+(open.includes(t.id)?' on':''); el.dataset.id=t.id;
     const fixOpts=P.fix.map(f=>'<option value="'+f.id+'"'+(f.id===t.fixId?' selected':'')+'>'+esc(f.name)+'</option>').join('');
@@ -2176,18 +2305,18 @@ function renderTreatments(){
       +'<span class="len">'+(t.qty>1?t.qty+' × ':'')+fmtLen(r.L)+'</span></div>'
       +'<div class="bd">'
       +'<div class="grid3">'
-        +'<div class="f"><label>Type</label><input type="text" class="up" data-t="type" value="'+esc(t.type||'')+'" placeholder="COVE"></div>'
-        +'<div class="f"><label>Zone #</label><input type="text" class="up" data-t="zone" value="'+esc(t.zone||'')+'" placeholder="Z1"></div>'
-        +'<div class="f"><label>Tag (type + zone)</label><input type="text" class="up" value="'+esc(tagOf(t))+'" disabled title="Built from Type and Zone #"></div>'
+        +'<div class="f"><label>Type</label><input type="text" class="up" data-t="type" data-tab="1" value="'+esc(t.type||'')+'" placeholder="COVE"></div>'
+        +'<div class="f"><label>Zone #</label><input type="text" class="up" data-t="zone" data-tab="2" value="'+esc(t.zone||'')+'" placeholder="Z1"></div>'
+        +'<div class="f"><label>Tag (type + zone)</label><input type="text" class="up" value="'+esc(tagOf(t))+'" disabled tabindex="-1" title="Built from Type and Zone #"></div>'
       +'</div>'
       +'<div class="grid2" style="margin-top:8px">'
-        +'<div class="f"><label>Treatment name</label><input type="text" data-t="name" value="'+esc(t.name)+'"></div>'
-        +'<div class="f"><label>Room / location</label><input type="text" data-t="room" value="'+esc(t.room)+'"></div>'
+        +'<div class="f"><label>Treatment name</label><input type="text" data-t="name" data-tab="3" value="'+esc(t.name)+'"></div>'
+        +'<div class="f"><label>Room / location</label><input type="text" data-t="room" data-tab="4" value="'+esc(t.room)+'"></div>'
       +'</div>'
       +'<div class="grid3" style="margin-top:8px">'
-        +'<div class="f"><label>Length per run</label><input type="text" data-t="len" value="'+(t.annId?fmtLen(r.L):(r.L?fmtLen(r.L):''))+'" '+(t.annId?'disabled':'')+' placeholder="'+esc(unitHint())+'"></div>'
-        +'<div class="f"><label>Identical runs</label><input type="number" min="1" step="1" data-t="qty" value="'+(t.qty||1)+'"></div>'
-        +'<div class="f"><label>Feed points / run</label><input type="number" min="0" step="1" data-t="feedOv" value="'+(t.feedOv||'')+'" placeholder="auto: '+r.autoFeeds+'"></div>'
+        +'<div class="f"><label>Length per run</label><input type="text" data-t="len" data-tab="5" value="'+(t.annId?fmtLen(r.L):(r.L?fmtLen(r.L):''))+'" '+(t.annId?'disabled tabindex="-1"':'')+' placeholder="'+esc(unitHint())+'"></div>'
+        +'<div class="f"><label>Identical runs</label><input type="number" min="1" step="1" data-t="qty" data-tab="6" value="'+(t.qty||1)+'"></div>'
+        +'<div class="f"><label>Feed points / run</label><input type="number" min="0" step="1" data-t="feedOv" data-tab="7" value="'+(t.feedOv||'')+'" placeholder="auto: '+r.autoFeeds+'"></div>'
       +'</div>'
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Cut rounding ('+esc(r.locked?'locked':r.inc>0?fmtLen(r.inc)+' increments':'cut to any length')+')</label>'
@@ -2215,6 +2344,10 @@ function renderTreatments(){
         +'<button class="btn sm" data-a="del" style="color:var(--flag);margin-left:auto">Delete</button>'
       +'</div></div>';
     el.querySelector('.hd').onclick=()=>{ el.classList.toggle('on'); };
+    /* explicit reading order: type, zone, name, room, length, runs, feeds, then
+       the selects in document order. Tab used to jump around the grid. */
+    $$('[data-tab]',el).sort((x,y)=>+x.dataset.tab-+y.dataset.tab)
+      .forEach((inp,i)=>{ inp.tabIndex=0; inp.dataset.order=i+1; });
     el.addEventListener('click',ev=>{
       const b=ev.target.closest('[data-cut]'); if(!b) return;
       ev.preventDefault(); ev.stopPropagation();
@@ -2361,7 +2494,18 @@ function stats(){
   const n=P.treat.reduce((s,t)=>s+Math.max(1,+t.qty||1),0);
   const L=P.treat.reduce((s,t)=>s+calc(t).tot.cut,0);
   const W=P.treat.reduce((s,t)=>s+calc(t).tot.watts,0);
-  $('#stTot').innerHTML=n+' runs · <b>'+fmtRun(L)+'</b> LED · '+W.toFixed(0)+' W';
+  $('#stTot').innerHTML='Project: '+n+' runs · <b>'+fmtRun(L)+'</b> LED · '+W.toFixed(0)+' W';
+  /* a running total for the sheet in front of you, not just the whole job */
+  const el=$('#stSheet');
+  if(!V.docId){ el.textContent='—'; el.title=''; return; }
+  const here=P.treat.filter(t=>t.docId===V.docId);
+  const hp=here.filter(t=>(t.page||1)===V.page);
+  const sum=list=>({n:list.reduce((s,t)=>s+Math.max(1,+t.qty||1),0),
+    L:list.reduce((s,t)=>s+calc(t).tot.cut,0),W:list.reduce((s,t)=>s+calc(t).tot.watts,0)});
+  const a=sum(hp), b=sum(here);
+  el.innerHTML='This page: '+a.n+' runs · <b>'+fmtRun(a.L)+'</b> LED';
+  el.title='Page '+V.page+': '+a.n+' runs, '+fmtRun(a.L)+' LED, '+a.W.toFixed(0)+' W\n'
+    +'Whole sheet: '+b.n+' runs, '+fmtRun(b.L)+' LED, '+b.W.toFixed(0)+' W';
 }
 
 /* ============================================================
@@ -2958,7 +3102,23 @@ $$('.tab').forEach(b=>b.onclick=()=>{ $$('.tab').forEach(x=>x.classList.remove('
   $$('.pane').forEach(p=>p.classList.toggle('on',p.id===b.dataset.pane)); });
 $('#btnOpen').onclick=$('#btnOpen2').onclick=()=>$('#fileInput').click();
 $('#fileInput').onchange=e=>{ openFiles([...e.target.files]); e.target.value=''; };
-$('#btnAddTreat').onclick=()=>{ const t=newTreat(null); renderTreatments(); renderBom(); openTreat(t.id,true); };
+function applyTheme(){
+  document.body.classList.toggle('light',P.theme==='light');
+  const b=$('#btnTheme'); if(b){ b.textContent=P.theme==='light'?'☾':'☀︎';
+    b.title=P.theme==='light'?'Switch to dark':'Switch to light'; }
+  const m=document.querySelector('meta[name="theme-color"]');
+  if(m) m.setAttribute('content',P.theme==='light'?'#EDEAE3':'#141210');
+  syncOvl(); drawOverlay();
+}
+$('#btnTheme').onclick=()=>{ P.theme=P.theme==='light'?'dark':'light'; applyTheme(); markDirty(); };
+$('#calNagGo').onclick=()=>{ setTool('cal'); toast('Drag along a dimension you can read on the sheet'); };
+$('#codeMode').innerHTML=CODE_MODES.map(m=>'<option value="'+m.v+'">'+m.t+'</option>').join('');
+$('#codeMode').onchange=e=>{ P.code=e.target.value; renderCodeKey(); drawOverlay(); renderAnnList(); markDirty(); };
+$('#treatFind').oninput=()=>renderTreatments();
+$('#treatFind').onsearch=()=>renderTreatments();
+$('#btnAddTreat').onclick=()=>{ const t=newTreat(null);
+  if($('#treatFind').value){ $('#treatFind').value=''; }   /* never hide the one just added */
+  renderTreatments(); renderBom(); openTreat(t.id,true); };
 $('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'));
   if(!a){toast('Select a dimension or arc on the drawing first');return;} treatFromAnn(a); };
 $('#togL').onclick=()=>document.body.classList.toggle('lo');
@@ -3035,6 +3195,7 @@ function boot(keepDoc){
     +'</optgroup><optgroup label="Metric">'+SCALES.slice(13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')+'</optgroup>';
   $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
   $('#btnFinger').style.display=coarse?'':'none';
+  applyTheme();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(V.vp) drawOverlay();      /* markups are state too — keep the sheet in step */
@@ -3054,6 +3215,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
   undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
   arcOf,arcPts,annPts,dupAcross,exportSheetPdf,sheetBitmap,jpegPdf,overlaySvgFor,
+  colOf,codeColor,renderPage,layerOn,annVisible,treatMatch,applyTheme,
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
   render(){boot()}};
