@@ -341,6 +341,7 @@ body.haspen #penFlag{display:inline}
     <button class="tab on" data-pane="pTreat">Treatments</button>
     <button class="tab" data-pane="pLib">Library</button>
     <button class="tab" data-pane="pBom">Cut list &amp; BOM</button>
+    <button class="tab" data-pane="pCuts">Pieces</button>
   </div>
   <div class="pane on" id="pTreat">
     <div class="sec"><h3>Runs &amp; treatments <span class="c" id="cTreat">0</span></h3>
@@ -353,6 +354,11 @@ body.haspen #penFlag{display:inline}
     <div class="sec"><h3>LED product <span class="c" id="cFix">0</span></h3><div id="fixList"></div><div class="body"><button class="btn" id="btnAddFix">Add LED product</button></div></div>
     <div class="sec"><h3>Channel &amp; mounting <span class="c" id="cCh">0</span></h3><div id="chList"></div><div class="body"><button class="btn" id="btnAddCh">Add channel</button></div></div>
     <div class="sec"><h3>Power supplies <span class="c" id="cPsu">0</span></h3><div id="psuList"></div><div class="body"><button class="btn" id="btnAddPsu">Add supply</button></div></div>
+    <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
+      <input type="file" id="libInput" accept=".json,application/json" hidden>
+      <button class="btn" id="btnLibSave">Save library file</button>
+      <button class="btn" id="btnLibOpen">Import library</button>
+    </div><div class="hint" style="padding:0 12px 10px">Keep your company's products in one file and load it into every project.</div></div>
     <div class="sec"><div class="empty">Seeded with generic placeholder products. Replace the cut increment, watts per foot, maximum feed run, and stock lengths with the values from your actual manufacturer's cut sheet before issuing anything.</div></div>
   </div>
   <div class="pane" id="pBom">
@@ -362,8 +368,11 @@ body.haspen #penFlag{display:inline}
     </div></div>
     <div class="sec"><h3>Cut list</h3><div class="tw"><table id="cutTbl"></table></div></div>
     <div class="sec"><h3>Bill of materials</h3><div class="tw"><table id="bomTbl"></table></div></div>
+    <div class="sec"><h3>By zone</h3><div class="tw"><table id="zoneTbl"></table></div></div>
+    <div class="sec"><h3>By sheet</h3><div class="tw"><table id="sheetTbl"></table></div></div>
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn" id="btnCsvCut">Export cut list</button>
+      <button class="btn" id="btnCsvZone">Export zone rollup</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
     </div></div>
@@ -376,6 +385,17 @@ body.haspen #penFlag{display:inline}
       </div>
       <div class="hint" style="margin-top:6px">Saves the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> file (⌘S / Ctrl-S). Drawings are not included: open the file, re-import the same PDFs, and every markup reattaches.</div>
       <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current.</div>
+    </div></div>
+  </div>
+  <div class="pane" id="pCuts">
+    <div class="sec"><h3>Pieces to cut</h3><div class="body"><div class="hint">One row per physical piece, in the order they come off the run. Channel is cut from stock lengths; LED is cut to the locked or rounded length.</div></div>
+      <div class="tw"><table id="pieceTbl"></table></div></div>
+    <div class="sec"><h3>Channel nesting</h3><div class="body"><div class="hint">Off-cuts nested into stock lengths, longest piece first. Each row is one stock length to buy and what to cut from it.</div></div>
+      <div class="tw"><table id="nestTbl"></table></div></div>
+    <div class="sec"><h3>Yield</h3><div class="tw"><table id="yieldTbl"></table></div></div>
+    <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn" id="btnCsvPieces">Export piece list</button>
+      <button class="btn" id="btnCsvNest">Export nesting</button>
     </div></div>
   </div>
 </aside>
@@ -401,7 +421,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.7.0';
+const APP_VER='1.8.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1114,7 +1134,8 @@ function hitTest(sx,sy,tol){
    ============================================================ */
 /* ---- undo history ---- */
 const HIST=[],FUT=[];
-const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq});
+const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq,
+  fix:P.fix,ch:P.ch,psu:P.psu});
 function snap(){ HIST.push(snapshot()); if(HIST.length>60) HIST.shift(); FUT.length=0; syncUndo(); saveHist(); }
 /* Undo depth is a working state, not part of the deliverable, so it rides in
    local storage rather than the project file. */
@@ -1136,8 +1157,14 @@ function loadHist(){
   }catch(e){}
 }
 function clearHist(){ HIST.length=0; FUT.length=0; syncUndo(); try{localStorage.removeItem(HKEY)}catch(e){} }
-function restore(j){ const d=JSON.parse(j); P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq; invalidateAnns();
-  V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty(); }
+function restore(j){
+  const d=JSON.parse(j);
+  P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq;
+  if(d.fix) P.fix=d.fix; if(d.ch) P.ch=d.ch; if(d.psu) P.psu=d.psu;
+  invalidateAnns();
+  V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks();
+  renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty();
+}
 function undo(){ if(!HIST.length) return toast('Nothing to undo'); FUT.push(snapshot()); restore(HIST.pop()); syncUndo(); saveHist(); }
 function redo(){ if(!FUT.length) return toast('Nothing to redo'); HIST.push(snapshot()); restore(FUT.pop()); syncUndo(); saveHist(); }
 function syncUndo(){ const u=$('#btnUndo'),r=$('#btnRedo'); if(u)u.style.opacity=HIST.length?1:.35; if(r)r.style.opacity=FUT.length?1:.35; }
@@ -2187,6 +2214,79 @@ $('#btnAddPsu').onclick=()=>editPsu(null);
 /* ============================================================
    F) cut list, bill of materials, export
    ============================================================ */
+/* ============================================================
+   Per-piece cut list, off-cut nesting, and rollups
+   ============================================================ */
+/* One row per physical piece, in the order it comes off the run. A channel run
+   longer than a stock length is made of several pieces; the LED is one piece
+   per run at the cut length. */
+function pieceData(){
+  const rows=[];
+  P.treat.forEach(t=>{
+    const r=calc(t); if(r.L<=0) return;
+    const tag=tagOf(t);
+    for(let run=1;run<=r.qty;run++){
+      if(r.cut>0) rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
+        item:r.f.name,len:r.cut,note:r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length',
+        locked:r.locked,chId:null});
+      if(r.stock>0){
+        let rem=r.L,i=1;
+        while(rem>1e-6){
+          const p=Math.min(rem,r.stock);
+          rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:'channel',item:r.c.name,len:p,
+            note:(Math.abs(p-r.stock)<1e-6?'full stock length':'off-cut piece '+i),locked:false,
+            chId:r.c.id,stock:r.stock});
+          rem-=p; i++;
+        }
+      }
+    }
+  });
+  return rows;
+}
+/* First-fit-decreasing bin packing: the standard shop approach of cutting the
+   longest piece first out of a fresh length. Not optimal, but within a few
+   percent of it and predictable to follow on site. */
+function nestPieces(pieces,stock){
+  const bins=[];
+  pieces.slice().sort((a,b)=>b-a).forEach(p=>{
+    let b=bins.find(x=>x.left>=p-1e-6);
+    if(!b){ b={left:stock,cuts:[]}; bins.push(b); }
+    b.left-=p; b.cuts.push(p);
+  });
+  return bins;
+}
+function nestData(){
+  const by={};
+  /* group on the channel id the piece was produced from — tags are TYPE + Zone
+     and two treatments may legitimately share one */
+  pieceData().filter(r=>r.kind==='channel'&&r.chId).forEach(r=>{
+    const c=P.ch.find(x=>x.id===r.chId)||P.ch[0];
+    by[r.chId]=by[r.chId]||{name:c.name,stock:+r.stock||+c.stock||0,pieces:[]};
+    by[r.chId].pieces.push(r.len);
+  });
+  const out=[];
+  Object.values(by).forEach(g=>{
+    if(!g.stock) return;
+    const bins=nestPieces(g.pieces,g.stock);
+    const used=g.pieces.reduce((a,b)=>a+b,0), bought=bins.length*g.stock;
+    out.push({name:g.name,stock:g.stock,bins,used,bought,
+      yield:bought?used/bought:0,waste:bought-used});
+  });
+  return out;
+}
+/* totals grouped by an arbitrary key — zone, sheet, type */
+function rollup(keyFn,labelFn){
+  const g={};
+  P.treat.forEach(t=>{
+    const r=calc(t); if(r.L<=0) return;
+    const k=keyFn(t)||'—';
+    g[k]=g[k]||{label:labelFn?labelFn(t):k,runs:0,led:0,ch:0,watts:0,feeds:0,psu:0};
+    g[k].runs+=r.qty; g[k].led+=r.tot.cut; g[k].ch+=r.tot.chLen;
+    g[k].watts+=r.tot.watts; g[k].feeds+=r.tot.feeds; g[k].psu+=r.psuQty;
+  });
+  return Object.entries(g).map(([k,v])=>Object.assign({key:k},v))
+    .sort((a,b)=>String(a.label).localeCompare(String(b.label)));
+}
 function bomData(){
   const waste=1+clamp((+P.waste||0)/100,0,.5);
   const led={},chn={},clip={},cap={},join={},pw={};
@@ -2239,6 +2339,58 @@ function renderBom(){
   const rows=bomData();
   $('#bomTbl').innerHTML='<tr><th>Cat.</th><th>Item</th><th class="n">Qty</th><th>Unit</th></tr>'
     +rows.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
+  renderRollups(); renderPieces();
+}
+function rollTable(el,head,rows){
+  if(!rows.length){ el.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; return; }
+  let h='<tr><th>'+head+'</th><th class="n">Runs</th><th class="n">LED</th><th class="n">Channel</th><th class="n">W</th><th class="n">Feeds</th><th class="n">Supplies</th></tr>';
+  const tot={runs:0,led:0,ch:0,watts:0,feeds:0,psu:0};
+  rows.forEach(v=>{
+    ['runs','led','ch','watts','feeds','psu'].forEach(k=>tot[k]+=v[k]);
+    h+='<tr><td>'+esc(v.label)+'</td><td class="n">'+v.runs+'</td><td class="n">'+fmtRun(v.led)
+      +'</td><td class="n">'+fmtRun(v.ch)+'</td><td class="n">'+v.watts.toFixed(0)
+      +'</td><td class="n">'+v.feeds+'</td><td class="n">'+v.psu+'</td></tr>';
+  });
+  h+='<tr class="tot"><td>Total</td><td class="n">'+tot.runs+'</td><td class="n">'+fmtRun(tot.led)
+    +'</td><td class="n">'+fmtRun(tot.ch)+'</td><td class="n">'+tot.watts.toFixed(0)
+    +'</td><td class="n">'+tot.feeds+'</td><td class="n">'+tot.psu+'</td></tr>';
+  el.innerHTML=h;
+}
+function renderRollups(){
+  rollTable($('#zoneTbl'),'Zone',rollup(t=>t.zone||'(no zone)'));
+  rollTable($('#sheetTbl'),'Sheet',rollup(t=>t.docId||'(none)',
+    t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)').replace(/\.pdf$/i,'')));
+}
+function renderPieces(){
+  const pc=pieceData();
+  const pt=$('#pieceTbl');
+  if(!pc.length){ pt.innerHTML='<tr><td class="hint" style="padding:12px">Nothing measured yet.</td></tr>'; }
+  else{
+    pt.innerHTML='<tr><th>Tag</th><th>Zone</th><th class="n">Run</th><th>Item</th><th class="n">Cut to</th><th>Note</th></tr>'
+      +pc.map(r=>'<tr><td><span class="tag">'+esc(r.tag)+'</span></td><td>'+esc(r.zone||'—')
+        +'</td><td class="n">'+r.run+'</td><td>'+esc(r.item)+'<div class="hint">'+esc(r.kind)+'</div></td>'
+        +'<td class="n" style="color:var(--amber)">'+esc(fmtLen(r.len))+'</td>'
+        +'<td class="hint">'+esc(r.note)+(r.locked?' · locked':'')+'</td></tr>').join('')
+      +'<tr class="tot"><td colspan="4">'+pc.length+' pieces</td><td class="n">'
+      +fmtRun(pc.reduce((a,b)=>a+b.len,0))+'</td><td></td></tr>';
+  }
+  const nest=nestData(), nt=$('#nestTbl');
+  if(!nest.length){ nt.innerHTML='<tr><td class="hint" style="padding:12px">No channel with a stock length yet.</td></tr>'; }
+  else{
+    let h='<tr><th>Channel</th><th class="n">Stock #</th><th>Cut from it</th><th class="n">Off-cut left</th></tr>';
+    nest.forEach(g=>g.bins.forEach((b,i)=>{
+      h+='<tr><td>'+(i?'':esc(g.name)+'<div class="hint">'+esc(fmtLen(g.stock))+' stock</div>')
+        +'</td><td class="n">'+(i+1)+'</td><td class="mono">'+b.cuts.map(c=>esc(fmtRun(c))).join('  +  ')
+        +'</td><td class="n"'+(b.left>1?' style="color:var(--flag)"':'')+'>'+esc(fmtRun(b.left))+'</td></tr>';
+    }));
+    nt.innerHTML=h;
+  }
+  const yt=$('#yieldTbl');
+  if(!nest.length){ yt.innerHTML=''; }
+  else yt.innerHTML='<tr><th>Channel</th><th class="n">Needed</th><th class="n">Bought</th><th class="n">Waste</th><th class="n">Yield</th></tr>'
+    +nest.map(g=>'<tr><td>'+esc(g.name)+'</td><td class="n">'+fmtRun(g.used)+'</td><td class="n">'
+      +g.bins.length+' × '+fmtLen(g.stock)+'</td><td class="n"'+(g.yield<.8?' style="color:var(--flag)"':'')+'>'
+      +fmtRun(g.waste)+'</td><td class="n">'+(g.yield*100).toFixed(0)+'%</td></tr>').join('');
 }
 function csv(rows){ return rows.map(r=>r.map(v=>{ v=String(v??''); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(',')).join('\n'); }
 function download(name,text,mime){
@@ -2339,6 +2491,72 @@ async function openProjectFile(file){
   boot(); setTool('pan'); saveProject();
   toast('Opened '+file.name+(P.docs.length?' — re-import the drawings to see markups':''));
 }
+$('#btnCsvPieces').onclick=()=>{
+  const rows=[['Tag','Type','Zone','Run','Kind','Item','Cut length (ft)','Cut length (in)','Note','Locked']];
+  pieceData().forEach(r=>rows.push([r.tag,r.type,r.zone,r.run,r.kind,r.item,
+    (r.len/12).toFixed(3),r.len.toFixed(2),r.note,r.locked?'yes':'no']));
+  exportBox(slug(P.name)+'-pieces.csv',csv(rows));
+};
+$('#btnCsvNest').onclick=()=>{
+  const rows=[['Channel','Stock length (ft)','Stock #','Cuts (ft)','Off-cut left (ft)','Yield %']];
+  nestData().forEach(g=>g.bins.forEach((b,i)=>rows.push([g.name,(g.stock/12).toFixed(3),i+1,
+    b.cuts.map(c=>(c/12).toFixed(3)).join(' + '),(b.left/12).toFixed(3),(g.yield*100).toFixed(1)])));
+  exportBox(slug(P.name)+'-nesting.csv',csv(rows));
+};
+$('#btnCsvZone').onclick=()=>{
+  const rows=[['Grouping','Key','Runs','LED (ft)','Channel (ft)','Watts','Feed points','Supplies']];
+  rollup(t=>t.zone||'(no zone)').forEach(v=>rows.push(['Zone',v.label,v.runs,(v.led/12).toFixed(2),
+    (v.ch/12).toFixed(2),v.watts.toFixed(1),v.feeds,v.psu]));
+  rollup(t=>t.docId||'(none)',t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)'))
+    .forEach(v=>rows.push(['Sheet',v.label,v.runs,(v.led/12).toFixed(2),
+      (v.ch/12).toFixed(2),v.watts.toFixed(1),v.feeds,v.psu]));
+  exportBox(slug(P.name)+'-rollup.csv',csv(rows));
+};
+
+/* ---- product library as its own file, so a company standard is shared ---- */
+const libFileText=()=>JSON.stringify({app:'linework-library',ver:1,appVer:APP_VER,
+  savedAt:new Date().toISOString(),fix:P.fix,ch:P.ch,psu:P.psu},null,1);
+$('#btnLibSave').onclick=()=>{
+  try{ download(slug(P.name)+'.linework-library.json',libFileText(),'application/json');
+    toast('Library saved'); }
+  catch(e){ exportBox(slug(P.name)+'.linework-library.json',libFileText()); }
+};
+$('#btnLibOpen').onclick=()=>$('#libInput').click();
+$('#libInput').onchange=async e=>{
+  const f=e.target.files[0]; e.target.value=''; if(!f) return;
+  let d;
+  try{ d=JSON.parse(await f.text()); }catch(err){ toast('Could not read '+f.name); return; }
+  const cats=[['fix','LED products'],['ch','channels'],['psu','power supplies']];
+  if(!cats.some(([k])=>Array.isArray(d[k]))){ toast('Not a Linework library file'); return; }
+  const counts=cats.map(([k,l])=>(Array.isArray(d[k])?d[k].length:0)+' '+l).join(', ');
+  const r=await dlg({title:'Import library',fields:[
+    {k:'mode',type:'select',label:'How',opts:[
+      {v:'merge',t:'Merge — add new, update matching ids'},
+      {v:'replace',t:'Replace the whole library'}],val:'merge'}
+  ],ok:'Import',note:f.name+' holds '+counts+'. Treatments keep pointing at the ids they already use.'});
+  if(!r) return;
+  snap();
+  cats.forEach(([k])=>{
+    const incoming=Array.isArray(d[k])?d[k]:null;
+    if(!incoming) return;
+    if(r.mode==='replace'){ P[k]=clone(incoming); return; }
+    incoming.forEach(item=>{
+      const i=P[k].findIndex(x=>x.id===item.id);
+      if(i>=0) P[k][i]=Object.assign({},P[k][i],item); else P[k].push(clone(item));
+    });
+  });
+  /* a replace can orphan a treatment's product — repoint rather than miscalculate */
+  const fixIds=new Set(P.fix.map(x=>x.id)),chIds=new Set(P.ch.map(x=>x.id)),psuIds=new Set(P.psu.map(x=>x.id));
+  let orphans=0;
+  P.treat.forEach(t=>{
+    if(!fixIds.has(t.fixId)){ t.fixId=P.fix[0].id; orphans++; }
+    if(!chIds.has(t.chId)){ t.chId=P.ch[0].id; orphans++; }
+    if(!psuIds.has(t.psuId)){ t.psuId=P.psu[0].id; orphans++; }
+  });
+  renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('Library imported'+(orphans?' — '+orphans+' treatment reference'+(orphans===1?'':'s')+' repointed':''));
+};
+
 $('#btnJson').onclick=$('#btnSave').onclick=saveProjectFile;
 $('#btnAutoFile').onclick=()=>{
   if(!FH) return saveProjectFile();          /* nothing linked yet — pick a file */
@@ -2459,7 +2677,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
   fmtRun,fmtFtIn,chipFontSize:CHIP_FS,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
   goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
-  undoDepth:()=>HIST.length,pdfOk:PDF_OK,
+  undoDepth:()=>HIST.length,pdfOk:PDF_OK,pieceData,nestData,nestPieces,rollup,libFileText,
   render(){boot()}};
 (async()=>{ await loadProject(); loadHist(); boot(); setTool('pan');
   if(!PDF_OK) toast('The PDF engine did not load — check vendor/pdf.min.js');
