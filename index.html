@@ -79,14 +79,16 @@ aside.right{border-left:1px solid var(--line2)}
 .pill.ok{border-color:#4a5f38;color:var(--ok)}
 
 /* ---------- viewer ---------- */
-main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min-width:0}
+main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min-width:0;min-height:0}
 .tools{display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--s1);border-bottom:1px solid var(--line2);flex-wrap:wrap}
 .tool{width:30px;height:28px;display:grid;place-items:center;background:none;border:1px solid transparent;cursor:pointer;color:var(--dim);border-radius:2px}
 .tool:hover{background:var(--s3);color:var(--txt)}
 .tool.on{background:var(--amber);border-color:var(--amber);color:#20170A}
 .tool svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .sep{width:1px;height:20px;background:var(--line2);margin:0 4px}
-#viewport{flex:1;overflow:auto;position:relative;padding:26px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
+/* min-height:0 is load-bearing — without it the flex item grows to the stage
+   height instead of scrolling, which kills vertical pan and zoom-at-cursor */
+#viewport{flex:1;min-height:0;overflow:auto;position:relative;padding:26px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
 #stage{position:relative;margin:0 auto;box-shadow:0 0 0 1px #000,0 18px 50px rgba(0,0,0,.6);background:var(--paper);touch-action:none;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
 #pdfCanvas{display:block}
 #overlay{position:absolute;inset:0;pointer-events:none;overflow:visible}
@@ -146,6 +148,11 @@ tr.tot td{border-top:1px solid var(--line2);font-weight:600;background:var(--s2)
 .out{background:var(--bg);border:1px solid var(--line);margin-top:10px}
 .out h4{margin:0;padding:6px 9px;font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line);background:var(--s2)}
 .kv{display:flex;justify-content:space-between;gap:10px;padding:4px 9px;border-bottom:1px dotted var(--line)}
+/* per-segment poly readout — scrolls once a run gets long */
+.seglist{max-height:168px;overflow:auto;margin:5px 0;border:1px solid var(--line);background:var(--s2)}
+.seglist .kv{padding:3px 9px;font-size:11.5px}
+.seglist .kv span{color:var(--faint);font-family:var(--mono)}
+.seglist .kv b{font-family:var(--mono);font-weight:500}
 .kv:last-child{border-bottom:0}
 .kv span{color:var(--dim);font-size:11px}
 .kv b{font-family:var(--mono);font-weight:500;font-size:11.5px}
@@ -259,6 +266,7 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="cal" title="Calibrate scale (C)"><svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/></svg></button>
     <span class="sep"></span>
     <button class="tool" data-tool="line" title="Dimension / linear run (L)"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg></button>
+    <button class="tool" data-tool="poly" title="Poly length — click each corner, per-segment lengths (G)"><svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg></button>
     <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
     <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
     <button class="tool" data-tool="erase" title="Erase markups (E)"><svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg></button>
@@ -295,11 +303,13 @@ body.haspen #penFlag{display:inline}
         <button class="btn pri" id="btnOpen2">Import PDF</button>
       </div>
     </div>
-    <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
-    <div id="inspector">
-      <div class="hd"><span id="insTitle">Markup</span><button class="btn sm ghost" id="insClose" style="margin-left:auto;padding:0 6px">✕</button></div>
-      <div class="bd" id="insBody"></div>
-    </div>
+  </div>
+  <!-- overlays live in <main>, not #viewport: children of the scroll container
+       would drift with the content instead of staying pinned to the viewer -->
+  <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbClose">Close loop</button><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
+  <div id="inspector">
+    <div class="hd"><span id="insTitle">Markup</span><button class="btn sm ghost" id="insClose" style="margin-left:auto;padding:0 6px">✕</button></div>
+    <div class="bd" id="insBody"></div>
   </div>
 </main>
 
@@ -339,8 +349,10 @@ body.haspen #penFlag{display:inline}
         <input type="file" id="projInput" accept=".json,application/json" hidden>
         <button class="btn pri" id="btnJson">Save project file</button>
         <button class="btn" id="btnOpenProj">Open project file</button>
+        <button class="btn" id="btnAutoFile" style="display:none">Auto-save to a file…</button>
       </div>
       <div class="hint" style="margin-top:6px">Saves the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> file (⌘S / Ctrl-S). Drawings are not included: open the file, re-import the same PDFs, and every markup reattaches.</div>
+      <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current.</div>
     </div></div>
   </div>
 </aside>
@@ -463,20 +475,52 @@ const FILE_VER=1;
    capability, and falls back to localStorage for a plain static file. Neither
    holds the PDFs — a project file (below) is the portable copy. */
 let saveT=null, saved=false;
+let FH=null;                       // linked file handle, when the browser has the API
+let autoFile=true;                 // write through to that file on every autosave
+const canLinkFile=()=>typeof window.showSaveFilePicker==='function';
 function markDirty(){ saved=false; $('#stSave').textContent='Unsaved'; clearTimeout(saveT); saveT=setTimeout(saveProject,1200); }
 function stampSaved(where){
   saved=true;
   const el=$('#stSave');
-  el.innerHTML='Saved <b>'+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</b>';
-  el.title='Autosaved to '+where+' — use Save project file to keep a copy';
+  el.innerHTML='Saved <b>'+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</b>'
+    +(FH&&autoFile?' · <b>'+esc(FH.name)+'</b>':'');
+  el.title='Auto-saved to '+where;
+}
+/* write the project through to the linked file; drops the link if access is gone */
+async function writeFH(text){
+  if(!FH) return false;
+  try{
+    if(FH.queryPermission){
+      const st=await FH.queryPermission({mode:'readwrite'});
+      if(st!=='granted') throw new Error('permission');
+    }
+    const w=await FH.createWritable();
+    await w.write(text); await w.close();
+    return true;
+  }catch(e){
+    FH=null; syncFileBtn();
+    toast('Lost access to the project file — use Save project file to relink');
+    return false;
+  }
 }
 async function saveProject(){
   const body=JSON.stringify(P);
-  try{ if(window.storage){ await window.storage.set(KEY,body,false); stampSaved('this session'); return; } }catch(e){}
-  try{ localStorage.setItem(KEY,body); stampSaved('this browser'); return; }catch(e){}
+  let where=null;
+  if(FH&&autoFile&&await writeFH(projFileText())) where=FH.name;
+  try{ if(window.storage){ await window.storage.set(KEY,body,false); stampSaved(where||'this session'); return; } }catch(e){}
+  try{ localStorage.setItem(KEY,body); stampSaved(where||'this browser'); return; }catch(e){}
+  if(where){ stampSaved(where); return; }
   const el=$('#stSave');
-  el.textContent='Not autosaved'; el.title='Autosave unavailable here — use Save project file';
+  el.textContent='Not auto-saved'; el.title='Auto-save unavailable here — use Save project file';
 }
+/* flush immediately when the tab is backgrounded — iPadOS discards pages freely */
+function flushSave(){ if(saved) return; clearTimeout(saveT); saveProject(); }
+document.addEventListener('visibilitychange',()=>{ if(document.hidden) flushSave(); });
+window.addEventListener('pagehide',flushSave);
+window.addEventListener('beforeunload',e=>{
+  if(saved||FH) return;
+  e.preventDefault(); e.returnValue='';   /* unsaved takeoff — let the browser warn */
+});
 async function loadProject(){
   let raw=null;
   try{ if(window.storage){ const r=await window.storage.get(KEY,false); if(r&&r.value) raw=r.value; } }catch(e){}
@@ -618,7 +662,21 @@ function curScale(){ return V.docId? scaleOf(V.docId,V.page) : null; }
 function inPerPt(){ const s=curScale(); return s? s.ratio/72 : null; }
 function ptLen(a,b){ return Math.hypot(b[0]-a[0],b[1]-a[1]); }
 function realLen(a,b){ const k=inPerPt(); return k? ptLen(a,b)*k : null; }
-function annLen(a){ const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null; let t=0; for(let i=1;i<a.pts.length;i++) t+=ptLen(a.pts[i-1],a.pts[i]); return t*k; }
+/* a closed poly measures the run back to its first vertex as well */
+const canClose=a=>!!a&&a.type==='line'&&!a.free&&a.pts.length>2;
+function annPts(a){ return (a.closed&&canClose(a))? a.pts.concat([a.pts[0]]) : a.pts; }
+function annLen(a){
+  const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
+  const pts=annPts(a); let t=0;
+  for(let i=1;i<pts.length;i++) t+=ptLen(pts[i-1],pts[i]);
+  return t*k;
+}
+/* per-segment breakdown, in drawing order — the poly-length readout */
+function annSegs(a){
+  const k=inPerPt(), pts=annPts(a), out=[];
+  for(let i=1;i<pts.length;i++) out.push({a:pts[i-1],b:pts[i],len:k?ptLen(pts[i-1],pts[i])*k:null});
+  return out;
+}
 function setScale(ratio,all,label){
   const s={ratio,label:label||ratioLabel(ratio)};
   if(all){ P.docs.find(d=>d.id===V.docId); P.cal[V.docId+'|*']=s;
@@ -663,21 +721,29 @@ function drawAnn(a,selected,isDraft){
   }
   if(a.type==='line'||a.type==='cal'){
     const dash=a.type==='cal'?' stroke-dasharray="7 4"':'';
-    g+='<polyline points="'+pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')+'" fill="none" stroke="'+col+'" stroke-width="1.8"'+dash+'/>';
-    g+='<g stroke="'+col+'" stroke-width="1.6">'+tick(pts[0],pts[1]||pts[0],pts[0]);
-    if(pts.length>1) g+=tick(pts[pts.length-2],pts[pts.length-1],pts[pts.length-1]);
-    g+='</g>';
-    if(!a.free&&pts.length<=8&&(pts.length>2||isDraft)){
-      for(let i=1;i<pts.length;i++){
-        const L=realLen(a.pts[i-1],a.pts[i]);
-        const mx=(pts[i-1][0]+pts[i][0])/2,my=(pts[i-1][1]+pts[i][1])/2;
-        g+=chip(mx,my-11,L==null?'—':fmtLen(L),col);
-      }
+    const loop=a.closed&&canClose(a), spts=loop?pts.concat([pts[0]]):pts;
+    g+='<polyline points="'+spts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')+'" fill="'+(loop?col:'none')+'" fill-opacity="'+(loop?'.07':'0')+'" stroke="'+col+'" stroke-width="1.8"'+dash+'/>';
+    if(!loop){
+      g+='<g stroke="'+col+'" stroke-width="1.6">'+tick(pts[0],pts[1]||pts[0],pts[0]);
+      if(pts.length>1) g+=tick(pts[pts.length-2],pts[pts.length-1],pts[pts.length-1]);
+      g+='</g>';
+    }
+    /* vertex handles make a tapped poly readable at a glance */
+    if(a.type==='line'&&!a.free&&pts.length>2)
+      g+=pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="2.6" fill="#171512" stroke="'+col+'" stroke-width="1.3"/>').join('');
+    /* per-segment lengths — every segment on a poly, skipping ones too short to label */
+    if(!a.free&&(a.poly||pts.length<=8)&&(pts.length>2||isDraft)){
+      annSegs(a).forEach(sg=>{
+        const A=sp(sg.a),B=sp(sg.b);
+        if(Math.hypot(B[0]-A[0],B[1]-A[1])<34) return;
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-11,sg.len==null?'—':fmtLen(sg.len),col);
+      });
     }
     const tot=annLen(a);
     if(a.type==='line'){
       const tg=a.treat&&P.treat.find(t=>t.id===a.treat);
-      const lbl=(tg?tg.tag+'  ':'')+(tot==null?'set scale':fmtLen(tot));
+      const n=annSegs(a).length;
+      const lbl=(tg?tg.tag+'  ':'')+(tot==null?'set scale':fmtLen(tot))+(a.poly&&n>1?'  ('+n+' seg'+(loop?', closed':'')+')':'');
       const last=pts[pts.length-1];
       g+=chip(last[0],last[1]+(pts.length>2?18:-13),lbl,tg?'#F2A93B':col,pts.length>2?null:null);
     }else{
@@ -736,7 +802,7 @@ function hitTest(sx,sy,tol){
   tol=tol||7;
   const list=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page).slice().reverse();
   for(const a of list){
-    const pts=a.pts.map(sp);
+    const pts=annPts(a).map(sp);
     if(a.type==='line'||a.type==='cal'||a.type==='ink'){
       for(let i=1;i<pts.length;i++) if(distSeg([sx,sy],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
     }else if(a.type==='box'){
@@ -782,11 +848,14 @@ function ortho(a,b,on){ if(!on) return b; const dx=b[0]-a[0],dy=b[1]-a[1];
   if(Math.abs(dy)>Math.abs(dx)*2) return [a[0],b[1]];
   const m=(Math.abs(dx)+Math.abs(dy))/2; return [a[0]+Math.sign(dx)*m,a[1]+Math.sign(dy)*m]; }
 
+/* the dimension and poly-length tools share one annotation type; poly is tap-only */
+const isLineTool=t=>t==='line'||t==='poly';
 function setTool(t){
   V.tool=t; $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   viewport.classList.toggle('pan',t==='pan'); viewport.classList.toggle('draw',t!=='pan');
   const names={pan:'Select / pan',cal:'Calibrate — drag along a known dimension',
     line:'Dimension — drag to trace a curved run, or tap each corner',
+    poly:'Poly length — click each corner, ⏎ or double-click to finish, or close the loop',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
     note:'Note — tap to place',link:'Link — tap to place, then pick the shop drawing'};
   $('#stTool').textContent=names[t]; V.draft=null; stroke=null; press=null; drawOverlay(); syncDrawbar();
@@ -865,8 +934,11 @@ stage.addEventListener('pointermove',e=>{
 },{passive:false});
 
 function liveLen(d){
-  const L=annLen(d);
-  $('#stCoord').textContent=(d.type==='cal'?'Ruler':'Length')+': '+(L==null?'—':fmtLen(L))+(d.pts.length>2?'  ('+(d.pts.length-1)+' seg)':'');
+  const L=annLen(d), segs=annSegs(d), last=segs[segs.length-1];
+  const run=(d.type==='cal'?'Ruler':'Length')+': '+(L==null?'—':fmtLen(L));
+  /* while drafting a poly, show the segment being drawn next to the running total */
+  const seg=(d.poly&&segs.length>1&&last&&last.len!=null)?'   seg '+segs.length+': '+fmtLen(last.len):'';
+  $('#stCoord').textContent=run+(segs.length>1?'  ('+segs.length+' seg)':'')+seg;
   syncDrawbar();
 }
 function endPointer(e){
@@ -883,8 +955,9 @@ function endPointer(e){
     if(pr.moved&&V.draft){ V.draft.pts=[V.draft.pts[0],V.draft.pts[1],V.draft.pts[1].slice()]; finishDraft(); }
     else tapVertex(p,e);
     return; }
-  if(tool==='line'){
-    if(pr.free&&pr.free.length>2) commitFreehand(pr.free);
+  if(isLineTool(tool)){
+    if(tool==='poly') tapVertex(p,e);              /* poly is click-only: a slight drag is still a vertex */
+    else if(pr.free&&pr.free.length>2) commitFreehand(pr.free);
     else if(!pr.moved) tapVertex(p,e);
     else { V.draft=null; drawOverlay(); }
     syncDrawbar(); }
@@ -894,8 +967,9 @@ stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); if(pinch&&to
 stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot').classList.remove('show'); });
 
 function tapVertex(p,e){
-  if(V.tool==='line'&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
-  if(!V.draft) V.draft={id:'d',type:V.tool,doc:V.docId,page:V.page,pts:[p,p.slice()],color:V.tool==='cal'?'#5AB6DE':V.color};
+  if(isLineTool(V.tool)&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
+  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
+    color:V.tool==='cal'?'#5AB6DE':V.color,poly:V.tool==='poly'||undefined};
   else{
     const a=V.draft.pts[V.draft.pts.length-2];
     V.draft.pts[V.draft.pts.length-1]=ortho(a,p,e.shiftKey);
@@ -1033,6 +1107,8 @@ function ctxForAnn(a){
   if(a.type==='line') items.push(t
     ? {id:'go',t:'Open treatment '+t.tag,fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
     : {id:'mk',t:'Create treatment from this',fn:()=>treatFromAnn(a)});
+  if(canClose(a)) items.push({id:'lp',t:a.closed?'Open loop':'Close loop',fn:()=>{ snap(); a.closed=!a.closed;
+    drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
   if(a.type==='link'&&a.target) items.push({id:'op',t:'Open linked drawing',fn:()=>openDoc(a.target.doc,a.target.page,true)});
   if(a.type==='note'||a.type==='box') items.push({id:'ed',t:'Edit text…',fn:async()=>{
     const r=await dlg({title:'Edit text',fields:[{k:'t',type:a.type==='note'?'textarea':'text',label:'Text',val:a.text||''}]});
@@ -1081,10 +1157,16 @@ window.addEventListener('blur',closeCtx);
 function syncDrawbar(){
   const d=V.draft, on=d&&(d.type==='line'||d.type==='cal')&&d.pts.length>=2&&!press;
   $('#drawbar').classList.toggle('show',!!on);
-  if(on){ const L=annLen(d); $('#dbLen').textContent=(L==null?'—':fmtLen(L))+(d.pts.length>2?'  ·  '+(d.pts.length-1)+' seg':''); }
+  /* closing needs 3 committed vertices — the last point is the live cursor */
+  const canLoop=!!on&&d.type==='line'&&d.pts.length>3;
+  $('#dbClose').style.display=canLoop?'':'none';
+  $('#dbClose').textContent=d&&d.closed?'Open loop':'Close loop';
+  if(on){ const L=annLen(d), n=annSegs(d).length;
+    $('#dbLen').textContent=(L==null?'—':fmtLen(L))+(n>1?'  ·  '+n+' seg':'')+(d.closed?'  ·  closed':''); }
 }
 $('#dbFinish').onclick=()=>finishDraft();
 $('#dbCancel').onclick=()=>{ V.draft=null; drawOverlay(); syncDrawbar(); };
+$('#dbClose').onclick=()=>{ if(!V.draft) return; V.draft.closed=!V.draft.closed; drawOverlay(); syncDrawbar(); liveLen(V.draft); };
 $('#dbUndoPt').onclick=()=>{ if(!V.draft) return; if(V.draft.pts.length<=2){V.draft=null} else V.draft.pts.splice(-2,1); drawOverlay(); syncDrawbar(); };
 $('#inkbar').innerHTML=COLORS.map((c,i)=>'<span class="sw'+(i===0?' on':'')+'" data-c="'+c+'" style="background:'+c+'"></span>').join('');
 $$('#inkbar .sw').forEach(el=>el.onclick=()=>{ V.color=el.dataset.c; $$('#inkbar .sw').forEach(x=>x.classList.toggle('on',x===el)); });
@@ -1106,6 +1188,8 @@ async function finishDraft(){
     if(pts.length<2){ drawOverlay(); return; }
     snap();
     const a={id:uid('a_'),type:'line',doc:d.doc,page:d.page,pts,color:d.color,text:''};
+    if(d.poly) a.poly=true;
+    if(d.closed&&pts.length>2) a.closed=true;
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
   }
@@ -1160,13 +1244,20 @@ function showInspector(a){
   if(!a){ box.classList.remove('show'); return; }
   box.classList.add('show');
   const names={line:'Dimension',box:'Area box',note:'Note',link:'Drawing link',cal:'Calibration line'};
-  $('#insTitle').textContent=names[a.type]||'Markup';
+  $('#insTitle').textContent=(a.type==='line'&&a.poly?'Poly length':names[a.type])||'Markup';
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   let h='';
   if(a.type==='line'){
-    const L=annLen(a);
+    const L=annLen(a), segs=annSegs(a);
     h+='<div class="kv"><span>Measured</span><b class="hi">'+fmtLen(L)+'</b></div>';
-    h+='<div class="kv"><span>Segments</span><b>'+(a.pts.length-1)+'</b></div>';
+    h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
+    /* Bluebeam-style per-segment readout */
+    if(segs.length>1&&!a.free){
+      h+='<div class="seglist">'+segs.map((sg,i)=>
+        '<div class="kv"><span>'+(a.closed&&i===segs.length-1?'closing':'seg '+(i+1))+'</span><b>'
+        +(sg.len==null?'—':fmtLen(sg.len))+'</b></div>').join('')+'</div>';
+    }
+    if(canClose(a)) h+='<button class="btn" data-act="loop">'+(a.closed?'Open loop':'Close loop')+'</button>';
     h+= t? '<button class="btn" data-act="go">Open treatment '+esc(t.tag)+'</button>'
          : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
   }
@@ -1187,6 +1278,8 @@ function showInspector(a){
     if(act==='open'&&a.target){ openDoc(a.target.doc,a.target.page); }
     if(act==='mk') treatFromAnn(a);
     if(act==='go'){ $$('.tab').find(x=>x.dataset.pane==='pTreat').click(); openTreat(a.treat); }
+    if(act==='loop'){ snap(); a.closed=!a.closed; showInspector(a); drawOverlay();
+      renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty(); }
   });
 }
 $('#insClose').onclick=()=>{ V.sel=null; showInspector(null); drawOverlay(); };
@@ -1213,9 +1306,11 @@ function renderAnnList(){
   $('#cAnn').textContent=list.length; $('#annEmpty').style.display=list.length?'none':'';
   list.forEach(a=>{
     const t=a.treat&&P.treat.find(x=>x.id===a.treat);
-    const label=a.type==='line'?fmtLen(annLen(a)):(a.text||a.type);
+    const segs=a.type==='line'?annSegs(a).length:0;
+    const label=a.type==='line'?(fmtLen(annLen(a))+(a.poly&&segs>1?'  ·  '+segs+' seg':'')):(a.text||a.type);
+    const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel?' on':'');
-    el.innerHTML='<span class="pill" style="border-color:'+a.color+';color:'+a.color+'">'+a.type+'</span>'
+    el.innerHTML='<span class="pill" style="border-color:'+a.color+';color:'+a.color+'">'+kind+'</span>'
       +'<div style="flex:1;min-width:0"><div class="t">'+esc(String(label).slice(0,34))+'</div>'
       +(t?'<div class="s">'+esc(t.tag+' · '+t.name)+'</div>':'')+'</div>';
     el.onclick=()=>{ V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); };
@@ -1543,10 +1638,40 @@ $('#btnCsvBom').onclick=()=>{
 const slug=s=>String(s||'project').replace(/\W+/g,'-').replace(/^-+|-+$/g,'').toLowerCase()||'project';
 const projFileName=()=>slug(P.name)+'.linework.json';
 function projFileText(){ return JSON.stringify(Object.assign({app:'linework',ver:FILE_VER,savedAt:new Date().toISOString()},P),null,1); }
-function saveProjectFile(){
+/* Save links the project to a real file when the browser supports it, so
+   auto-save can keep writing to it. Otherwise it falls back to a download. */
+async function saveProjectFile(){
   const name=projFileName();
+  /* already linked — write straight through, no dialog */
+  if(FH){
+    if(await writeFH(projFileText())){ stampSaved(FH.name); toast('Saved '+FH.name); return; }
+    /* writeFH cleared the link; fall through and let the user pick again */
+  }
+  if(canLinkFile()){
+    try{
+      FH=await window.showSaveFilePicker({suggestedName:name,
+        types:[{description:'Linework project',accept:{'application/json':['.json']}}]});
+      syncFileBtn();
+      if(await writeFH(projFileText())){
+        stampSaved(FH.name);
+        toast(autoFile?'Saved — auto-saving to '+FH.name:'Saved '+FH.name);
+      }
+      return;
+    }catch(e){
+      if(e&&e.name==='AbortError') return;        /* user dismissed the picker */
+      FH=null; syncFileBtn();                     /* fall through to a download */
+    }
+  }
   try{ download(name,projFileText(),'application/json'); toast('Saved '+name); saveProject(); }
   catch(e){ toast('Download blocked — use Copy JSON instead'); }
+}
+function syncFileBtn(){
+  const b=$('#btnAutoFile');
+  if(!b) return;
+  b.style.display=canLinkFile()?'':'none';
+  b.classList.toggle('pri',!!(FH&&autoFile));
+  b.textContent=FH? (autoFile?'Auto-save: '+FH.name:'Auto-save off') : 'Auto-save to a file…';
+  b.title=FH? 'Writing to '+FH.name+' after every change' : 'Pick a file to keep auto-saving into';
 }
 async function openProjectFile(file){
   let d;
@@ -1573,6 +1698,12 @@ async function openProjectFile(file){
   toast('Opened '+file.name+(P.docs.length?' — re-import the drawings to see markups':''));
 }
 $('#btnJson').onclick=$('#btnSave').onclick=saveProjectFile;
+$('#btnAutoFile').onclick=()=>{
+  if(!FH) return saveProjectFile();          /* nothing linked yet — pick a file */
+  autoFile=!autoFile; syncFileBtn();
+  toast(autoFile?'Auto-saving to '+FH.name:'Auto-save to file paused — still saving in this browser');
+  if(autoFile) saveProject();
+};
 $('#btnJsonCopy').onclick=()=>exportBox(projFileName(),projFileText());
 $('#btnOpenProj').onclick=()=>$('#projInput').click();
 $('#projInput').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openProjectFile(f); };
@@ -1637,9 +1768,13 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&k==='c'&&V.sel){ e.preventDefault(); copyAnn(); return; }
   if((e.metaKey||e.ctrlKey)&&k==='v'){ e.preventDefault(); pasteAnn(null); return; }
   if((e.metaKey||e.ctrlKey)&&k==='d'&&V.sel){ e.preventDefault(); const a=P.ann.find(x=>x.id===V.sel); if(a) pasteAnn(null,a); return; }
-  if(k==='escape'){ closeCtx(); if(V.draft){V.draft=null;drawOverlay();syncDrawbar()} else {V.sel=null;showInspector(null);drawOverlay()} }
+  /* escape backs all the way out: drop the draft, clear the selection, pointer tool */
+  if(k==='escape'){ closeCtx(); V.draft=null; V.sel=null; showInspector(null);
+    if(V.tool!=='pan') setTool('pan'); else { drawOverlay(); syncDrawbar(); }
+    return; }
   if(k==='enter'&&V.draft) finishDraft();
   if(k==='v') setTool('pan'); if(k==='c') setTool('cal'); if(k==='l') setTool('line');
+  if(k==='g') setTool('poly');
   if(k==='b') setTool('box'); if(k==='n') setTool('note'); if(k==='k') setTool('link');
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
   if((k==='delete'||k==='backspace')&&V.sel){ const a=P.ann.find(x=>x.id===V.sel);
@@ -1660,7 +1795,7 @@ function boot(keepDoc){
     +'</optgroup><optgroup label="Metric">'+SCALES.slice(13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')+'</optgroup>';
   $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
   $('#btnFinger').style.display=coarse?'':'none';
-  syncUndo(); syncDrawbar(); syncScrollBtn();
+  syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(P.docs.length&&!Object.keys(FILES).length){
     $('#blank').querySelector('h2').textContent='Re-import your drawings';
