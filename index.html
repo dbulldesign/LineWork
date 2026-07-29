@@ -37,7 +37,8 @@ body.light #viewport{background:#DCD7CC}
 body.light .tool.on{color:#fff}
 *{box-sizing:border-box}
 html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--ui);font-size:13px;overflow:hidden}
+body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--ui);font-size:13px;overflow:hidden;
+  touch-action:manipulation;overscroll-behavior:none;-webkit-text-size-adjust:100%}
 button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--amber);outline-offset:1px}
 ::-webkit-scrollbar{width:10px;height:10px}
@@ -46,7 +47,13 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 
 /* ---------- titleblock header ---------- */
 .sheet{display:grid;grid-template-columns:260px 1fr 400px;grid-template-rows:auto 1fr auto;height:100vh}
-header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1);border-bottom:1px solid var(--line2)}
+/* Installed to the home screen with a translucent status bar, the app owns the
+   whole screen — including the strip the clock and battery sit in. Pad by the
+   safe-area inset so the titleblock starts below them; in a browser tab the
+   inset is zero and nothing moves. */
+header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1);border-bottom:1px solid var(--line2);
+  padding-top:env(safe-area-inset-top);
+  padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 .tb .mark{display:flex;align-items:center;gap:9px;padding:0 16px;border-right:1px solid var(--line);}
 .tb .mark b{font-weight:700;letter-spacing:-.02em;font-size:15px}
 .ckey{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--dim);
@@ -125,6 +132,7 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
 .tool.on{background:var(--amber);border-color:var(--amber);color:#20170A}
 .tool svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .sep{width:1px;height:20px;background:var(--line2);margin:0 4px}
+.viewbar{display:flex;align-items:center;gap:4px}
 /* min-height:0 is load-bearing — without it the flex item grows to the stage
    height instead of scrolling, which kills vertical pan and zoom-at-cursor */
 #viewport{flex:1;min-height:0;overflow:auto;position:relative;padding:26px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
@@ -156,7 +164,9 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
 .sw.on{box-shadow:0 0 0 2px var(--txt)}
 
 /* ---------- status bar ---------- */
-footer{grid-column:1/-1;display:flex;align-items:center;gap:0;background:var(--s1);border-top:1px solid var(--line2);font-family:var(--mono);font-size:11px;color:var(--dim)}
+footer{grid-column:1/-1;display:flex;align-items:center;gap:0;background:var(--s1);border-top:1px solid var(--line2);font-family:var(--mono);font-size:11px;color:var(--dim);
+  padding-bottom:env(safe-area-inset-bottom);
+  padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 footer .f{padding:5px 12px;border-right:1px solid var(--line);white-space:nowrap}
 footer .f.r{margin-left:auto;border-right:0;border-left:1px solid var(--line)}
 footer b{color:var(--amber);font-weight:500}
@@ -232,7 +242,8 @@ input.up{text-transform:uppercase}
 .note.ok{color:var(--ok)}
 
 /* modal */
-.scrim{position:fixed;inset:0;background:rgba(8,7,6,.72);display:none;place-items:center;z-index:70;padding:20px}
+.scrim{position:fixed;inset:0;background:rgba(8,7,6,.72);display:none;place-items:center;z-index:70;
+  padding:max(20px,env(safe-area-inset-top)) 20px max(20px,env(safe-area-inset-bottom))}
 /* the settings sheet sits below a dialog raised from it, or its buttons would be
    unclickable behind the settings panel */
 #setScrim{z-index:60}
@@ -267,19 +278,61 @@ input.up{text-transform:uppercase}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
 .mobtog{display:inline-flex}
-@media(max-width:1080px){
+/* ---------- narrow screens: tablets, and a laptop with both rails wanted ----------
+   Below this width there is not enough room for three columns and a drawing, so
+   the rails slide over the sheet instead of sitting beside it, one at a time, and
+   start closed — the drawing is what you came for. The grid must be told to put
+   everything in column 1: leaving `main` on column 2 silently invented a second
+   column and tore the whole layout apart. */
+#railScrim{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:35;display:none}
+/* A tablet in landscape is wide enough for three columns on paper and much too
+   narrow for them in practice: 1366 px minus two rails leaves 700 px of drawing.
+   With a finger as the pointer the rails slide over instead, so the sheet gets
+   the whole screen. Attach a trackpad and iPadOS reports a fine pointer, which
+   puts the columns back. */
+@media(max-width:1180px),(pointer:coarse) and (max-width:1400px){
   .sheet{grid-template-columns:1fr}
-  aside{position:fixed;top:0;bottom:0;width:300px;z-index:40;transform:translateX(-100%);transition:.2s;box-shadow:0 0 40px rgba(0,0,0,.6)}
-  aside.left{left:0;grid-column:1}
-  aside.right{right:0;width:340px;transform:translateX(100%);grid-column:1}
-  body.swap aside.left{left:auto;right:0;transform:translateX(100%)}
-  body.swap aside.right{right:auto;left:0;transform:translateX(-100%)}
-  /* on a narrow screen the rails overlay the sheet, so "hidden" is the default */
-  body:not(.hideL) aside.left{transform:none}
-  body:not(.hideR) aside.right{transform:none}
-  body.hideL aside.left,body.hideR aside.right{display:block}
+  main{grid-column:1;grid-row:2}
+  aside.left,aside.right{grid-column:1;grid-row:2}
+  aside{position:fixed;top:0;bottom:0;width:min(330px,86vw);z-index:40;
+    transition:transform .18s ease-out;box-shadow:0 0 40px rgba(0,0,0,.6);
+    padding-bottom:env(safe-area-inset-bottom)}
+  aside.left{left:0;right:auto;transform:translateX(-101%)}
+  aside.right{right:0;left:auto;width:min(380px,92vw);transform:translateX(101%)}
+  body.swap aside.left{left:auto;right:0;transform:translateX(101%)}
+  body.swap aside.right{right:auto;left:0;transform:translateX(-101%)}
+  /* a rail is open only when asked for, and hiding it in Settings never makes it
+     unreachable here — the header buttons are the way in and out */
+  body.railL aside.left,body.railR aside.right{transform:none}
+  body.hideL aside.left,body.hideR aside.right{display:flex}
+  body.railL #railScrim,body.railR #railScrim{display:block}
+  body.railL .mobtog#togL,body.railR .mobtog#togR{background:var(--amber);border-color:var(--amber);color:#20170A}
+  /* the header carries the sheet and the actions; the project fields live in
+     Project and in Settings, where there is room for them */
+  .tb .mark span{display:none}
+  .tb .mark{padding:0 10px}
+  .cell.opt{display:none}
   header.tb{overflow-x:auto}
+  /* zoom, fit and the page arrows are needed constantly, so they leave the
+     scrolling tool strip and sit over the sheet where a thumb can find them */
+  .viewbar{position:absolute;top:calc(55px + 8px);right:8px;z-index:6;
+    background:rgba(28,25,22,.94);border:1px solid var(--line2);border-radius:4px;
+    padding:4px 6px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
+  body.light .viewbar{background:rgba(247,245,240,.95)}
+  .viewbar .sep{height:22px}
+  /* the inspector becomes a sheet along the bottom rather than a column that
+     eats a third of a narrow drawing */
+  #inspector{left:8px;right:8px;bottom:8px;width:auto;max-height:46vh;overflow:auto}
+  footer .f.opt{display:none}
+  .setrow{flex-wrap:wrap}
+  .setrow .ctl{width:100%}
+  .setrow .ctl select,.setrow .ctl input[type=text],.setrow .ctl input[type=number],
+  .setrow .ctl input[type=range]{width:100%}
 }
+@supports(height:100dvh){.sheet{height:100dvh}}
+/* measured fallback for a device that hands us the whole screen but reports no
+   inset — see probeInsets() */
+body.padtop header.tb{padding-top:24px}
 /* ---------- context menu ---------- */
 #ctx{position:fixed;z-index:90;min-width:208px;max-width:260px;background:var(--s1);border:1px solid var(--line2);box-shadow:0 18px 48px rgba(0,0,0,.62);padding:4px;display:none;border-radius:3px}
 #ctx.show{display:block}
@@ -312,18 +365,43 @@ input.up{text-transform:uppercase}
 .inkbar .sw{width:17px;height:17px;border-radius:50%}
 #penFlag{display:none;color:var(--amber)}
 body.haspen #penFlag{display:inline}
+/* ---------- a finger, not a mouse ----------
+   Everything you tap gets close to Apple's 44 pt target, the toolbar becomes one
+   swipeable row rather than four stacked ones (four rows cost 140 px of drawing),
+   and form fields go to 16 px because anything smaller makes iOS Safari zoom the
+   whole page the moment you tap into one. */
 @media(pointer:coarse){
-  .tool{width:40px;height:38px}
-  .tool svg{width:19px;height:19px}
-  .btn{padding:8px 12px}
-  .btn.sm{padding:5px 9px}
-  .tools{padding:7px 8px;gap:5px}
-  .item{padding:11px 12px}
-  .inkbar .sw{width:22px;height:22px}
-  input[type=text],input[type=number],select,textarea{padding:8px}
-  #inspector{width:290px}
-  .card .hd{padding:12px}
+  .tool{width:44px;height:42px}
+  .tool svg{width:21px;height:21px}
+  .btn{padding:9px 13px;min-height:40px}
+  .btn.sm{padding:7px 10px;min-height:34px;font-size:12px}
+  .tools{padding:6px 8px;gap:5px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
+    scrollbar-width:none;-webkit-overflow-scrolling:touch}
+  .tools::-webkit-scrollbar{display:none}
+  .tools.more{mask-image:linear-gradient(to right,#000 calc(100% - 30px),rgba(0,0,0,.12));
+    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 30px),rgba(0,0,0,.12))}
+  .tools>*{flex:none}
+  .item{padding:13px 12px}
+  .item .t{font-size:13px}
+  .inkbar .sw{width:26px;height:26px}
+  .sw{width:26px;height:26px}
+  input[type=text],input[type=number],select,textarea{padding:9px;font-size:16px;min-height:40px}
+  .cell input.val{min-height:0;font-size:14px}
+  .setrow .ctl input[type=range]{height:34px}
+  .tab{padding:13px 6px;font-size:10px}
+  .sec>h3{padding:11px 12px 10px}
+  .card .hd{padding:13px 12px}
+  #ctx{min-width:240px}
+  #ctx button{padding:12px;font-size:14px;min-height:44px}
+  #ctx .row .sw{width:30px;height:30px}
+  #drawbar{bottom:calc(18px + env(safe-area-inset-bottom));gap:8px;padding:9px 10px 9px 14px}
+  #drawbar .btn{min-height:42px}
+  footer .f{padding:7px 11px}
+  /* hover-only affordances do not exist here, so do not reserve room for them */
+  .item:hover,.btn:hover,#ctx button:hover{background:inherit}
 }
+/* the scroll-wheel toggle means nothing without a wheel */
+@media(pointer:coarse) and (hover:none){ #btnScroll{display:none} }
 @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 
@@ -333,8 +411,8 @@ body.haspen #penFlag{display:inline}
     <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="#F2A93B" stroke-width="1.5"><path d="M3 6h18M3 6v3M21 6v3" stroke="#6E6357"/><rect x="4" y="12" width="16" height="4" rx="1"/><path d="M6 16v2M12 16v2M18 16v2" stroke="#F2A93B" opacity=".5"/></svg>
     <div><b>LINEWORK</b> <span id="verTag" class="ver">v—</span><br><span>Linear lighting takeoff</span></div>
   </div>
-  <div class="cell" style="min-width:190px"><label>Project</label><input class="val" id="projName" value="Untitled Project"></div>
-  <div class="cell" style="min-width:110px"><label>Job no.</label><input class="val" id="projNo" placeholder="—"></div>
+  <div class="cell opt" style="min-width:190px"><label>Project</label><input class="val" id="projName" value="Untitled Project"></div>
+  <div class="cell opt" style="min-width:110px"><label>Job no.</label><input class="val" id="projNo" placeholder="—"></div>
   <div class="cell" style="min-width:150px"><label>Sheet</label><div class="val" id="tbSheet">—</div></div>
   <div class="cell" style="min-width:130px"><label>Scale</label><div class="val" id="tbScale" style="color:var(--amber)">not set</div></div>
   <div class="cell" style="min-width:88px"><label>Units</label><button class="btn sm ghost" id="unitBtn" style="padding:1px 6px">IMPERIAL</button></div>
@@ -409,6 +487,7 @@ body.haspen #penFlag{display:inline}
     <span class="sep"></span>
     <button class="tool" id="btnUndo" title="Undo (⌘Z)"><svg viewBox="0 0 24 24"><path d="M4 9h11a5 5 0 010 10h-6"/><path d="M8 5L4 9l4 4"/></svg></button>
     <button class="tool" id="btnRedo" title="Redo (⇧⌘Z)"><svg viewBox="0 0 24 24"><path d="M20 9H9a5 5 0 000 10h6"/><path d="M16 5l4 4-4 4"/></svg></button>
+    <button class="tool" id="btnMulti" title="Add to selection — tap markups to build a set (⇧-click does the same)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="13" height="13" rx="1"/><path d="M8 20h11a1 1 0 001-1V8"/></svg></button>
     <button class="btn sm ghost" id="btnFinger" title="What one finger does">✋ Finger pans</button>
     <button class="btn sm ghost" id="btnSnap" title="Snap to the drawing's own geometry">⊹ Snap</button>
     <button class="btn sm ghost" id="btnScroll" title="What the scroll wheel does">⊕ Scroll zooms</button>
@@ -416,14 +495,16 @@ body.haspen #penFlag{display:inline}
     <select id="scalePreset" style="width:auto;padding:4px 6px;font-size:11px"><option value="">Set scale…</option></select>
     <button class="btn sm ghost" id="btnScales" title="Which pages carry which scale">Scales…</button>
     <span class="sep"></span>
-    <button class="tool" id="zOut" title="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M20 20l-4-4"/></svg></button>
-    <span class="num" id="zLabel" style="font-size:11px;min-width:44px;text-align:center;color:var(--dim)">100%</span>
-    <button class="tool" id="zIn" title="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M11 8v6M20 20l-4-4"/></svg></button>
-    <button class="btn sm ghost" id="zFit">Fit</button>
-    <span class="sep"></span>
-    <button class="btn sm ghost" id="pgPrev">◀</button>
-    <span class="num" id="pgLabel" style="font-size:11px;color:var(--dim)">— / —</span>
-    <button class="btn sm ghost" id="pgNext">▶</button>
+    <span class="viewbar" id="viewbar">
+      <button class="tool" id="zOut" title="Zoom out"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M20 20l-4-4"/></svg></button>
+      <span class="num" id="zLabel" style="font-size:11px;min-width:44px;text-align:center;color:var(--dim)">100%</span>
+      <button class="tool" id="zIn" title="Zoom in"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M8 11h6M11 8v6M20 20l-4-4"/></svg></button>
+      <button class="btn sm ghost" id="zFit">Fit</button>
+      <span class="sep"></span>
+      <button class="btn sm ghost" id="pgPrev">◀</button>
+      <span class="num" id="pgLabel" style="font-size:11px;color:var(--dim)">— / —</span>
+      <button class="btn sm ghost" id="pgNext">▶</button>
+    </span>
   </div>
   <div id="calNag" style="display:none">
     <b>Set the scale first.</b> Pick a standard scale, or trace a dimension you trust with the ruler
@@ -554,14 +635,15 @@ body.haspen #penFlag{display:inline}
 <footer>
   <div class="f" id="stTool">Select</div>
   <div class="f" id="stScale">Scale: not set</div>
-  <div class="f" id="stCoord">—</div>
-  <div class="f" id="penFlag">✎ Apple Pencil</div>
+  <div class="f opt" id="stCoord">—</div>
+  <div class="f opt" id="penFlag">✎ Apple Pencil</div>
   <div class="f r" id="stSave">Not saved</div>
   <div class="f" id="stSheet">—</div>
   <div class="f" id="stTot">0 runs · 0'-0"</div>
 </footer>
 </div>
 
+<div id="railScrim"></div>
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div class="toast" id="toast"></div>
@@ -583,7 +665,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.20.1';
+const APP_VER='1.21.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -597,6 +679,37 @@ if(window.pdfjsLib){
 /* offline: cache the shell so an installed app opens without a network */
 if('serviceWorker' in navigator && location.protocol.startsWith('http')){
   window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
+/* ---- the status bar ----
+   Installed to the home screen the app is drawn under the clock and battery, and
+   the CSS pads the header by safe-area-inset-top to clear them. If a device
+   reports no inset while still handing us the full screen, measure it and
+   reserve the bar ourselves — an unreadable titleblock is worse than a gap. */
+function probeInsets(){
+  const el=document.createElement('div');
+  el.style.cssText='position:fixed;top:0;left:0;height:env(safe-area-inset-top);width:1px;pointer-events:none;opacity:0';
+  document.body.appendChild(el);
+  const top=el.getBoundingClientRect().height;
+  el.remove();
+  const standalone=matchMedia('(display-mode:standalone)').matches||navigator.standalone===true;
+  document.body.classList.toggle('padtop',standalone&&top<4);
+  return {top,standalone};
+}
+/* ---- a build newer than the one running ----
+   An installed copy opens from cache, so a stale version can sit there quietly.
+   Ask the network what the current one is and say so rather than leaving someone
+   to wonder why a fix has not arrived. */
+async function checkForUpdate(){
+  if(!location.protocol.startsWith('http')) return null;
+  try{
+    const r=await fetch('index.html',{cache:'no-store'});
+    if(!r.ok) return null;
+    const t=await r.text();
+    const m=/const APP_VER='([^']+)'/.exec(t);
+    if(!m||m[1]===APP_VER) return null;
+    toast('Version '+m[1]+' is available — close and reopen LineWork to load it');
+    return m[1];
+  }catch(e){ return null; }
 }
 
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -2410,7 +2523,7 @@ function showMultiInspector(){
   });
   $$('[data-mact]',bd).forEach(b=>b.onclick=()=>{
     const act=b.dataset.mact;
-    if(act==='clear'){ setMulti([]); return; }
+    if(act==='clear'){ setMulti([]); if(V.addSel){ V.addSel=false; syncMultiBtn(); } return; }
     if(act==='hide'||act==='show'){ snap((act==='hide'?'Hide ':'Show ')+list.length);
       list.forEach(a=>{ a.hidden=act==='hide'; }); afterMultiEdit(); return; }
     if(act==='del'){
@@ -2528,7 +2641,11 @@ function endEdit(){
   markDirty();
 }
 const coarse=!!(window.matchMedia&&(matchMedia('(pointer:coarse)').matches||matchMedia('(hover:none)').matches));
-V.fingerDraws=!coarse; V.color=COLORS[0]; V.width=1.8;
+/* A finger draws by default, on any device: on an iPad with no Pencil to hand,
+   "finger pans" meant tapping the dimension tool and having nothing happen. The
+   moment a Pencil is used the finger goes back to panning, which is what you
+   want with a palm on the sheet — and either way the toolbar toggle wins. */
+V.fingerDraws=true; V.color=COLORS[0]; V.width=1.8;
 /* Line weight applies to every markup, not just ink. Measurement lines keep a
    constant on-screen weight so they stay readable at any zoom; ink scales with
    the drawing because it is meant to read like pen on paper. */
@@ -2569,12 +2686,38 @@ function setTool(t){
 }
 $$('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 
+/* ---- long press ----
+   There is no right button on a tablet, and iOS only sometimes turns a long press
+   on a canvas into a contextmenu event. So hold for half a second and the same
+   menu opens, aimed at whatever is under your finger. Any movement, a second
+   finger, or lifting early cancels it. */
+let lp=null;
+function startLongPress(e,sc){
+  cancelLongPress();
+  if(V.draft) return;                         /* mid-run: the run bar owns the gestures */
+  lp={x:e.clientX,y:e.clientY,sc:sc.slice(),id:e.pointerId,fired:false,
+    t:setTimeout(()=>{
+      if(!lp) return;
+      lp.fired=true;
+      press=null; pan=null; edit=null;
+      viewport.classList.remove('drag');
+      const p=V.vp?V.vp.convertToPdfPoint(lp.sc[0],lp.sc[1]):null;
+      ctxPt=p;
+      const h=hitTest(lp.sc[0],lp.sc[1],18);
+      if(h){ V.sel=h.id; V.multi=[]; drawOverlay(); showInspector(h); renderAnnList(); }
+      else { V.sel=null; showInspector(null); drawOverlay(); }
+      showCtx(lp.x,lp.y,h?ctxForAnn(h):ctxForSheet());
+    },500)};
+}
+function cancelLongPress(){ if(lp){ clearTimeout(lp.t); lp=null; } }
+const longPressFired=id=>!!(lp&&lp.fired&&lp.id===id);
 const isDrawInput=e=>e.pointerType==='pen'||e.pointerType==='mouse'||(e.pointerType==='touch'&&V.fingerDraws);
 const isPalm=e=>e.pointerType==='touch'&&(activePen!==null||Date.now()-lastPenAt<700);
 const touchPts=()=>[...PT.values()].filter(x=>x.t==='touch');
 
 stage.addEventListener('pointerdown',e=>{
   if(!V.vp) return;
+  if(narrowUI()) closeRails();
   if(e.pointerType==='mouse'&&e.button!==0){
     if(e.button===1||e.button===2){                       /* middle or right drag pans */
       e.preventDefault(); closeCtx(); press=null;
@@ -2586,15 +2729,32 @@ stage.addEventListener('pointerdown',e=>{
   if(isPalm(e)) return;                                   /* palm rejection */
   closeCtx();
   PT.set(e.pointerId,{t:e.pointerType,x:e.clientX,y:e.clientY});
-  if(e.pointerType==='pen'){ activePen=e.pointerId; lastPenAt=Date.now(); document.body.classList.add('haspen'); }
-  if(touchPts().length>=2){ press=null; stroke=null; pan=null; startPinch(); return; }
+  if(e.pointerType==='pen'){
+    activePen=e.pointerId; lastPenAt=Date.now(); document.body.classList.add('haspen');
+    /* first Pencil stroke of the session, and no explicit choice made */
+    if(!V.penSeen){
+      V.penSeen=true;
+      if(typeof P.fingerDraws!=='boolean'&&V.fingerDraws){
+        V.fingerDraws=false; syncFingerBtn();
+        toast('Apple Pencil detected — your finger now pans, the Pencil draws');
+      }
+    }
+  }
+  if(touchPts().length>=2){ press=null; stroke=null; pan=null; cancelLongPress(); startPinch(); return; }
   if(pinch) return;
   e.preventDefault();
   try{ stage.setPointerCapture(e.pointerId); }catch(_){}
   const p=toPt(e), sc=toS(e), tol=e.pointerType==='mouse'?7:16;
+  if(e.pointerType!=='mouse') startLongPress(e,sc);
 
   if(V.tool==='pan'||!isDrawInput(e)){                    /* finger always pans while a draw tool is live */
     if(V.tool==='pan'){
+      /* with add-to-selection on, a tap builds the set — the tablet equivalent
+         of ⇧-click, which still works when there is a keyboard */
+      if(V.addSel){
+        const ha=hitTest(sc[0],sc[1],tol);
+        if(ha){ cancelLongPress(); toggleMulti(ha.id); return; }
+      }
       /* ⇧ on a markup adds it to the selection; ⇧ on bare paper sweeps one */
       if(e.shiftKey&&e.pointerType!=='touch'){
         const hs=hitTest(sc[0],sc[1],tol);
@@ -2645,6 +2805,8 @@ stage.addEventListener('pointerdown',e=>{
 stage.addEventListener('pointermove',e=>{
   if(!V.vp) return;
   const rec=PT.get(e.pointerId); if(rec){ rec.x=e.clientX; rec.y=e.clientY; }
+  if(lp&&lp.id===e.pointerId&&!lp.fired&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>10) cancelLongPress();
+  if(lp&&lp.fired&&lp.id===e.pointerId) return;      /* the menu is up; ignore the finger */
   if(e.pointerType==='pen'){ lastPenAt=Date.now();
     if(e.buttons===0){ const sc=toS(e); const d=$('#penDot'); d.classList.add('show'); d.style.left=sc[0]+'px'; d.style.top=sc[1]+'px'; } }
   if(pinch){ movePinch(); return; }
@@ -2713,6 +2875,9 @@ function liveLen(d){
 function endPointer(e){
   PT.delete(e.pointerId);
   if(e.pointerType==='pen'){ activePen=null; lastPenAt=Date.now(); }
+  if(longPressFired(e.pointerId)){ cancelLongPress(); press=null; pan=null;
+    viewport.classList.remove('drag'); return; }
+  cancelLongPress();
   if(V.marq&&V.marq.id===e.pointerId){
     const m=V.marq; V.marq=null;
     const x1=Math.min(m.x0,m.x1),x2=Math.max(m.x0,m.x1),y1=Math.min(m.y0,m.y1),y2=Math.max(m.y0,m.y1);
@@ -2755,7 +2920,7 @@ function endPointer(e){
     syncDrawbar(); }
 }
 stage.addEventListener('pointerup',endPointer);
-stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); if(edit) endEdit(); if(pinch&&touchPts().length<2) endPinch(); press=null; stroke=null; pan=null; if(V.draft&&V.draft.type==='ink'){V.draft=null;drawOverlay();} });
+stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); cancelLongPress(); if(edit) endEdit(); if(pinch&&touchPts().length<2) endPinch(); press=null; stroke=null; pan=null; if(V.draft&&V.draft.type==='ink'){V.draft=null;drawOverlay();} });
 stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot').classList.remove('show'); });
 
 function tapVertex(p,e){
@@ -3012,6 +3177,8 @@ function ctxForAnn(a){
   const L=(a.type==='line'||a.type==='arc'||a.type==='area')?annLen(a):null;
   const items=[{hd:names[a.type]+(L!=null?'  ·  '+fmtLen(L):'')}];
   if(a.type==='count') items.push({id:'cn',t:'Count group '+(a.grp||'COUNT')+'  ·  '+countsOf(a.grp).length+' stamped',off:1});
+  items.push({id:'ms',t:inMulti(a.id)?'Take out of the selection':'Add to the selection',
+    fn:()=>{ toggleMulti(a.id); if(!V.addSel){ V.addSel=true; syncMultiBtn(); } }});
   if(vertexType(a)&&!a.free&&a.pts.length>1) items.push({id:'of',t:'Parallel run…',fn:()=>offsetAnn(a)});
   if(a.type==='line'||a.type==='arc'||a.type==='area') items.push(t
     ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
@@ -3116,9 +3283,31 @@ $('#btnSnap').onclick=()=>{
 $('#btnScroll').onclick=()=>{ P.scrollZoom=P.scrollZoom===false; syncScrollBtn(); markDirty();
   toast(P.scrollZoom?'Scroll wheel zooms at the cursor — ⇧ scroll pans across':'Scroll wheel pans — ⌘/Ctrl scroll zooms'); };
 function syncScrollBtn(){ $('#btnScroll').textContent=P.scrollZoom===false?'↕ Scroll pans':'⊕ Scroll zooms'; }
-$('#btnFinger').onclick=()=>{ V.fingerDraws=!V.fingerDraws;
-  $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
-  toast(V.fingerDraws?'One finger now draws — pinch still zooms':'One finger pans; draw with the Apple Pencil'); };
+function syncMultiBtn(){
+  const b=$('#btnMulti'); if(!b) return;
+  b.classList.toggle('on',!!V.addSel);
+  b.title=V.addSel?'Add to selection is on — tap markups to add or remove them'
+                  :'Add to selection — tap markups to build a set (⇧-click does the same)';
+}
+$('#btnMulti').onclick=()=>{
+  V.addSel=!V.addSel;
+  if(V.addSel&&V.tool!=='pan') setTool('pan');
+  syncMultiBtn();
+  toast(V.addSel?'Tap markups to add them to the selection':'Back to selecting one at a time');
+};
+function syncFingerBtn(){
+  const b=$('#btnFinger'); if(!b) return;
+  b.textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
+  b.classList.toggle('pri',!!V.fingerDraws);
+  b.title=V.fingerDraws?'One finger draws; pinch or two fingers move the sheet'
+                       :'One finger moves the sheet; draw with the Apple Pencil';
+}
+$('#btnFinger').onclick=()=>{
+  V.fingerDraws=!V.fingerDraws;
+  P.fingerDraws=V.fingerDraws;          /* an explicit choice, so remember it */
+  syncFingerBtn(); markDirty();
+  toast(V.fingerDraws?'One finger now draws — pinch or two fingers move the sheet'
+                     :'One finger moves the sheet; draw with the Apple Pencil'); };
 
 async function finishDraft(){
   const d=V.draft; if(!d) return; V.draft=null;
@@ -3758,7 +3947,8 @@ function renderSheets(){
       +(d.noText?' · <span style="color:var(--faint)">no text layer</span>':'')
       +(loaded?'':' · <span style="color:var(--flag)">re-import</span>')+'</div></div>'
       +'<span class="pill '+d.kind+'" data-kind="'+d.id+'" title="Click to switch plan/shop">'+d.kind+'</span>';
-    el.onclick=e=>{ if(e.target.dataset.kind){ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); return; } openDoc(d.id,1,true); };
+    el.onclick=e=>{ if(e.target.dataset.kind){ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); return; }
+      openDoc(d.id,1,true); if(narrowUI()) closeRails(); };
     h.appendChild(el);
   });
 }
@@ -3799,6 +3989,7 @@ function renderAnnList(){
     el.onclick=ev=>{
       if(ev.shiftKey){ toggleMulti(a.id); return; }
       V.multi=[]; V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList();
+      if(narrowUI()) closeRails();
       if(!onScreen(a)) centerOn(a); };
     h.appendChild(el);
   });
@@ -3822,7 +4013,7 @@ function renderLinks(){
       +'<div class="t">'+esc(tgt?tgt.name.replace(/\.pdf$/i,''):'missing drawing')+' · p'+a.target.page+'</div>'
       +'<div class="s">'+(a.detail?esc(a.detail)+' · ':'')+'from '+esc(src?src.name.slice(0,16):'?')+' p'+a.page
       +(a.text?' · '+esc(a.text.slice(0,18)):'')+'</div></div>';
-    el.onclick=()=>openDoc(a.target.doc,a.target.page,true);
+    el.onclick=()=>{ openDoc(a.target.doc,a.target.page,true); if(narrowUI()) closeRails(); };
     h.appendChild(el);
   });
 }
@@ -4107,7 +4298,7 @@ function renderTreatments(){
       if(a==='loc'){ const an=P.ann.find(x=>x.id===t.annId);
         if(!an){ toast('No dimension linked to this treatment'); return; }
         await goToAnn(an,true);
-        if(coarse) document.body.classList.remove('ro');   /* get the sheet on screen on a tablet */
+        if(narrowUI()) closeRails();           /* get the sheet on screen on a tablet */
         toast('Showing '+tagOf(t)+' on '+((P.docs.find(d=>d.id===an.doc)||{}).name||'the sheet')); }
       if(a==='unlink'){ const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat; t.manual=lenOf(t); t.annId=null; renderTreatments(); drawOverlay(); renderAnnList(); markDirty(); openTreat(t.id); }
       if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'||x.type==='area'));
@@ -5804,26 +5995,65 @@ $('#btnAddTreat').onclick=()=>{ const t=newTreat(null);
   renderTreatments(); renderBom(); openTreat(t.id,true); };
 $('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'||x.type==='area'));
   if(!a){toast('Select a dimension, arc or region on the drawing first');return;} treatFromAnn(a); };
-/* panel visibility and which side each rail sits on, remembered per project */
+/* ---- the rails ----
+   On a wide screen they are columns that can be hidden or swapped, and that
+   choice belongs to the project. On a tablet there is not room for three
+   columns, so they slide over the sheet one at a time and start closed; that is
+   a state of the window, not of the job, so it is not saved. */
+/* the same condition as the CSS, in one place */
+const NARROW_Q='(max-width:1180px),(pointer:coarse) and (max-width:1400px)';
+const narrowUI=()=>matchMedia(NARROW_Q).matches;
+const railOpen=side=>document.body.classList.contains(side==='left'?'railL':'railR');
 function applyPanels(){
   const p=P.panels||{};
+  const n=narrowUI();
+  document.body.classList.toggle('swap',p.swap===true);
   document.body.classList.toggle('hideL',p.left===false);
   document.body.classList.toggle('hideR',p.right===false);
-  document.body.classList.toggle('swap',p.swap===true);
-  const set=(id,on,label)=>{ const b=$(id); if(!b) return;
-    b.classList.toggle('pri',on); b.title=(on?'Hide ':'Show ')+label; };
-  set('#togL',p.left!==false,'the sheets rail');
-  set('#togR',p.right!==false,'the takeoff rail');
+  if(!n) document.body.classList.remove('railL','railR');
+  const set=(id,on,label,shown)=>{ const b=$(id); if(!b) return;
+    b.classList.toggle('pri',on);
+    b.title=(shown?'Hide ':'Show ')+label; };
+  if(n){
+    set('#togL',railOpen('left'),'the sheets rail',railOpen('left'));
+    set('#togR',railOpen('right'),'the takeoff rail',railOpen('right'));
+  }else{
+    set('#togL',p.left!==false,'the sheets rail',p.left!==false);
+    set('#togR',p.right!==false,'the takeoff rail',p.right!==false);
+  }
   const sw=$('#togSwap');
   if(sw){ sw.classList.toggle('pri',p.swap===true);
-    sw.title=p.swap?'Sheets on the right, takeoff on the left — click to swap back'
+    sw.title=p.swap?'Sheets on the right, takeoff on the left — tap to swap back'
                    :'Swap the rails over'; }
   if(V.vp) scheduleRepaint(true);          /* the viewport changed width */
 }
-function setPanel(k,v){ P.panels=Object.assign({left:true,right:true,swap:false},P.panels); P.panels[k]=v; applyPanels(); markDirty(); }
-$('#togL').onclick=()=>setPanel('left',(P.panels||{}).left===false);
-$('#togR').onclick=()=>setPanel('right',(P.panels||{}).right===false);
+/* open or close an overlaid rail; only one at a time, or the sheet disappears */
+function setRail(side,on){
+  const cls=side==='left'?'railL':'railR';
+  document.body.classList.toggle(cls,!!on);
+  if(on) document.body.classList.remove(side==='left'?'railR':'railL');
+  applyPanels();
+}
+const closeRails=()=>{ if(document.body.classList.contains('railL')||document.body.classList.contains('railR')){
+  document.body.classList.remove('railL','railR'); applyPanels(); } };
+function setPanel(k,v){
+  if(narrowUI()&&(k==='left'||k==='right')){ setRail(k,v); return; }
+  P.panels=Object.assign({left:true,right:true,swap:false},P.panels); P.panels[k]=v; applyPanels(); markDirty();
+}
+$('#togL').onclick=()=>setPanel('left',narrowUI()?!railOpen('left'):(P.panels||{}).left===false);
+$('#togR').onclick=()=>setPanel('right',narrowUI()?!railOpen('right'):(P.panels||{}).right===false);
 $('#togSwap').onclick=()=>setPanel('swap',!(P.panels||{}).swap);
+$('#railScrim').onclick=closeRails;
+/* rotating the iPad changes which layout applies */
+let laneT=null;
+addEventListener('resize',()=>{ clearTimeout(laneT); laneT=setTimeout(()=>{ applyPanels(); },120); });
+/* the tool strip scrolls on a narrow screen; fade the edge while there is more */
+function syncToolFade(){
+  const t=$('#toolbar'); if(!t) return;
+  t.classList.toggle('more',t.scrollWidth-t.clientWidth-t.scrollLeft>4);
+}
+$('#toolbar').addEventListener('scroll',syncToolFade,{passive:true});
+addEventListener('resize',()=>setTimeout(syncToolFade,140));
 $('#zIn').onclick=()=>zoomBy(1.25); $('#zOut').onclick=()=>zoomBy(.8); $('#zFit').onclick=()=>fitPage();
 function zoomBy(f){ if(!V.vp) return; flushWheel();
   const r=viewport.getBoundingClientRect(), g=zGrab(r.left+r.width/2,r.top+r.height/2);
@@ -5871,7 +6101,9 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&k==='a'&&V.vp){ e.preventDefault();
     setMulti(pageAnns().filter(annVisible).map(a=>a.id));
     toast((V.multi.length||(V.sel?1:0))+' markup(s) selected on this page'); return; }
-  if(k==='escape'){ closeCtx(); V.draft=null; V.sel=null; V.multi=[]; V.marq=null; showInspector(null);
+  if(k==='escape'){ closeCtx(); closeRails(); V.draft=null; V.sel=null; V.multi=[]; V.marq=null;
+    if(V.addSel){ V.addSel=false; syncMultiBtn(); }
+    showInspector(null);
     if(V.tool!=='pan') setTool('pan'); else { drawOverlay(); syncDrawbar(); }
     return; }
   if(k==='enter'&&V.draft) finishDraft();
@@ -5916,8 +6148,9 @@ function boot(keepDoc){
   sel.innerHTML='<option value="">Set scale…</option><optgroup label="Imperial">'
     +SCALES.slice(0,13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')
     +'</optgroup><optgroup label="Metric">'+SCALES.slice(13).map(s=>'<option value="'+s[1]+'">'+s[0]+'</option>').join('')+'</optgroup>';
-  $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans';
+  syncFingerBtn();
   $('#btnFinger').style.display=coarse?'':'none';
+  syncMultiBtn(); syncToolFade();
   setDrawScale(1);
   applyTheme(); applyPanels();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
@@ -6123,7 +6356,7 @@ function applySetting(el){
     case 'load': P.load=clamp(+val||80,40,100); $('#loadF').value=P.load; renderTreatments(); renderBom(); stats(); break;
     case 'scrollZoom': P.scrollZoom=val==='1'; syncScrollBtn(); break;
     case 'fingerDraws': V.fingerDraws=val==='1'; P.fingerDraws=V.fingerDraws;
-      $('#btnFinger').textContent=V.fingerDraws?'✏️ Finger draws':'✋ Finger pans'; break;
+      syncFingerBtn(); break;
     case 'autoFile': autoFile=val; syncFileBtn(); break;
     case 'keepPdf': P.keepPdf=val; if(!val) pdfForget(); renderSettings(); break;
     case 'name': P.name=val; $('#projName').value=val; break;
@@ -6146,7 +6379,7 @@ $('#setReset').onclick=async()=>{
   Object.assign(P,{units:'imperial',snap:true,smart:true,theme:'dark',code:'off',waste:5,load:80,
     scrollZoom:true,chipScale:1,segLabels:true,arcDetail:true,round:'',
     panels:{left:true,right:true,swap:false}});
-  V.width=1.8; V.fingerDraws=!coarse; autoFile=true;
+  V.width=1.8; V.fingerDraws=true; delete P.fingerDraws; autoFile=true;
   applyTheme(); applyPanels(); setDrawScale(1);
   boot(); renderSettings();
   toast('Settings reset');
@@ -6172,6 +6405,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   snapCache:()=>({pages:SNAP.cache.size,keys:[...SNAP.cache.keys()]}),
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
   setMulti,toggleMulti,multiAnns,inMulti,alignMulti,distributeMulti,annBox,shiftAnn,aligns:ALIGNS,
+  narrowUI,railOpen,setRail,closeRails,startLongPress,cancelLongPress,syncMultiBtn,syncFingerBtn,
+  probeInsets,checkForUpdate,
   approveTreat,unapproveTreat,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
@@ -6185,7 +6420,10 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
   render(){boot()}};
 (async()=>{
+  probeInsets();
+  addEventListener('orientationchange',()=>setTimeout(probeInsets,250));
   await loadProject(); loadHist(); boot(); setTool('pan');
+  setTimeout(checkForUpdate,4000);
   if(!PDF_OK){ toast('The PDF engine did not load — check vendor/pdf.min.js'); return; }
   /* drawings kept in this browser come back on their own */
   const n=await restoreDrawings();

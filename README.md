@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.20.1**
+**Version 1.21.0**
 
 ## What it does
 
@@ -50,8 +50,31 @@ out the other end.
   rollups and cost as CSV; the marked-up sheet as a flat PDF; the whole project
   as one file; and the product library as its own file to reuse across jobs.
 
-Built for iPad as much as desktop: Apple Pencil draws while your palm rests on
-the sheet, and pinch-zoom works throughout.
+## On an iPad
+
+Built for iPad as much as for a desktop, and it adapts rather than shrinking:
+
+- **The sheet gets the screen.** With a finger as the pointer, the two rails stop
+  being columns and slide over the drawing one at a time — tap *Sheets* or
+  *Takeoff* to bring one in, tap the sheet or the dimmed area to send it away.
+  Attach a Magic Keyboard or trackpad and iPadOS reports a precise pointer, which
+  puts the columns back.
+- **One toolbar row**, swiped sideways, instead of four stacked rows eating 140 px
+  of drawing. Zoom, Fit and the page arrows float over the sheet so they are
+  always to hand.
+- **A finger draws** by default — on an iPad with no Pencil nearby, "finger pans"
+  meant tapping the dimension tool and having nothing happen. The moment an Apple
+  Pencil is used the finger goes back to panning, which is what you want with a
+  palm on the sheet; the toolbar toggle overrides either way. Two fingers or a
+  pinch always move and zoom the sheet.
+- **Long-press is right-click.** Hold for half a second on a markup or on bare
+  paper and the same menu opens. A press that turns into a drag stays a drag.
+- **No shift key, no problem**: the ⧉ button in the toolbar turns on
+  add-to-selection, so tapping markups builds a set to align, recolour or delete
+  together. It is also in the long-press menu.
+- Tap targets are sized for a thumb, form fields are 16 px so iOS never zooms the
+  page when you tap into one, and the titleblock clears the clock and battery when
+  the app is installed to the home screen.
 
 ## Reading the drawings
 
