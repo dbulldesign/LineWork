@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. A single self-contained
 `index.html` — no build step, no server. Open it in a browser, or serve the repo
 root as a static site.
 
-**Version 1.4.0**
+**Version 1.5.0**
 
 ## What it does
 
@@ -18,9 +18,9 @@ out the other end.
   links from a plan to the millwork shop drawing that details it. Every markup
   stays editable: drag it to move, drag a handle to reshape, double-click to
   retype.
-- **Take off** — one treatment per lighting condition, each carrying its LED
-  product, channel, and power supply, rolled up into a cut list and BOM with
-  waste and supply-load allowances.
+- **Take off** — one treatment per lighting condition, each carrying a TYPE
+  designation, its LED product, channel, power supply, and feed points, rolled up
+  into a cut list and BOM with waste and supply-load allowances.
 - **Export** — cut list and BOM as CSV, and the whole project as one file.
 
 Built for iPad as much as desktop: Apple Pencil draws while your palm rests on
@@ -39,6 +39,23 @@ Two layers, so panning and zooming stay smooth on large drawings:
 The consequence: a wide sheet at high zoom never asks for a canvas the browser
 refuses to allocate, and the sheet never blanks or flashes while it catches up —
 it only goes momentarily soft.
+
+## Lengths and cut increments
+
+Imperial lengths read as decimal feet with the inch equivalent alongside — for
+example `20.42 ft (245.3")`. Decimal feet is what gets ordered; inches is what
+gets cut. Any of `20.5 ft`, `246"`, or `20'-6"` is accepted as input.
+
+Only the LED product carries a cut increment. **Tape** and **neon flex** cut in
+fixed increments; **fixtures** come in fixed lengths and cannot be cut at all, so
+they round up to whole units. **Channel is always cut to length** — its stock
+length only says how it is bought, and never rounds the run. The BOM therefore
+lists channel twice: the linear length actually needed, and the number of stock
+lengths to buy.
+
+Feed points are computed from the product's voltage-drop limit, and can be
+overridden per treatment. Setting fewer than the limit allows is flagged rather
+than silently accepted.
 
 ## Saving
 

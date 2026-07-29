@@ -142,6 +142,10 @@ tr.tot td{border-top:1px solid var(--line2);font-weight:600;background:var(--s2)
 /* treatment cards */
 .card{border-bottom:1px solid var(--line)}
 .card .hd{display:flex;gap:8px;align-items:center;padding:8px 12px;cursor:pointer}
+/* type designation: always upper case, in the mono face so it reads as a code */
+.card .hd .typ{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;
+  color:var(--amber);border:1px solid var(--amber2);border-radius:2px;padding:1px 4px;white-space:nowrap}
+input.up{text-transform:uppercase}
 .card .hd:hover{background:var(--s2)}
 .card.on .hd{background:var(--s3)}
 .tag{font-family:var(--mono);font-size:11px;color:var(--amber);border:1px solid var(--amber2);padding:1px 5px;border-radius:2px;flex:none}
@@ -387,7 +391,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.4.0';
+const APP_VER='1.5.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -400,6 +404,9 @@ const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const MM=25.4;
 
 /* ---- length formatting & parsing (internal unit = real-world inches) ---- */
+/* Imperial lengths read as decimal feet with the inch equivalent alongside:
+   decimal feet is what gets ordered, inches is what gets cut. */
+const inchTxt=v=>(Math.round(v*10)/10).toFixed(1).replace(/\.0$/,'');
 function fmtLen(inches,u){
   u=u||P.units;
   if(inches==null||!isFinite(inches)) return '—';
@@ -407,6 +414,14 @@ function fmtLen(inches,u){
     const mm=inches*MM;
     return Math.abs(mm)>=1000 ? (mm/1000).toFixed(3)+' m' : Math.round(mm)+' mm';
   }
+  const neg=inches<0, v=Math.abs(inches);
+  return (neg?'-':'')+(v/12).toFixed(2)+' ft ('+inchTxt(v)+'")';
+}
+/* feet-and-inches, kept for anywhere a traditional dimension string is wanted */
+function fmtFtIn(inches,u){
+  u=u||P.units;
+  if(inches==null||!isFinite(inches)) return '—';
+  if(u==='metric') return fmtLen(inches,u);
   const neg=inches<0; let v=Math.abs(inches), den=16;
   let ft=Math.floor(v/12), rem=v-ft*12, wh=Math.floor(rem+1e-9), fr=Math.round((rem-wh)*den);
   if(fr===den){wh++;fr=0}
@@ -415,10 +430,15 @@ function fmtLen(inches,u){
   return (neg?'-':'')+ft+"'-"+wh+f+'"';
 }
 function fmtFt(inches){ return (inches/12).toFixed(2)+' ft'; }
-function fmtRun(inches){ return P.units==='metric' ? (inches*MM/1000).toFixed(3)+' m' : (inches/12).toFixed(2)+' ft'; }
+/* compact: decimal feet only, for totals and tight spaces */
+function fmtRun(inches){
+  if(inches==null||!isFinite(inches)) return '—';
+  return P.units==='metric' ? (inches*MM/1000).toFixed(3)+' m' : (inches/12).toFixed(2)+' ft';
+}
 function parseLen(str){
   if(str==null) return NaN;
   let s=String(str).trim().toLowerCase().replace(/,/g,'').replace(/[–—]/g,'-');
+  s=s.replace(/\s*\([^)]*\)\s*$/,'').trim();   /* accept our own "20.42 ft (245.3")" back */
   if(!s) return NaN; let m;
   if((m=s.match(/^([\d.]+)\s*mm$/))) return +m[1]/MM;
   if((m=s.match(/^([\d.]+)\s*cm$/))) return +m[1]*10/MM;
@@ -432,7 +452,7 @@ function parseLen(str){
   if(/^-?[\d.]+$/.test(s)) return P.units==='metric' ? +s/MM : +s;
   return NaN;
 }
-const unitHint=()=>P.units==='metric' ? 'mm, or 1.85m' : "e.g. 12'-3 1/2\"";
+const unitHint=()=>P.units==='metric' ? 'mm, or 1.85m' : "e.g. 20.5 ft, 246\", or 20'-6\"";
 
 /* ---- scale presets: ratio = real length / paper length ---- */
 const SCALES=[
@@ -444,14 +464,21 @@ const SCALES=[
 const ratioLabel=r=>{ const hit=SCALES.find(s=>Math.abs(s[1]-r)<0.02); return hit?hit[0]:'1:'+r.toFixed(1); };
 
 /* ---- seeded library (generic placeholders — replace with real cut-sheet data) ---- */
+/* kind drives how a run is broken down. Tape, neon and fixtures all come in cut
+   increments; channel (below) does not — it is cut to whatever length is needed. */
+const KINDS=[{v:'tape',t:'LED tape'},{v:'fixture',t:'Fixture'},{v:'neon',t:'Neon flex'}];
 const DEF_FIX=[
  {id:'F1',name:'Tape · 24V · standard output',kind:'tape',volts:24,wft:3.0,cut:2,minc:2,feed:196.85,note:'Constant-voltage driver'},
  {id:'F2',name:'Tape · 24V · high output',kind:'tape',volts:24,wft:6.0,cut:2,minc:2,feed:196.85,note:''},
  {id:'F3',name:'Tape · 24V · extra high output',kind:'tape',volts:24,wft:9.6,cut:4,minc:4,feed:157.48,note:'Heat sink required'},
  {id:'F4',name:'Neon flex · 24V · top bend',kind:'neon',volts:24,wft:4.4,cut:3.94,minc:7.87,feed:196.85,note:'100 mm cut increment'},
  {id:'F5',name:'Neon flex · 24V · side bend',kind:'neon',volts:24,wft:4.4,cut:3.94,minc:7.87,feed:196.85,note:'100 mm cut increment'},
- {id:'F6',name:'Neon flex · 120V line voltage',kind:'neon',volts:120,wft:3.0,cut:39.37,minc:39.37,feed:1200,note:'1 m cut increment'}
+ {id:'F6',name:'Neon flex · 120V line voltage',kind:'neon',volts:120,wft:3.0,cut:39.37,minc:39.37,feed:1200,note:'1 m cut increment'},
+ {id:'F7',name:'Linear fixture · 4 ft joinable',kind:'fixture',volts:24,wft:4.5,cut:48,minc:48,feed:384,note:'Fixed length — round up to whole fixtures'},
+ {id:'F8',name:'Linear fixture · 2 ft joinable',kind:'fixture',volts:24,wft:4.5,cut:24,minc:24,feed:384,note:'Fixed length — round up to whole fixtures'}
 ];
+/* Channel is always cut to length on site: stock is only the purchase length, it
+   never rounds the run. */
 const DEF_CH=[
  {id:'C1',name:'Recessed extrusion · 2 m',stock:78.74,clip:19.69,note:'Frosted lens'},
  {id:'C2',name:'Surface extrusion · 2 m',stock:78.74,clip:19.69,note:''},
@@ -554,6 +581,14 @@ function applyProject(d){
   if(!Array.isArray(P.fix)||!P.fix.length) P.fix=clone(DEF_FIX);
   if(!Array.isArray(P.ch)||!P.ch.length) P.ch=clone(DEF_CH);
   if(!Array.isArray(P.psu)||!P.psu.length) P.psu=clone(DEF_PSU);
+  /* fields added after v1.4 — backfill so older projects calculate the same way */
+  P.fix.forEach(f=>{ if(!f.kind) f.kind=/neon/i.test(f.name||'')?'neon':/fixture/i.test(f.name||'')?'fixture':'tape'; });
+  P.treat.forEach(t=>{
+    if(typeof t.type!=='string') t.type='';
+    t.type=t.type.toUpperCase();
+    t.feedOv=+t.feedOv>0?Math.round(+t.feedOv):0;
+    if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
+  });
   P.name=String(P.name||'Untitled Project'); P.no=String(P.no||'');
   if(P.units!=='metric') P.units='imperial';
   P.seq=Math.max(1,+P.seq||1); P.waste=+P.waste||0; P.load=+P.load||80;
@@ -847,11 +882,15 @@ function syncScaleUI(){
 /* ---- overlay drawing ---- */
 const COLORS=['#E4694F','#F2A93B','#5AB6DE','#8FC46A','#C77BD6'];
 const sp=p=>V.vp.convertToViewportPoint(p[0],p[1]);
+/* Measurement labels are the thing you read off the sheet, so they are sized to
+   be legible at a glance rather than to stay out of the way. */
+const CHIP_FS=16, CHIP_H=Math.round(CHIP_FS*1.62);
+const chipW=txt=>String(txt).length*CHIP_FS*.62+CHIP_FS;
 function chip(x,y,txt,col,anchor){
-  const w=txt.length*6.3+12,h=15;
+  const w=chipW(txt), h=CHIP_H;
   let cx=x-w/2; if(anchor==='l') cx=x+8;
-  return '<g><rect x="'+cx.toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h+'" rx="2" fill="#171512" stroke="'+col+'" stroke-opacity=".7"/>'
-    +'<text x="'+(cx+w/2).toFixed(1)+'" y="'+(y+4).toFixed(1)+'" fill="'+col+'" font-family="IBM Plex Mono,monospace" font-size="10.5" text-anchor="middle">'+esc(txt)+'</text></g>';
+  return '<g><rect x="'+cx.toFixed(1)+'" y="'+(y-h/2).toFixed(1)+'" width="'+w.toFixed(1)+'" height="'+h.toFixed(1)+'" rx="2.5" fill="#171512" fill-opacity=".95" stroke="'+col+'" stroke-opacity=".8"/>'
+    +'<text x="'+(cx+w/2).toFixed(1)+'" y="'+(y+CHIP_FS*.37).toFixed(1)+'" fill="'+col+'" font-family="IBM Plex Mono,monospace" font-weight="600" font-size="'+CHIP_FS+'" text-anchor="middle">'+esc(txt)+'</text></g>';
 }
 /* greedy wrap for text boxes; honours the author's own line breaks */
 function wrapText(s,cols){
@@ -908,20 +947,24 @@ function drawAnn(a,selected,isDraft){
     /* per-segment lengths — every segment on a poly, skipping ones too short to label */
     if(!a.free&&(a.poly||pts.length<=8)&&(pts.length>2||isDraft)){
       annSegs(a).forEach(sg=>{
-        const A=sp(sg.a),B=sp(sg.b);
-        if(Math.hypot(B[0]-A[0],B[1]-A[1])<34) return;
-        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-11,sg.len==null?'—':fmtLen(sg.len),col);
+        const A=sp(sg.a),B=sp(sg.b), px=Math.hypot(B[0]-A[0],B[1]-A[1]);
+        /* full label if it fits the segment, else decimal feet alone, else nothing */
+        let lbl=sg.len==null?'—':fmtLen(sg.len);
+        if(px<chipW(lbl)*.85) lbl=sg.len==null?'—':fmtRun(sg.len);
+        if(px<chipW(lbl)*.85) return;
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col);
       });
     }
     const tot=annLen(a);
     if(a.type==='line'){
       const tg=a.treat&&P.treat.find(t=>t.id===a.treat);
       const n=annSegs(a).length;
-      const lbl=(tg?tg.tag+'  ':'')+(tot==null?'set scale':fmtLen(tot))+(a.poly&&n>1?'  ('+n+' seg'+(loop?', closed':'')+')':'');
+      const lbl=(tg?tg.tag+(tg.type?' '+tg.type:'')+'  ':'')+(tot==null?'set scale':fmtLen(tot))
+        +(a.poly&&n>1?'  ('+n+' seg'+(loop?', closed':'')+')':'');
       const last=pts[pts.length-1];
-      g+=chip(last[0],last[1]+(pts.length>2?18:-13),lbl,tg?'#F2A93B':col,pts.length>2?null:null);
+      g+=chip(last[0],last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8),lbl,tg?'#F2A93B':col);
     }else{
-      g+=chip((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2+16,'CALIBRATED',col);
+      g+=chip((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2+CHIP_H,'CALIBRATED',col);
     }
   }
   if(a.type==='ink'){
@@ -1674,10 +1717,20 @@ function calc(t){
   const c=P.ch.find(x=>x.id===t.chId)||P.ch[0];
   const ps=P.psu.find(x=>x.id===t.psuId)||P.psu[0];
   const L=lenOf(t), qty=Math.max(1,+t.qty||1), inc=+f.cut||0;
-  let cut = inc>0 ? (t.round==='near'? Math.round(L/inc)*inc : Math.floor(L/inc+1e-6)*inc) : L;
+  /* Only the LED product carries a cut increment — tape, fixtures and neon.
+     Fixtures cannot be cut, so they round up to whole units by default. */
+  const kind=f.kind||'tape', fixed=kind==='fixture';
+  const mode=t.round||(fixed?'up':'down');
+  let cut = inc>0
+    ? (mode==='near' ? Math.round(L/inc)*inc
+      : mode==='up'  ? Math.ceil(L/inc-1e-6)*inc
+                     : Math.floor(L/inc+1e-6)*inc)
+    : L;
   if(!isFinite(cut)||cut<0) cut=0;
+  const units=inc>0?Math.round(cut/inc):0;           /* whole tape cuts / fixtures */
   const gap=L-cut, watts=cut/12*f.wft;
-  const feeds=cut>0?Math.max(1,Math.ceil(cut/(f.feed||1e9)-1e-6)):0;
+  const autoFeeds=cut>0?Math.max(1,Math.ceil(cut/(f.feed||1e9)-1e-6)):0;
+  const feedSet=+t.feedOv>0, feeds=feedSet?Math.max(1,Math.round(+t.feedOv)):autoFeeds;
   const clipSp=(t.clip!==''&&t.clip!=null&&isFinite(parseLen(t.clip))&&parseLen(t.clip)>0)?parseLen(t.clip):(c.clip||20);
   const stock=+c.stock||0;
   const clips=stock>0||c.clip? Math.max(2,Math.ceil(L/clipSp+1e-9)+1):0;
@@ -1685,7 +1738,8 @@ function calc(t){
   const full=stock>0?Math.floor(L/stock+1e-9):0;
   const remainder=stock>0?Math.max(0,L-full*stock):0;
   const joiners=Math.max(0,pieces-1), caps=stock>0?2:0;
-  const tot={len:L*qty,cut:cut*qty,watts:watts*qty,feeds:feeds*qty,clips:clips*qty,pieces:pieces*qty,joiners:joiners*qty,caps:caps*qty};
+  const tot={len:L*qty,cut:cut*qty,watts:watts*qty,feeds:feeds*qty,clips:clips*qty,pieces:pieces*qty,
+    joiners:joiners*qty,caps:caps*qty,units:units*qty,chLen:L*qty};
   const lf=clamp((+P.load||80)/100,.4,1), design=tot.watts/lf;
   const psuQty=ps.watts>0?Math.ceil(design/ps.watts-1e-9):0;
   const w=[];
@@ -1693,17 +1747,21 @@ function calc(t){
   else if(cut<=0) w.push('Run is shorter than one cut increment of '+fmtLen(inc)+'.');
   else if(f.minc&&cut<f.minc) w.push('Under the '+fmtLen(f.minc)+' minimum cut length for this product.');
   if(gap>0.06&&cut>0) w.push('Dark gap of '+fmtLen(gap)+' per run. Decide now which end it lands on.');
-  if(feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(f.feed)+' per feed. A centre feed usually solves it.');
+  if(gap<-0.06&&cut>0) w.push('Runs '+fmtLen(-gap)+' long per run — rounded up to whole '+(fixed?'fixtures':'cut increments')+'.');
+  if(fixed&&mode==='down'&&gap>0.06) w.push('Fixtures cannot be cut down — rounding down leaves this run short. Use Round up.');
+  if(feedSet&&feeds<autoFeeds) w.push('Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(f.feed)+' per feed.');
+  if(!feedSet&&feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(f.feed)+' per feed. A centre feed usually solves it.');
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
   if(stock===0&&c.id!=='C6') w.push('No stock length set for this channel.');
-  return {f,c,ps,L,qty,cut,gap,watts,feeds,clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
+  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,kind,fixed,mode,inc,units,
+    clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
 function newTreat(annId){
   snap();
-  const t={id:uid('t_'),tag:'L-'+pad(P.seq++),name:'New treatment',room:'',docId:V.docId,page:V.page,
-    annId:annId||null,manual:0,qty:1,fixId:P.fix[0].id,chId:P.ch[0].id,psuId:P.psu[1]?P.psu[1].id:P.psu[0].id,
-    round:'down',clip:'',shop:'',notes:''};
+  const t={id:uid('t_'),tag:'L-'+pad(P.seq++),type:'',name:'New treatment',room:'',docId:V.docId,page:V.page,
+    annId:annId||null,manual:0,qty:1,feedOv:0,fixId:P.fix[0].id,chId:P.ch[0].id,psuId:P.psu[1]?P.psu[1].id:P.psu[0].id,
+    round:'',clip:'',shop:'',notes:''};
   P.treat.push(t); markDirty(); return t;
 }
 function treatFromAnn(a){
@@ -1730,17 +1788,29 @@ function renderTreatments(){
     const psOpts=P.psu.map(p=>'<option value="'+p.id+'"'+(p.id===t.psuId?' selected':'')+'>'+esc(p.name)+'</option>').join('');
     const shopOpts='<option value="">— none —</option>'+P.docs.map(d=>'<option value="'+d.id+'"'+(d.id===t.shop?' selected':'')+'>'+esc(d.name)+'</option>').join('');
     el.innerHTML=
-      '<div class="hd"><span class="tag">'+esc(t.tag)+'</span><span class="nm">'+esc(t.name||'Untitled')+'</span>'
+      '<div class="hd"><span class="tag">'+esc(t.tag)+'</span>'
+      +(t.type?'<span class="typ">'+esc(t.type)+'</span>':'')
+      +'<span class="nm">'+esc(t.name||'Untitled')+'</span>'
       +'<span class="len">'+(t.qty>1?t.qty+' × ':'')+fmtLen(r.L)+'</span></div>'
       +'<div class="bd">'
-      +'<div class="grid2">'
+      +'<div class="grid3">'
+        +'<div class="f"><label>Type</label><input type="text" class="up" data-t="type" value="'+esc(t.type||'')+'" placeholder="COVE"></div>'
         +'<div class="f"><label>Treatment name</label><input type="text" data-t="name" value="'+esc(t.name)+'"></div>'
         +'<div class="f"><label>Room / location</label><input type="text" data-t="room" value="'+esc(t.room)+'"></div>'
       +'</div>'
       +'<div class="grid3" style="margin-top:8px">'
         +'<div class="f"><label>Length per run</label><input type="text" data-t="len" value="'+(t.annId?fmtLen(r.L):(r.L?fmtLen(r.L):''))+'" '+(t.annId?'disabled':'')+' placeholder="'+esc(unitHint())+'"></div>'
         +'<div class="f"><label>Identical runs</label><input type="number" min="1" step="1" data-t="qty" value="'+(t.qty||1)+'"></div>'
-        +'<div class="f"><label>Cut rounding</label><select data-t="round"><option value="down"'+(t.round!=='near'?' selected':'')+'>Round down</option><option value="near"'+(t.round==='near'?' selected':'')+'>Nearest</option></select></div>'
+        +'<div class="f"><label>Feed points / run</label><input type="number" min="0" step="1" data-t="feedOv" value="'+(t.feedOv||'')+'" placeholder="auto: '+r.autoFeeds+'"></div>'
+      +'</div>'
+      +'<div class="grid2" style="margin-top:8px">'
+        +'<div class="f"><label>Cut rounding ('+esc(r.inc>0?fmtLen(r.inc)+' increments':'cut to any length')+')</label>'
+          +'<select data-t="round"'+(r.inc>0?'':' disabled')+'>'
+          +'<option value="down"'+(r.mode==='down'?' selected':'')+'>Round down</option>'
+          +'<option value="near"'+(r.mode==='near'?' selected':'')+'>Nearest</option>'
+          +'<option value="up"'+(r.mode==='up'?' selected':'')+'>Round up</option></select></div>'
+        +'<div class="f"><label>'+(r.fixed?'Fixtures per run':'Cuts per run')+'</label>'
+          +'<input type="text" value="'+esc(r.inc>0?String(r.units):'—')+'" disabled></div>'
       +'</div>'
       +'<div class="f" style="margin-top:8px"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
       +'<div class="grid2" style="margin-top:8px">'
@@ -1763,9 +1833,17 @@ function renderTreatments(){
         const k=inp.dataset.t;
         if(k==='len'){ const v=parseLen(inp.value); t.manual=isFinite(v)?v:0; }
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
+        else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
+        else if(k==='type'){                      /* the type designation is always capitals */
+          const up=inp.value.toUpperCase();
+          if(inp.value!==up){ const c=inp.selectionStart; inp.value=up; try{inp.setSelectionRange(c,c)}catch(_){}}
+          t.type=up;
+        }
         else t[k]=inp.value;
         const rr=calc(t);
         el.querySelector('.nm').textContent=t.name||'Untitled';
+        const tp=el.querySelector('.typ');
+        if(tp) tp.textContent=t.type||''; else if(t.type) el.querySelector('.tag').insertAdjacentHTML('afterend','<span class="typ">'+esc(t.type)+'</span>');
         el.querySelector('.len').textContent=(t.qty>1?t.qty+' × ':'')+fmtLen(rr.L);
         $('#out_'+t.id).innerHTML=outHtml(rr);
         drawOverlay(); renderBom(); stats(); markDirty();
@@ -1789,13 +1867,16 @@ function renderTreatments(){
   stats();
 }
 function outHtml(r){
+  const kindName={tape:'LED tape',fixture:'Fixtures',neon:'Neon flex'}[r.kind]||'LED';
   const rows=[
-    ['Cut length per run',fmtLen(r.cut)+'  ('+fmtRun(r.cut)+')',true],
-    ['Total LED ordered',fmtRun(r.tot.cut),true],
+    ['Cut length per run',fmtLen(r.cut),true],
+    [(r.fixed?'Fixtures per run':'Cut increments per run'),r.inc>0?r.units+' × '+fmtLen(r.inc):'cut to any length',false],
+    ['Total '+kindName+' ordered',fmtRun(r.tot.cut)+(r.inc>0?'  ('+r.tot.units+' ea)':''),true],
     ['Load per run',r.watts.toFixed(1)+' W',false],
     ['Total load',r.tot.watts.toFixed(1)+' W',false],
-    ['Feed points',r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':''),false],
-    ['Channel pieces',r.stock?r.tot.pieces+' × '+fmtLen(r.stock):'—',false],
+    ['Feed points',r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto'),false],
+    ['Channel length',r.stock||r.c.clip?fmtRun(r.tot.chLen)+' cut to length':'—',false],
+    ['Channel pieces',r.stock?r.tot.pieces+' × '+fmtLen(r.stock)+' stock':'—',false],
     ['Off-cut per run',r.stock?(r.remainder>0.05?fmtLen(r.stock-r.remainder)+' waste':'none'):'—',false],
     ['Mounting clips',r.clips?r.tot.clips+' ea @ '+fmtLen(r.clipSp)+' o.c.':'—',false],
     ['End caps',r.caps?r.tot.caps+' ea':'—',false],
@@ -1825,12 +1906,14 @@ function libRow(txt,sub,onclick,onDel){
 }
 function renderLib(){
   const F=$('#fixList'); F.innerHTML=''; $('#cFix').textContent=P.fix.length;
+  const kindLbl={tape:'Tape',fixture:'Fixture',neon:'Neon'};
   P.fix.forEach(f=>F.appendChild(libRow(f.name,
-    f.volts+'V · '+f.wft+' W/ft · cut '+fmtLen(f.cut)+' · feed max '+fmtRun(f.feed),
+    (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+f.wft+' W/ft · cuts in '+fmtRun(f.cut)
+    +(f.kind==='fixture'?' fixed lengths':' increments')+' · feed max '+fmtRun(f.feed),
     ()=>editFix(f),()=>{P.fix=P.fix.filter(x=>x!==f);renderLib();renderTreatments();renderBom();markDirty();})));
   const C=$('#chList'); C.innerHTML=''; $('#cCh').textContent=P.ch.length;
   P.ch.forEach(c=>C.appendChild(libRow(c.name,
-    (c.stock?'stock '+fmtLen(c.stock):'no channel')+' · clips '+fmtLen(c.clip)+' o.c.',
+    (c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')+' · clips '+fmtLen(c.clip)+' o.c.',
     ()=>editCh(c),()=>{P.ch=P.ch.filter(x=>x!==c);renderLib();renderTreatments();renderBom();markDirty();})));
   const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
   P.psu.forEach(p=>S.appendChild(libRow(p.name,
@@ -1841,17 +1924,19 @@ async function editFix(f){
   const isNew=!f; f=f||{id:uid('f_'),name:'',kind:'tape',volts:24,wft:3,cut:2,minc:2,feed:196.85,note:''};
   const r=await dlg({title:isNew?'Add LED product':'Edit LED product',fields:[
     {k:'name',label:'Product name',val:f.name,ph:'Tape · 24V · 3000K'},
+    {k:'kind',type:'select',label:'Kind',opts:KINDS,val:f.kind||'tape',
+      hint:'Tape, fixtures and neon all cut in increments. Fixtures cannot be cut, so they round up to whole units.'},
     {k:'r1',type:'row'},
     {k:'volts',type:'num',label:'Volts',val:f.volts,row:'r1'},
     {k:'wft',type:'num',label:'Watts per foot',val:f.wft,row:'r1'},
     {k:'r2',type:'row'},
-    {k:'cut',label:'Cut increment',val:fmtLen(f.cut),row:'r2',hint:unitHint()},
+    {k:'cut',label:'Cut increment / unit length',val:fmtLen(f.cut),row:'r2',hint:unitHint()},
     {k:'minc',label:'Minimum cut length',val:fmtLen(f.minc),row:'r2'},
     {k:'feed',label:'Maximum run per feed',val:fmtLen(f.feed),hint:'Voltage-drop limit from the cut sheet.'},
     {k:'note',label:'Note',val:f.note}
   ]});
   if(!r) return;
-  Object.assign(f,{name:r.name||'Unnamed',volts:+r.volts||24,wft:+r.wft||0,
+  Object.assign(f,{name:r.name||'Unnamed',kind:r.kind||'tape',volts:+r.volts||24,wft:+r.wft||0,
     cut:parseLen(r.cut)||0,minc:parseLen(r.minc)||0,feed:parseLen(r.feed)||1e9,note:r.note});
   if(isNew) P.fix.push(f);
   renderLib(); renderTreatments(); renderBom(); markDirty();
@@ -1861,10 +1946,10 @@ async function editCh(c){
   const r=await dlg({title:isNew?'Add channel':'Edit channel',fields:[
     {k:'name',label:'Channel name',val:c.name,ph:'Recessed extrusion · 2 m'},
     {k:'r1',type:'row'},
-    {k:'stock',label:'Stock length',val:fmtLen(c.stock),row:'r1',hint:unitHint()},
+    {k:'stock',label:'Stock length bought',val:fmtLen(c.stock),row:'r1',hint:unitHint()},
     {k:'clip',label:'Clip spacing o.c.',val:fmtLen(c.clip),row:'r1'},
     {k:'note',label:'Note',val:c.note}
-  ]});
+  ],note:'Channel is always cut to length on site — the stock length only says how it is bought, it never rounds the run.'});
   if(!r) return;
   Object.assign(c,{name:r.name||'Unnamed',stock:parseLen(r.stock)||0,clip:parseLen(r.clip)||20,note:r.note});
   if(isNew) P.ch.push(c);
@@ -1897,7 +1982,7 @@ function bomData(){
   P.treat.forEach(t=>{
     const r=calc(t); if(r.L<=0) return;
     const kf=r.f.id; led[kf]=led[kf]||{n:r.f.name,ft:0,runs:0,w:0}; led[kf].ft+=r.tot.cut/12; led[kf].runs+=r.qty; led[kf].w+=r.tot.watts;
-    if(r.stock>0){ const kc=r.c.id; chn[kc]=chn[kc]||{n:r.c.name,pc:0,ft:0}; chn[kc].pc+=r.tot.pieces; chn[kc].ft+=r.tot.len/12;
+    if(r.stock>0){ const kc=r.c.id; chn[kc]=chn[kc]||{n:r.c.name,pc:0,ft:0,stock:r.stock}; chn[kc].pc+=r.tot.pieces; chn[kc].ft+=r.tot.chLen/12;
       cap[kc]=cap[kc]||{n:r.c.name,q:0}; cap[kc].q+=r.tot.caps;
       join[kc]=join[kc]||{n:r.c.name,q:0}; join[kc].q+=r.tot.joiners; }
     if(r.clips){ const kc=r.c.id; clip[kc]=clip[kc]||{n:r.c.name,q:0}; clip[kc].q+=r.tot.clips; }
@@ -1907,8 +1992,15 @@ function bomData(){
   Object.values(led).forEach(v=>rows.push(['LED',v.n,P.units==='metric'?'m':'ft',
     P.units==='metric'?(v.ft*0.3048*waste).toFixed(2):(v.ft*waste).toFixed(2),
     v.runs+(v.runs===1?' run · ':' runs · ')+v.w.toFixed(0)+' W'+(waste>1?' · incl '+P.waste+'% waste':'')]));
-  Object.values(chn).forEach(v=>rows.push(['Channel',v.n,'ea',Math.ceil(v.pc*waste),
-    'covers '+(P.units==='metric'?(v.ft*0.3048).toFixed(2)+' m':v.ft.toFixed(2)+' ft')]));
+  /* channel is cut to length, so the length needed is the real quantity and the
+     stock pieces are just how it is bought */
+  Object.values(chn).forEach(v=>{
+    const need=P.units==='metric'?(v.ft*0.3048*waste).toFixed(2):(v.ft*waste).toFixed(2);
+    rows.push(['Channel',v.n,P.units==='metric'?'m':'ft',need,
+      'cut to length'+(waste>1?' · incl '+P.waste+'% waste':'')]);
+    rows.push(['Channel',v.n+' — stock lengths','ea',Math.ceil(v.pc*waste),
+      'buy as '+fmtLen(v.stock)+' pieces']);
+  });
   Object.values(clip).forEach(v=>rows.push(['Mounting','Clips — '+v.n,'ea',v.q,'']));
   Object.values(cap).forEach(v=>rows.push(['Mounting','End caps — '+v.n,'ea',v.q,'2 per run']));
   Object.values(join).filter(v=>v.q).forEach(v=>rows.push(['Mounting','Splice plates — '+v.n,'ea',v.q,'']));
@@ -1918,18 +2010,19 @@ function bomData(){
 function renderBom(){
   const c=$('#cutTbl');
   if(!P.treat.length){ c.innerHTML='<tr><td class="hint" style="padding:14px">Nothing measured yet.</td></tr>'; $('#bomTbl').innerHTML=''; return; }
-  let h='<tr><th>Tag</th><th>Location</th><th>Product</th><th class="n">Runs</th><th class="n">Field</th><th class="n">Cut</th><th class="n">W</th><th class="n">Feeds</th></tr>';
-  let tl=0,tw=0;
+  let h='<tr><th>Tag</th><th>Type</th><th>Location</th><th>Product</th><th class="n">Runs</th><th class="n">Field</th><th class="n">Cut</th><th class="n">W</th><th class="n">Feeds</th></tr>';
+  let tl=0,tw=0,tf=0;
   P.treat.forEach(t=>{
-    const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts;
+    const r=calc(t); tl+=r.tot.cut; tw+=r.tot.watts; tf+=r.tot.feeds;
     h+='<tr><td><span class="tag">'+esc(t.tag)+'</span></td>'
+      +'<td>'+(t.type?'<span class="typ">'+esc(t.type)+'</span>':'<span class="hint">—</span>')+'</td>'
       +'<td>'+esc(t.room||t.name||'—')+'<div class="hint">'+esc((P.docs.find(d=>d.id===t.docId)||{}).name||'')+'</div></td>'
-      +'<td>'+esc(r.f.name)+'<div class="hint">'+esc(r.c.name)+'</div></td>'
-      +'<td class="n">'+r.qty+'</td><td class="n">'+fmtLen(r.L)+'</td>'
-      +'<td class="n" style="color:var(--amber)">'+fmtLen(r.cut)+'</td>'
-      +'<td class="n">'+r.tot.watts.toFixed(0)+'</td><td class="n">'+r.tot.feeds+'</td></tr>';
+      +'<td>'+esc(r.f.name)+'<div class="hint">'+esc(r.c.name)+' · cut to length</div></td>'
+      +'<td class="n">'+r.qty+'</td><td class="n">'+fmtRun(r.L)+'</td>'
+      +'<td class="n" style="color:var(--amber)">'+fmtRun(r.cut)+'</td>'
+      +'<td class="n">'+r.tot.watts.toFixed(0)+'</td><td class="n">'+r.tot.feeds+(r.feedSet?'*':'')+'</td></tr>';
   });
-  h+='<tr class="tot"><td colspan="4">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td></td></tr>';
+  h+='<tr class="tot"><td colspan="5">Total</td><td class="n"></td><td class="n">'+fmtRun(tl)+'</td><td class="n">'+tw.toFixed(0)+'</td><td class="n">'+tf+'</td></tr>';
   c.innerHTML=h;
   const rows=bomData();
   $('#bomTbl').innerHTML='<tr><th>Cat.</th><th>Item</th><th class="n">Qty</th><th>Unit</th></tr>'
@@ -1949,10 +2042,17 @@ async function exportBox(name,text){
     }catch(e){ toast('Download blocked — copy the text instead'); } });
 }
 $('#btnCsvCut').onclick=()=>{
-  const rows=[['Tag','Name','Location','Sheet','Product','Channel','Runs','Field length','Cut length','Watts total','Feed points','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
+  const rows=[['Tag','Type','Name','Location','Sheet','Product','Kind','Channel','Runs',
+    'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
+    'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually',
+    'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
-    rows.push([t.tag,t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',r.f.name,r.c.name,r.qty,
-      fmtLen(r.L),fmtLen(r.cut),r.tot.watts.toFixed(1),r.tot.feeds,r.tot.pieces,r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes]); });
+    rows.push([t.tag,t.type||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',r.f.name,r.kind,
+      r.c.name+' (cut to length)',r.qty,
+      (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
+      r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
+      r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
+      (r.tot.chLen/12).toFixed(2),r.tot.pieces,r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes]); });
   exportBox(slug(P.name)+'-cutlist.csv',csv(rows));
 };
 $('#btnCsvBom').onclick=()=>{
@@ -2144,6 +2244,7 @@ function boot(keepDoc){
 window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen,openFiles,openDoc,bomData,boot,rdp,smooth,undo,redo,snap,copyAnn,pasteAnn,ctxForAnn,ctxForSheet,wheelZoom,flushWheel,
   saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
   annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
+  fmtRun,fmtFtIn,chipFontSize:CHIP_FS,chipWidth:chipW,
   render(){boot()}};
 (async()=>{ await loadProject(); boot(); setTool('pan'); })();
 </script>
