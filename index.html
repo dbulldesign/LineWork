@@ -229,6 +229,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn mobtog" id="togL">Sheets</button>
     <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
     <button class="btn pri" id="btnOpen">Import PDF</button>
+    <button class="btn" id="btnSave" title="Save project file (⌘S)">Save</button>
     <button class="btn" id="btnProj">Project</button>
     <button class="btn mobtog" id="togR">Takeoff</button>
   </div>
@@ -294,12 +295,12 @@ body.haspen #penFlag{display:inline}
         <button class="btn pri" id="btnOpen2">Import PDF</button>
       </div>
     </div>
-</div>
-  </div>
-  <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
+    <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
     <div id="inspector">
       <div class="hd"><span id="insTitle">Markup</span><button class="btn sm ghost" id="insClose" style="margin-left:auto;padding:0 6px">✕</button></div>
       <div class="bd" id="insBody"></div>
+    </div>
+  </div>
 </main>
 
 <aside class="right">
@@ -331,7 +332,15 @@ body.haspen #penFlag{display:inline}
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn" id="btnCsvCut">Export cut list</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
-      <button class="btn" id="btnJson">Save project file</button>
+      <button class="btn" id="btnJsonCopy">Copy JSON</button>
+    </div></div>
+    <div class="sec"><h3>Project file</h3><div class="body">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <input type="file" id="projInput" accept=".json,application/json" hidden>
+        <button class="btn pri" id="btnJson">Save project file</button>
+        <button class="btn" id="btnOpenProj">Open project file</button>
+      </div>
+      <div class="hint" style="margin-top:6px">Saves the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> file (⌘S / Ctrl-S). Drawings are not included: open the file, re-import the same PDFs, and every markup reattaches.</div>
     </div></div>
   </div>
 </aside>
@@ -436,38 +445,63 @@ const DEF_PSU=[
 ];
 
 /* ---- project state ---- */
-let P={
+const clone=o=>JSON.parse(JSON.stringify(o));
+const BLANK=()=>({
   name:'Untitled Project',no:'',units:'imperial',
   docs:[],cal:{},ann:[],treat:[],
-  fix:JSON.parse(JSON.stringify(DEF_FIX)),ch:JSON.parse(JSON.stringify(DEF_CH)),psu:JSON.parse(JSON.stringify(DEF_PSU)),
+  fix:clone(DEF_FIX),ch:clone(DEF_CH),psu:clone(DEF_PSU),
   waste:5,load:80,seq:1,scrollZoom:true
-};
+});
+let P=BLANK();
 const V={docId:null,page:1,zoom:1,tool:'pan',sel:null,draft:null,pageObj:null,vp:null,fitZoom:1};
 const FILES={};                       // docId -> {pdf}
 const KEY='linework:project:v1';
+const FILE_VER=1;
 
-/* ---- persistence ---- */
+/* ---- persistence ----
+   Autosave targets window.storage when the page is hosted with a storage
+   capability, and falls back to localStorage for a plain static file. Neither
+   holds the PDFs — a project file (below) is the portable copy. */
 let saveT=null, saved=false;
 function markDirty(){ saved=false; $('#stSave').textContent='Unsaved'; clearTimeout(saveT); saveT=setTimeout(saveProject,1200); }
+function stampSaved(where){
+  saved=true;
+  const el=$('#stSave');
+  el.innerHTML='Saved <b>'+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</b>';
+  el.title='Autosaved to '+where+' — use Save project file to keep a copy';
+}
 async function saveProject(){
-  try{
-    if(!window.storage) throw 0;
-    await window.storage.set(KEY,JSON.stringify(P),false);
-    saved=true; $('#stSave').innerHTML='Saved <b>'+new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+'</b>';
-  }catch(e){ $('#stSave').textContent='Session only'; }
+  const body=JSON.stringify(P);
+  try{ if(window.storage){ await window.storage.set(KEY,body,false); stampSaved('this session'); return; } }catch(e){}
+  try{ localStorage.setItem(KEY,body); stampSaved('this browser'); return; }catch(e){}
+  const el=$('#stSave');
+  el.textContent='Not autosaved'; el.title='Autosave unavailable here — use Save project file';
 }
 async function loadProject(){
-  try{
-    if(!window.storage) return;
-    const r=await window.storage.get(KEY,false);
-    if(!r||!r.value) return;
-    const d=JSON.parse(r.value);
-    P=Object.assign(P,d);
-    if(!P.fix||!P.fix.length) P.fix=JSON.parse(JSON.stringify(DEF_FIX));
-    if(!P.ch||!P.ch.length) P.ch=JSON.parse(JSON.stringify(DEF_CH));
-    if(!P.psu||!P.psu.length) P.psu=JSON.parse(JSON.stringify(DEF_PSU));
-    saved=true; $('#stSave').textContent='Restored';
-  }catch(e){}
+  let raw=null;
+  try{ if(window.storage){ const r=await window.storage.get(KEY,false); if(r&&r.value) raw=r.value; } }catch(e){}
+  if(raw==null){ try{ raw=localStorage.getItem(KEY); }catch(e){} }
+  if(!raw) return;
+  try{ applyProject(JSON.parse(raw)); saved=true; $('#stSave').textContent='Restored'; }catch(e){}
+}
+/* Replace state with a parsed project, backfilling anything missing or stale.
+   Throws if the object clearly isn't a project. Callers re-render. */
+function applyProject(d){
+  if(!d||typeof d!=='object'||Array.isArray(d)) throw new Error('Not a Linework project file');
+  if(!('treat' in d)&&!('ann' in d)&&!('docs' in d)) throw new Error('Not a Linework project file');
+  const pref=P.scrollZoom!==false;
+  P=Object.assign(BLANK(),d);
+  ['docs','ann','treat'].forEach(k=>{ if(!Array.isArray(P[k])) P[k]=[]; });
+  if(!P.cal||typeof P.cal!=='object'||Array.isArray(P.cal)) P.cal={};
+  if(!Array.isArray(P.fix)||!P.fix.length) P.fix=clone(DEF_FIX);
+  if(!Array.isArray(P.ch)||!P.ch.length) P.ch=clone(DEF_CH);
+  if(!Array.isArray(P.psu)||!P.psu.length) P.psu=clone(DEF_PSU);
+  P.name=String(P.name||'Untitled Project'); P.no=String(P.no||'');
+  if(P.units!=='metric') P.units='imperial';
+  P.seq=Math.max(1,+P.seq||1); P.waste=+P.waste||0; P.load=+P.load||80;
+  if(typeof d.scrollZoom!=='boolean') P.scrollZoom=pref;
+  delete P.savedAt; delete P.app; delete P.ver;
+  return P;
 }
 
 /* ---- toast + dialog ---- */
@@ -511,6 +545,13 @@ const cv=$('#pdfCanvas'), ctx=cv.getContext('2d'), stage=$('#stage'), ov=$('#ove
 let renderTask=null;
 
 async function openFiles(list){
+  /* a dropped .linework.json is a project, not a drawing */
+  const proj=list.filter(f=>/\.json$/i.test(f.name)||f.type==='application/json');
+  if(proj.length){
+    await openProjectFile(proj[0]);
+    list=list.filter(f=>!proj.includes(f));
+    if(!list.length) return;
+  }
   let firstNew=null;
   for(const f of list){
     if(!/\.pdf$/i.test(f.name)&&f.type!=='application/pdf'){ toast('Skipped '+f.name+' — PDF only'); continue; }
@@ -1471,11 +1512,15 @@ function renderBom(){
     +rows.map(r=>'<tr><td><span class="pill">'+esc(r[0])+'</span></td><td>'+esc(r[1])+(r[4]?'<div class="hint">'+esc(r[4])+'</div>':'')+'</td><td class="n">'+esc(r[3])+'</td><td>'+esc(r[2])+'</td></tr>').join('');
 }
 function csv(rows){ return rows.map(r=>r.map(v=>{ v=String(v??''); return /[",\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v; }).join(',')).join('\n'); }
+function download(name,text,mime){
+  const b=new Blob([text],{type:mime||'application/octet-stream'}), u=URL.createObjectURL(b), a=document.createElement('a');
+  a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(u),4000);
+}
 async function exportBox(name,text){
   await dlg({title:'Export — '+name,fields:[{k:'x',type:'textarea',label:'Preview',val:text.slice(0,4000)}],ok:'Download',cancel:'Close'})
     .then(r=>{ if(!r) return; try{
-      const b=new Blob([text],{type:'text/plain'}), u=URL.createObjectURL(b), a=document.createElement('a');
-      a.href=u; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(u),4000);
+      download(name,text,'text/plain');
       toast('Downloaded '+name);
     }catch(e){ toast('Download blocked — copy the text instead'); } });
 }
@@ -1484,13 +1529,53 @@ $('#btnCsvCut').onclick=()=>{
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([t.tag,t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',r.f.name,r.c.name,r.qty,
       fmtLen(r.L),fmtLen(r.cut),r.tot.watts.toFixed(1),r.tot.feeds,r.tot.pieces,r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes]); });
-  exportBox((P.name||'project').replace(/\W+/g,'-').toLowerCase()+'-cutlist.csv',csv(rows));
+  exportBox(slug(P.name)+'-cutlist.csv',csv(rows));
 };
 $('#btnCsvBom').onclick=()=>{
   const rows=[['Category','Item','Qty','Unit','Note']].concat(bomData().map(r=>[r[0],r[1],r[3],r[2],r[4]]));
-  exportBox((P.name||'project').replace(/\W+/g,'-').toLowerCase()+'-bom.csv',csv(rows));
+  exportBox(slug(P.name)+'-bom.csv',csv(rows));
 };
-$('#btnJson').onclick=()=>exportBox((P.name||'project').replace(/\W+/g,'-').toLowerCase()+'.linework.json',JSON.stringify(P,null,1));
+
+/* ---- project file: save to disk / open back up ----
+   The file carries the whole takeoff — sheets list, calibration, markups,
+   treatments, libraries — but not the PDFs themselves. Re-import the same
+   drawings after opening and every markup reattaches by name + size. */
+const slug=s=>String(s||'project').replace(/\W+/g,'-').replace(/^-+|-+$/g,'').toLowerCase()||'project';
+const projFileName=()=>slug(P.name)+'.linework.json';
+function projFileText(){ return JSON.stringify(Object.assign({app:'linework',ver:FILE_VER,savedAt:new Date().toISOString()},P),null,1); }
+function saveProjectFile(){
+  const name=projFileName();
+  try{ download(name,projFileText(),'application/json'); toast('Saved '+name); saveProject(); }
+  catch(e){ toast('Download blocked — use Copy JSON instead'); }
+}
+async function openProjectFile(file){
+  let d;
+  try{ d=JSON.parse(await file.text()); }
+  catch(e){ toast('Could not read '+file.name+' — not valid JSON'); return; }
+  if(P.treat.length||P.ann.length){
+    const n=(d&&Array.isArray(d.treat)?d.treat.length:0);
+    const r=await dlg({title:'Open project file',fields:[
+      {k:'go',type:'check',cap:'Replace the takeoff open right now',val:false}
+    ],ok:'Open',note:file.name+(n?' holds '+n+' treatment'+(n===1?'':'s')+'. ':' ')
+      +'The current project has '+P.treat.length+' treatment'+(P.treat.length===1?'':'s')+' and '
+      +P.ann.length+' markup'+(P.ann.length===1?'':'s')+', which will be discarded. Save it first if you need it.'});
+    if(!r||!r.go) return;
+  }
+  try{ applyProject(d); }
+  catch(e){ toast(e.message); return; }
+  /* PDFs never travel with the project, so drop the render state too */
+  Object.keys(FILES).forEach(k=>delete FILES[k]);
+  HIST.length=0; FUT.length=0;
+  V.docId=null; V.page=1; V.sel=null; V.draft=null; V.pageObj=null; V.vp=null;
+  showInspector(null); closeCtx();
+  stage.style.display='none'; $('#blank').style.display='';
+  boot(); setTool('pan'); saveProject();
+  toast('Opened '+file.name+(P.docs.length?' — re-import the drawings to see markups':''));
+}
+$('#btnJson').onclick=$('#btnSave').onclick=saveProjectFile;
+$('#btnJsonCopy').onclick=()=>exportBox(projFileName(),projFileText());
+$('#btnOpenProj').onclick=()=>$('#projInput').click();
+$('#projInput').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openProjectFile(f); };
 
 /* ============================================================
    G) wiring & startup
@@ -1529,9 +1614,9 @@ $('#btnProj').onclick=async()=>{
     {k:'wipe',type:'check',cap:'Start a new project — clears sheets, markups and treatments',val:false}
   ],ok:'Apply',note:'Drawings themselves are not stored between sessions — re-import the same PDF and its markups reattach automatically.'});
   if(!r) return;
-  if(r.wipe){ P={name:r.name||'Untitled Project',no:r.no,units:r.units,docs:[],cal:{},ann:[],treat:[],
-      fix:JSON.parse(JSON.stringify(DEF_FIX)),ch:JSON.parse(JSON.stringify(DEF_CH)),psu:JSON.parse(JSON.stringify(DEF_PSU)),waste:5,load:80,seq:1,scrollZoom:P.scrollZoom!==false};
+  if(r.wipe){ P=Object.assign(BLANK(),{name:r.name||'Untitled Project',no:r.no,units:r.units,scrollZoom:P.scrollZoom!==false});
     Object.keys(FILES).forEach(k=>delete FILES[k]);
+    HIST.length=0; FUT.length=0;
     V.docId=null; stage.style.display='none'; $('#blank').style.display=''; }
   else Object.assign(P,{name:r.name,no:r.no,units:r.units});
   boot(true); markDirty();
@@ -1543,6 +1628,8 @@ viewport.addEventListener('drop',e=>{ if(e.dataTransfer.files.length) openFiles(
 /* keyboard */
 document.addEventListener('keydown',e=>{
   if($('#scrim').classList.contains('show')) return;
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); saveProjectFile(); return; }
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='o'){ e.preventDefault(); $('#projInput').click(); return; }
   const tag=(e.target.tagName||'').toLowerCase();
   if(tag==='input'||tag==='textarea'||tag==='select') return;
   const k=e.key.toLowerCase();
@@ -1561,6 +1648,8 @@ document.addEventListener('keydown',e=>{
   if(k==='arrowright') $('#pgNext').click(); if(k==='arrowleft') $('#pgPrev').click();
 });
 
+const BLANK_H2=$('#blank').querySelector('h2').textContent;
+const BLANK_P=$('#blank').querySelector('p').textContent;
 function boot(keepDoc){
   $('#projName').value=P.name||''; $('#projNo').value=P.no||'';
   $('#unitBtn').textContent=(P.units||'imperial').toUpperCase();
@@ -1575,11 +1664,15 @@ function boot(keepDoc){
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(P.docs.length&&!Object.keys(FILES).length){
     $('#blank').querySelector('h2').textContent='Re-import your drawings';
-    $('#blank').querySelector('p').textContent='This project has '+P.docs.length+' sheet'+(P.docs.length===1?'':'s')+' with saved markups and takeoff. PDFs are not stored between sessions — import the same files and every dimension, note and link reattaches.';
+    $('#blank').querySelector('p').textContent='This project has '+P.docs.length+' sheet'+(P.docs.length===1?'':'s')+' with saved markups and takeoff. PDFs are not stored in the project — import the same files and every dimension, note and link reattaches.';
+  }else{
+    $('#blank').querySelector('h2').textContent=BLANK_H2;
+    $('#blank').querySelector('p').textContent=BLANK_P;
   }
 }
 /* console handle for scripting / debugging the takeoff */
 window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen,openFiles,openDoc,bomData,boot,rdp,smooth,undo,redo,snap,copyAnn,pasteAnn,ctxForAnn,ctxForSheet,wheelZoom,flushWheel,
+  saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
   render(){boot()}};
 (async()=>{ await loadProject(); boot(); setTool('pan'); })();
 </script>
