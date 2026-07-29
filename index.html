@@ -9,7 +9,7 @@
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#141210">
 <meta name="apple-mobile-web-app-title" content="LineWork">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
 <style>
 :root{
   --bg:#141210; --s1:#1C1916; --s2:#241F1A; --s3:#2E2822; --s4:#3A322A;
@@ -401,10 +401,21 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.6.0';
+const APP_VER='1.7.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
-pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+const PDF_OK=!!pdfjsLib;
+/* The worker lives beside us. Opened straight off the filesystem a worker is
+   blocked, so fall back to running pdf.js on the main thread — slower, but it
+   works. A missing pdf.js used to kill the whole page at this line. */
+if(window.pdfjsLib){
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    location.protocol==='file:' ? '' : 'vendor/pdf.worker.min.js';
+}
+/* offline: cache the shell so an installed app opens without a network */
+if('serviceWorker' in navigator && location.protocol.startsWith('http')){
+  window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
+}
 
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
 const uid=p=>p+Math.random().toString(36).slice(2,9);
@@ -603,7 +614,11 @@ function applyProject(d){
   });
   P.name=String(P.name||'Untitled Project'); P.no=String(P.no||'');
   if(P.units!=='metric') P.units='imperial';
-  P.seq=Math.max(1,+P.seq||1); P.waste=+P.waste||0; P.load=+P.load||80;
+  /* keep the fallback counter ahead of every tag already in the project, so a
+     merged or hand-edited file cannot mint duplicates */
+  let hi=0;
+  P.treat.forEach(t=>{ const m=/^L-(\d+)$/.exec(String(t.tag||'')); if(m) hi=Math.max(hi,+m[1]); });
+  P.seq=Math.max(1,+P.seq||1,hi+1); P.waste=+P.waste||0; P.load=+P.load||80;
   if(typeof d.scrollZoom!=='boolean') P.scrollZoom=pref;
   delete P.savedAt; delete P.app; delete P.ver; delete P.appVer;
   return P;
@@ -654,6 +669,9 @@ const shownDetail=()=>DET[detIdx], spareDetail=()=>DET[1-detIdx];
 let renderTask=null;
 
 async function openFiles(list){
+  if(!PDF_OK&&list.some(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf')){
+    toast('The PDF engine did not load — check that vendor/pdf.min.js is present'); return;
+  }
   /* a dropped .linework.json is a project, not a drawing */
   const proj=list.filter(f=>/\.json$/i.test(f.name)||f.type==='application/json');
   if(proj.length){
@@ -927,7 +945,8 @@ function tick(a,b,at){ // drafting slash tick perpendicular-ish at endpoint
 }
 function drawOverlay(){
   if(!V.vp){ ov.innerHTML=''; return; }
-  const list=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page);
+  invalidateAnns();          /* cheap: the key check re-filters only when needed */
+  const list=pageAnns();
   let s='';
   for(const a of list) s+=drawAnn(a,a.id===V.sel);
   if(V.draft) s+=drawAnn(V.draft,false,true);
@@ -1052,9 +1071,19 @@ function distSeg(p,a,b){
   let t=L2?((p[0]-a[0])*dx+(p[1]-a[1])*dy)/L2:0; t=clamp(t,0,1);
   return Math.hypot(p[0]-(a[0]+t*dx),p[1]-(a[1]+t*dy));
 }
+/* drawOverlay and hitTest both walk the same subset on every pointer move, so
+   keep it memoised and invalidate whenever markups or the page change */
+let _pcKey=null,_pcList=null;
+function pageAnns(){
+  const key=V.docId+'|'+V.page+'|'+P.ann.length+'|'+(P.ann.length?P.ann[P.ann.length-1].id:'');
+  if(_pcKey!==key){ _pcKey=key; _pcList=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page); }
+  return _pcList;
+}
+const invalidateAnns=()=>{ _pcKey=null; };
 function hitTest(sx,sy,tol){
+  if(!V.vp) return null;            /* callable before a sheet is open */
   tol=tol||7;
-  const list=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page).slice().reverse();
+  const list=pageAnns().slice().reverse();
   for(const a of list){
     const pts=annPts(a).map(sp);
     if(a.type==='line'||a.type==='cal'||a.type==='ink'){
@@ -1086,11 +1115,31 @@ function hitTest(sx,sy,tol){
 /* ---- undo history ---- */
 const HIST=[],FUT=[];
 const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq});
-function snap(){ HIST.push(snapshot()); if(HIST.length>60) HIST.shift(); FUT.length=0; syncUndo(); }
-function restore(j){ const d=JSON.parse(j); P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq;
+function snap(){ HIST.push(snapshot()); if(HIST.length>60) HIST.shift(); FUT.length=0; syncUndo(); saveHist(); }
+/* Undo depth is a working state, not part of the deliverable, so it rides in
+   local storage rather than the project file. */
+const HKEY=KEY+':hist';
+let histT=null;
+function saveHist(){
+  clearTimeout(histT);
+  histT=setTimeout(()=>{ try{
+    localStorage.setItem(HKEY,JSON.stringify({h:HIST.slice(-25),f:FUT.slice(-25)}));
+  }catch(e){} },600);
+}
+function loadHist(){
+  try{
+    const d=JSON.parse(localStorage.getItem(HKEY)||'null');
+    if(!d||!Array.isArray(d.h)) return;
+    HIST.length=0; FUT.length=0;
+    d.h.forEach(x=>HIST.push(x)); (d.f||[]).forEach(x=>FUT.push(x));
+    syncUndo();
+  }catch(e){}
+}
+function clearHist(){ HIST.length=0; FUT.length=0; syncUndo(); try{localStorage.removeItem(HKEY)}catch(e){} }
+function restore(j){ const d=JSON.parse(j); P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq; invalidateAnns();
   V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty(); }
-function undo(){ if(!HIST.length) return toast('Nothing to undo'); FUT.push(snapshot()); restore(HIST.pop()); syncUndo(); }
-function redo(){ if(!FUT.length) return toast('Nothing to redo'); HIST.push(snapshot()); restore(FUT.pop()); syncUndo(); }
+function undo(){ if(!HIST.length) return toast('Nothing to undo'); FUT.push(snapshot()); restore(HIST.pop()); syncUndo(); saveHist(); }
+function redo(){ if(!FUT.length) return toast('Nothing to redo'); HIST.push(snapshot()); restore(FUT.pop()); syncUndo(); saveHist(); }
 function syncUndo(){ const u=$('#btnUndo'),r=$('#btnRedo'); if(u)u.style.opacity=HIST.length?1:.35; if(r)r.style.opacity=FUT.length?1:.35; }
 
 /* ---- pointer engine: mouse, Apple Pencil, multi-touch ---- */
@@ -1099,7 +1148,7 @@ let pan=null, press=null, stroke=null, pinch=null, wz=null, activePen=null, last
 let suppressCtx=false, ctxPt=null, CLIP=null, edit=null;
 /* grab points on the selected markup, so a committed markup stays editable */
 function hitHandle(sx,sy,tol){
-  if(!V.sel) return null;
+  if(!V.sel||!V.vp) return null;
   const a=P.ann.find(x=>x.id===V.sel);
   if(!a||a.doc!==V.docId||a.page!==V.page) return null;
   if(a.type==='ink'||(a.type==='line'&&a.free)) return null;   /* freehand moves as a whole */
@@ -1225,8 +1274,13 @@ stage.addEventListener('pointermove',e=>{
     viewport.scrollLeft=pan.l-(e.clientX-pan.x); viewport.scrollTop=pan.t-(e.clientY-pan.y); return; }
   /* hover feedback so it is obvious a markup can be grabbed */
   if(V.tool==='pan'&&!press&&!edit){
-    const sc=toS(e);
-    stage.style.cursor=hitHandle(sc[0],sc[1],7)?'crosshair':(hitTest(sc[0],sc[1],7)?'move':'');
+    /* hover feedback is cosmetic — 20/sec is plenty and keeps big sheets smooth */
+    const now=performance.now();
+    if(now-(V._hoverAt||0)>50){
+      V._hoverAt=now;
+      const sc=toS(e);
+      stage.style.cursor=hitHandle(sc[0],sc[1],7)?'crosshair':(hitTest(sc[0],sc[1],7)?'move':'');
+    }
   }else stage.style.cursor='';
   const p=toPt(e);
   const evs=(e.getCoalescedEvents&&e.getCoalescedEvents().length)?e.getCoalescedEvents():[e];
@@ -1811,7 +1865,11 @@ function calc(t){
   const gap=L-cut, watts=cut/12*f.wft;
   const autoFeeds=cut>0?Math.max(1,Math.ceil(cut/(f.feed||1e9)-1e-6)):0;
   const feedSet=+t.feedOv>0, feeds=feedSet?Math.max(1,Math.round(+t.feedOv)):autoFeeds;
-  const clipSp=(t.clip!==''&&t.clip!=null&&isFinite(parseLen(t.clip))&&parseLen(t.clip)>0)?parseLen(t.clip):(c.clip||20);
+  const clipAsked=parseLen(t.clip);
+  const clipBad=t.clip!==''&&t.clip!=null&&(!isFinite(clipAsked)||clipAsked<=0);
+  /* an absurd spacing quietly produced 2 clips for a 100ft run; clamp and say so */
+  const clipSp=clamp((isFinite(clipAsked)&&clipAsked>0)?clipAsked:(c.clip||20),1,120);
+  const clipClamped=isFinite(clipAsked)&&clipAsked>0&&Math.abs(clipSp-clipAsked)>1e-6;
   const stock=+c.stock||0;
   const clips=stock>0||c.clip? Math.max(2,Math.ceil(L/clipSp+1e-9)+1):0;
   const pieces=stock>0?Math.ceil(L/stock-1e-6):0;
@@ -1832,7 +1890,10 @@ function calc(t){
   if(!feedSet&&feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(f.feed)+' per feed. A centre feed usually solves it.');
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
   if(stock===0&&c.id!=='C6') w.push('No stock length set for this channel.');
-  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,kind,fixed,mode,inc,units,opts,locked,
+  if(clipBad) w.push('Clip spacing "'+t.clip+'" could not be read — using '+fmtLen(clipSp)+'.');
+  if(clipClamped) w.push('Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
+  if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
+  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
@@ -2017,6 +2078,35 @@ function stats(){
 /* ============================================================
    E) library editors
    ============================================================ */
+/* Deleting a product that treatments point at used to silently repoint them at
+   whatever sat first in the library, quietly changing quantities. Now it says
+   how many use it and makes you choose a replacement. */
+const usesOf=(key,id)=>P.treat.filter(t=>t[key]===id);
+function usedBy(key,id){
+  const n=usesOf(key,id).length;
+  return n?' · <b style="color:var(--amber)">used by '+n+'</b>':'';
+}
+async function delLib(key,item,what,arr,setArr){
+  const used=usesOf(key,item.id);
+  const others=arr.filter(x=>x!==item);
+  if(!others.length){ toast('Cannot delete the last '+what); return; }
+  if(used.length){
+    const r=await dlg({title:'Delete '+what,fields:[
+      {k:'to',type:'select',label:'Reassign those treatments to',
+        opts:others.map(o=>({v:o.id,t:o.name})),val:others[0].id}
+    ],ok:'Delete and reassign',
+      note:used.length+' treatment'+(used.length===1?'':'s')+' use "'+item.name+'": '
+        +used.map(t=>tagOf(t)).join(', ')+'. Quantities will be recalculated.'});
+    if(!r) return;
+    snap();
+    used.forEach(t=>{ t[key]=r.to; });
+  }else{
+    snap();
+  }
+  setArr(arr.filter(x=>x!==item));
+  renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('Deleted '+item.name+(used.length?' — '+used.length+' treatment'+(used.length===1?'':'s')+' reassigned':''));
+}
 function libRow(txt,sub,onclick,onDel){
   const el=document.createElement('div'); el.className='item';
   el.innerHTML='<div style="flex:1;min-width:0"><div class="t">'+esc(txt)+'</div><div class="s">'+sub+'</div></div><button class="btn sm ghost" style="color:var(--faint)">✕</button>';
@@ -2028,16 +2118,18 @@ function renderLib(){
   const kindLbl={tape:'Tape',fixture:'Fixture',neon:'Neon'};
   P.fix.forEach(f=>F.appendChild(libRow(f.name,
     (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+f.wft+' W/ft · cuts in '+fmtRun(f.cut)
-    +(f.kind==='fixture'?' fixed lengths':' increments')+' · feed max '+fmtRun(f.feed),
-    ()=>editFix(f),()=>{P.fix=P.fix.filter(x=>x!==f);renderLib();renderTreatments();renderBom();markDirty();})));
+    +(f.kind==='fixture'?' fixed lengths':' increments')+' · feed max '+fmtRun(f.feed)
+    +usedBy('fixId',f.id),
+    ()=>editFix(f),()=>delLib('fixId',f,'LED product',P.fix,x=>{P.fix=x}))));
   const C=$('#chList'); C.innerHTML=''; $('#cCh').textContent=P.ch.length;
   P.ch.forEach(c=>C.appendChild(libRow(c.name,
-    (c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')+' · clips '+fmtLen(c.clip)+' o.c.',
-    ()=>editCh(c),()=>{P.ch=P.ch.filter(x=>x!==c);renderLib();renderTreatments();renderBom();markDirty();})));
+    (c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')+' · clips '+fmtLen(c.clip)+' o.c.'
+    +usedBy('chId',c.id),
+    ()=>editCh(c),()=>delLib('chId',c,'channel',P.ch,x=>{P.ch=x}))));
   const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
   P.psu.forEach(p=>S.appendChild(libRow(p.name,
-    p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':''),
-    ()=>editPsu(p),()=>{P.psu=P.psu.filter(x=>x!==p);renderLib();renderTreatments();renderBom();markDirty();})));
+    p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')+usedBy('psuId',p.id),
+    ()=>editPsu(p),()=>delLib('psuId',p,'power supply',P.psu,x=>{P.psu=x}))));
 }
 async function editFix(f){
   const isNew=!f; f=f||{id:uid('f_'),name:'',kind:'tape',volts:24,wft:3,cut:2,feed:196.85,note:''};
@@ -2240,7 +2332,7 @@ async function openProjectFile(file){
   catch(e){ toast(e.message); return; }
   /* PDFs never travel with the project, so drop the render state too */
   Object.keys(FILES).forEach(k=>delete FILES[k]);
-  HIST.length=0; FUT.length=0;
+  clearHist();
   V.docId=null; V.page=1; V.sel=null; V.draft=null; V.pageObj=null; V.vp=null;
   showInspector(null); closeCtx();
   stage.style.display='none'; $('#blank').style.display='';
@@ -2299,7 +2391,7 @@ $('#btnProj').onclick=async()=>{
   if(!r) return;
   if(r.wipe){ P=Object.assign(BLANK(),{name:r.name||'Untitled Project',no:r.no,units:r.units,scrollZoom:P.scrollZoom!==false});
     Object.keys(FILES).forEach(k=>delete FILES[k]);
-    HIST.length=0; FUT.length=0;
+    clearHist();
     V.docId=null; stage.style.display='none'; $('#blank').style.display=''; }
   else Object.assign(P,{name:r.name,no:r.no,units:r.units});
   boot(true); markDirty();
@@ -2366,7 +2458,10 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
   annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
   fmtRun,fmtFtIn,chipFontSize:CHIP_FS,chipWidth:chipW,tagOf,wOf,weights:WEIGHTS,
-  goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,
+  goToAnn,centerOn,onScreen,visRect,outHtml,resizeStage,paintPage,hitTest,pageAnns,
+  undoDepth:()=>HIST.length,pdfOk:PDF_OK,
   render(){boot()}};
-(async()=>{ await loadProject(); boot(); setTool('pan'); })();
+(async()=>{ await loadProject(); loadHist(); boot(); setTool('pan');
+  if(!PDF_OK) toast('The PDF engine did not load — check vendor/pdf.min.js');
+})();
 </script>
