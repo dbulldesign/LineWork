@@ -233,6 +233,13 @@ input.up{text-transform:uppercase}
 .pick .cutopt .cv{font-family:var(--mono);font-size:12.5px;font-weight:600}
 .pick .cutopt .ci{font-family:var(--mono);font-size:10.5px;opacity:.8}
 .pick .cutopt .cd{font-family:var(--mono);font-size:9.5px;opacity:.6}
+/* Once a cut is locked, the one that was chosen is the answer and the other two
+   are just context — so they recede until the cut is unlocked again. */
+.pick.locked .cutopt{opacity:.38;filter:saturate(.35)}
+.pick.locked .cutopt.chosen{opacity:1;filter:none;box-shadow:0 0 0 2px var(--amber)}
+.pick .cutopt.chosen .cl{opacity:1}
+.pick.locked .cutopt:not(.chosen):hover{opacity:.72;filter:saturate(.7)}
+@media(pointer:coarse){ .pick .cutopt{min-height:56px} }
 .note.ok{color:var(--ok)}
 /* per-segment poly readout — scrolls once a run gets long */
 .seglist{max-height:168px;overflow:auto;margin:5px 0;border:1px solid var(--line);background:var(--s2)}
@@ -673,7 +680,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.21.1';
+const APP_VER='1.22.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1015,6 +1022,8 @@ function applyProject(d){
     t.feedOv=+t.feedOv>0?Math.round(+t.feedOv):0;
     t.cutLock=+t.cutLock>0?+t.cutLock:0;
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
+    if(t.cutOpt!=='near'&&t.cutOpt!=='up'&&t.cutOpt!=='down') delete t.cutOpt;
+    if(!(+t.cutLock>0)) delete t.cutOpt;
     t.detail=String(t.detail||'').toUpperCase();
     t.approved=!!t.approved;
     if(!t.approved){ delete t.apAt; delete t.apLen; delete t.apCut; }
@@ -1032,6 +1041,14 @@ function applyProject(d){
   P.areaOff=Math.max(0,+P.areaOff||0);
   /* regions and counts arrived in 1.15 — coerce anything hand-edited */
   P.ann.forEach(a=>{
+    /* angles, added in 1.22 */
+    if(a.rot!=null){ const r=normDeg(a.rot); if(r) a.rot=r; else delete a.rot; }
+    if(a.lblRot&&typeof a.lblRot==='object'&&!Array.isArray(a.lblRot)){
+      Object.keys(a.lblRot).forEach(k=>{ const v=+a.lblRot[k];
+        if(isFinite(v)) a.lblRot[k]=normDeg(v); else delete a.lblRot[k]; });
+      if(!Object.keys(a.lblRot).length) delete a.lblRot;
+    }else delete a.lblRot;
+    if(a.lblAlign!=='run'&&a.lblAlign!=='flat') delete a.lblAlign;
     if(a.type==='area'){ a.off=Math.max(0,+a.off||0); if(!Array.isArray(a.pts)) a.pts=[]; }
     if(a.type==='count'){ a.grp=String(a.grp||'COUNT').toUpperCase(); a.sym=String(a.sym||'●').slice(0,2); }
     if(a.type==='cloud'){ a.rev=String(a.rev||'1').slice(0,6); a.text=String(a.text||''); }
@@ -1052,6 +1069,7 @@ function applyProject(d){
   P.cur=String(P.cur||'$').slice(0,3);
   P.minOff=Math.max(0,+P.minOff||0);
   P.rowCap=clamp(+P.rowCap||250,10,1e6);
+  if(P.lblAlign!=='run') P.lblAlign='flat';
   P.prec=Math.max(0,+P.prec||0);
   if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
@@ -1866,11 +1884,63 @@ const syncOvl=()=>{ OVL=document.body.classList.contains('light')?'#FFFFFF':'#17
    another. With content-aware placement on, a label steps aside to the nearest
    clear slot; a label you have dragged yourself is left exactly where you put it
    and everything else avoids it. */
+/* ---- rotation ----
+   Angles are degrees clockwise as seen on screen, which is what SVG's rotate()
+   takes and what someone turning a label actually means. Everything rotates
+   about the centre of its own box, so turning something never moves it. */
+const normDeg=d=>{ d=+d||0; d%=360; return d<0?d+360:d; };
+const rotOf=a=>normDeg(a&&a.rot);
+function rotPt(p,c,deg){
+  if(!deg) return p;
+  const r=deg*Math.PI/180, cs=Math.cos(r), sn=Math.sin(r);
+  const dx=p[0]-c[0], dy=p[1]-c[1];
+  return [c[0]+dx*cs-dy*sn, c[1]+dx*sn+dy*cs];
+}
+/* the axis-aligned box a rotated box needs, for collision tests */
+function rotAABB(b,deg,c){
+  if(!deg) return b;
+  const pts=[[b.x1,b.y1],[b.x2,b.y1],[b.x2,b.y2],[b.x1,b.y2]].map(p=>rotPt(p,c,deg));
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  return {x1:Math.min(...xs),y1:Math.min(...ys),x2:Math.max(...xs),y2:Math.max(...ys)};
+}
+/* the screen angle of a segment, flipped so text never reads upside down */
+function segAngle(A,B){
+  let d=Math.atan2(B[1]-A[1],B[0]-A[0])*180/Math.PI;
+  if(d>90) d-=180; else if(d<-90) d+=180;
+  return d;
+}
 let CHIPQ=null, LAST_CHIPS=[];
-function chip(x,y,txt,col,anchor,owner,role){
-  const rec={x,y,w:chipW(txt),h:CHIP_H,txt,col,anchor,owner:owner||null,role:role||'sub',manual:false};
+function chip(x,y,txt,col,anchor,owner,role,rot){
+  const rec={x,y,w:chipW(txt),h:CHIP_H,txt,col,anchor,owner:owner||null,role:role||'sub',
+    manual:false,rot:+rot||0};
   if(CHIPQ){ CHIPQ.push(rec); return ''; }
   return chipSvg(rec);
+}
+/* Labels can lie flat or run along the measurement, per markup or as a default,
+   and any one label can be turned by hand on top of that. */
+const rotsOf=a=>(a&&a.lblRot)||null;
+const rotFor=(a,role)=>{ const r=rotsOf(a); const v=r&&r[role]; return v==null?null:+v; };
+function setLblRot(a,role,deg){
+  if(deg==null||!isFinite(deg)){
+    if(a.lblRot){ delete a.lblRot[role]; if(!Object.keys(a.lblRot).length) delete a.lblRot; }
+    return;
+  }
+  a.lblRot=a.lblRot||{}; a.lblRot[role]=normDeg(deg);
+}
+const alignRuns=a=>{
+  const m=a&&a.lblAlign;
+  if(m==='run') return true;
+  if(m==='flat') return false;
+  return P.lblAlign==='run';
+};
+/* the angle a label should take before any manual override */
+function autoLblRot(a,role,A,B){
+  if(!alignRuns(a)||!A||!B) return 0;
+  return segAngle(A,B);
+}
+function lblRotFor(a,role,A,B){
+  const manual=rotFor(a,role);
+  return manual!=null?manual:autoLblRot(a,role,A,B);
 }
 const chipBox=r=>{
   const x1=r.anchor==='l'?r.x+8:r.x-r.w/2;
@@ -1891,11 +1961,14 @@ function setOff(a,role,v){
 }
 function chipSvg(r){
   const b=chipBox(r);
+  const deg=normDeg(r.rot);
+  const g0=deg?'<g transform="rotate('+deg.toFixed(2)+' '+((b.x1+b.x2)/2).toFixed(1)+' '+((b.y1+b.y2)/2).toFixed(1)+')">':'';
+  const g1=deg?'</g>':'';
   /* the run total is the number that matters, so it is filled and the segment
      labels are outlined — they should not read as equals */
   const tot=r.role==='total';
   const fs=tot?CHIP_FS*1.06:CHIP_FS;
-  return '<g'+(r.owner?' data-lbl="'+r.owner.id+'" data-role="'+r.role+'"':'')+'>'
+  return g0+'<g'+(r.owner?' data-lbl="'+r.owner.id+'" data-role="'+r.role+'"':'')+'>'
     +'<rect x="'+b.x1.toFixed(1)+'" y="'+b.y1.toFixed(1)+'" width="'+r.w.toFixed(1)+'" height="'+r.h.toFixed(1)
     +'" rx="'+(tot?3.5:2.5)+'" fill="'+(tot?r.col:OVL)+'" fill-opacity="'+(tot?'.95':'.95')+'"'
     +' stroke="'+(tot?r.col:r.col)+'" stroke-width="'+(tot?2:1)+'" stroke-opacity="'+(r.manual?'1':(tot?'1':'.75'))+'"'
@@ -1903,7 +1976,7 @@ function chipSvg(r){
     +'<text x="'+(b.x1+r.w/2).toFixed(1)+'" y="'+(r.y+fs*.37).toFixed(1)+'" fill="'+(tot?OVL:r.col)
     +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="'+(tot?'700':'500')
     +'" font-size="'+fs.toFixed(1)+'" text-anchor="middle"'+(tot?' letter-spacing=".2"':'')
-    +'>'+esc(r.txt)+'</text></g>';
+    +'>'+esc(r.txt)+'</text></g>'+g1;
 }
 /* leader line back to the measurement when a label has been moved away */
 function chipLeader(r){
@@ -1923,7 +1996,9 @@ function layoutChips(q){
     const off=r.owner?offFor(r.owner,r.role):null;
     if(off){ r.x+=off[0]*V.zoom; r.y+=off[1]*V.zoom; r.manual=true; }
   });
-  const placed=q.filter(r=>r.manual).map(chipBox);
+  const cbox=r=>{ const b=chipBox(r);
+    return r.rot?rotAABB(b,r.rot,[(b.x1+b.x2)/2,(b.y1+b.y2)/2]):b; };
+  const placed=q.filter(r=>r.manual).map(cbox);
   const clash=b=>placed.some(o=>!(b.x2<o.x1-2||b.x1>o.x2+2||b.y2<o.y1-1||b.y1>o.y2+1));
   if(smart){
     /* try the natural spot, then step alternately below and above */
@@ -1933,16 +2008,19 @@ function layoutChips(q){
       for(let k=0;k<7&&!best;k++){
         for(const dy of (k===0?[0]:[k*step,-k*step])){
           r.y=y0+dy;
-          if(!clash(chipBox(r))){ best=chipBox(r); break; }
+          if(!clash(cbox(r))){ best=cbox(r); break; }
         }
       }
-      if(!best){ r.y=y0; best=chipBox(r); }
+      if(!best){ r.y=y0; best=cbox(r); }
       placed.push(best);
     });
   }
   /* every owned label can be grabbed — the total, each segment, and the arc's
      radius readout. Later chips sit on top, so hit-test in reverse. */
-  LAST_CHIPS=q.filter(r=>r.owner).map(r=>({box:chipBox(r),a:r.owner,role:r.role}));
+  LAST_CHIPS=q.filter(r=>r.owner).map(r=>{
+    const b=chipBox(r);
+    return {box:b,a:r.owner,role:r.role,rot:normDeg(r.rot),c:[(b.x1+b.x2)/2,(b.y1+b.y2)/2]};
+  });
   return q.map(r=>(r.manual?chipLeader(r):'')+chipSvg(r)).join('');
 }
 function withChips(fn){
@@ -1958,7 +2036,9 @@ function withChips(fn){
 function hitChipAt(sx,sy){
   for(let i=LAST_CHIPS.length-1;i>=0;i--){
     const c=LAST_CHIPS[i], b=c.box;
-    if(sx>=b.x1&&sx<=b.x2&&sy>=b.y1&&sy<=b.y2) return c;
+    /* a rotated label is tested by turning the point back, not by growing the box */
+    const p=c.rot?rotPt([sx,sy],c.c,-c.rot):[sx,sy];
+    if(p[0]>=b.x1&&p[0]<=b.x2&&p[1]>=b.y1&&p[1]<=b.y2) return c;
   }
   return null;
 }
@@ -2061,9 +2141,37 @@ function drawOverlayFor(a){
   if(a&&a.id) ovInvalidate(a.id);
   assembleOverlay();
 }
+/* text sits on the sheet at an angle as often as square to it — a note beside a
+   sloping cove, a dimension along a rake. These are the kinds that turn. */
+const rotatable=a=>!!a&&/^(text|tbox|note|box)$/.test(a.type);
+/* the centre a markup turns about, in screen space */
+function rotCentre(a){
+  const pts=annPts(a).map(sp);
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  if(a.type==='text'||a.type==='note') return [pts[0][0],pts[0][1]];
+  return [(Math.min(...xs)+Math.max(...xs))/2,(Math.min(...ys)+Math.max(...ys))/2];
+}
+/* where the rotate grip sits for a selected markup */
+function rotGrip(a){
+  const pts=annPts(a).map(sp);
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  const c=rotCentre(a), deg=rotOf(a);
+  const top=[(Math.min(...xs)+Math.max(...xs))/2,Math.min(...ys)-26];
+  return rotPt(top,c,deg);
+}
+function hitRotGrip(a,sx,sy,tol){
+  if(!rotatable(a)) return false;
+  const g=rotGrip(a);
+  return Math.hypot(sx-g[0],sy-g[1])<Math.max(13,tol);
+}
 function drawAnn(a,selected,isDraft,multi){
   const col=colOf(a), pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
+  const deg=rotatable(a)?rotOf(a):0;
   let g='<g opacity="'+o+'">';
+  /* one transform around the whole markup: the geometry stays square in the
+     project file and only its presentation turns */
+  if(deg){ const c=rotCentre(a);
+    g+='<g transform="rotate('+deg.toFixed(2)+' '+c[0].toFixed(1)+' '+c[1].toFixed(1)+')">'; }
   if(!selected&&multi&&pts.length){
     /* part of a multiple selection: outlined, but no handles — a handle would
        imply dragging one vertex, and this drag moves the whole set */
@@ -2100,7 +2208,8 @@ function drawAnn(a,selected,isDraft,multi){
         let lbl=sg.len==null?'—':fmtLen(sg.len);
         if(px<chipW(lbl)*.85) lbl=sg.len==null?'—':fmtRun(sg.len);
         if(px<chipW(lbl)*.85) return;
-        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si);
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si,
+          lblRotFor(a,'seg:'+si,A,B));
       });
     }
     const tot=annLen(a);
@@ -2109,8 +2218,9 @@ function drawAnn(a,selected,isDraft,multi){
       const n=annSegs(a).length;
       const lbl=(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot))
         +(a.poly&&n>1?'  ('+n+' seg'+(loop?', closed':'')+')':'');
-      const last=pts[pts.length-1];
-      g+=chip(last[0],last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8),lbl,tg?'#F2A93B':col,null,a,'total');
+      const last=pts[pts.length-1], prev=pts[pts.length-2]||last;
+      g+=chip(last[0],last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8),lbl,tg?'#F2A93B':col,null,a,'total',
+        lblRotFor(a,'total',prev,last));
     }else{
       g+=chip((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2+CHIP_H,'CALIBRATED',col);
     }
@@ -2125,9 +2235,11 @@ function drawAnn(a,selected,isDraft,multi){
     const mid=sp2[Math.floor(sp2.length/2)]||pts[1];
     if(g0){
       const rr=inPerPt()?fmtRun(g0.r*inPerPt()):'—';
-      g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,null,a,'total');
+      g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,null,a,'total',
+        lblRotFor(a,'total'));
       if(P.arcDetail!==false)
-        g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col,null,a,'sub');
+        g+=chip(mid[0],mid[1]+CHIP_H*.55,'R '+rr+'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°',col,null,a,'sub',
+          lblRotFor(a,'sub'));
     }
   }
   if(a.type==='area'){
@@ -2151,15 +2263,16 @@ function drawAnn(a,selected,isDraft,multi){
         const A=sp(sg.a),B=sp(sg.b), px=Math.hypot(B[0]-A[0],B[1]-A[1]);
         const lbl=sg.len==null?'—':fmtRun(sg.len);
         if(px<chipW(lbl)*.9) return;
-        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si);
+        g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si,
+          lblRotFor(a,'seg:'+si,A,B));
       });
     }
     if(m){
       const xs=ring.map(p=>p[0]), ys=ring.map(p=>p[1]);
       const cx=(Math.min(...xs)+Math.max(...xs))/2, cy=(Math.min(...ys)+Math.max(...ys))/2;
       const tg=a.treat&&P.treat.find(t=>t.id===a.treat);
-      g+=chip(cx,cy-CHIP_H*.6,(tg?tagOf(tg)+'  ':'')+fmtArea(m.area),tg?'#F2A93B':col,null,a,'total');
-      g+=chip(cx,cy+CHIP_H*.6,'P '+fmtRun(m.perim)+(m.off>0?'  ·  cove '+fmtRun(m.cove):''),col,null,a,'sub');
+      g+=chip(cx,cy-CHIP_H*.6,(tg?tagOf(tg)+'  ':'')+fmtArea(m.area),tg?'#F2A93B':col,null,a,'total',lblRotFor(a,'total'));
+      g+=chip(cx,cy+CHIP_H*.6,'P '+fmtRun(m.perim)+(m.off>0?'  ·  cove '+fmtRun(m.cove):''),col,null,a,'sub',lblRotFor(a,'sub'));
     }
   }
   if(a.type==='cloud'){
@@ -2177,7 +2290,7 @@ function drawAnn(a,selected,isDraft,multi){
     if(a.text){
       const xs=ring.map(p=>p[0]), ys=ring.map(p=>p[1]);
       g+=chip((Math.min(...xs)+Math.max(...xs))/2,Math.min(...ys)-CHIP_H*.8,
-        String(a.text).slice(0,40),col,null,a,'total');
+        String(a.text).slice(0,40),col,null,a,'total',lblRotFor(a,'total'));
     }
   }
   if(a.type==='driver'){
@@ -2196,7 +2309,7 @@ function drawAnn(a,selected,isDraft,multi){
       +'<text x="'+x.toFixed(1)+'" y="'+(y+h*.28).toFixed(1)+'" fill="'+c2
       +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="700" font-size="'+(h*.72).toFixed(1)
       +'" text-anchor="middle">'+esc(a.name||'PS')+'</text>';
-    g+=chip(x,y+h/2+CHIP_H*.7,driverLabel(a,d0),c2,null,a,'total');
+    g+=chip(x,y+h/2+CHIP_H*.7,driverLabel(a,d0),c2,null,a,'total',lblRotFor(a,'total'));
   }
   if(a.type==='count'){
     const [x,y]=pts[0], R=8*W_MUL;
@@ -2206,7 +2319,7 @@ function drawAnn(a,selected,isDraft,multi){
       +'" font-family="Helvetica Neue,Helvetica,Arial,sans-serif" font-size="'+(R*1.15).toFixed(1)
       +'" text-anchor="middle">'+esc(a.sym||'●')+'</text>';
     if(P.cntLabels!==false)
-      g+=chip(x,y-R-CHIP_H*.6,(a.grp||'COUNT')+' '+countIndex(a),col,null,a,'total');
+      g+=chip(x,y-R-CHIP_H*.6,(a.grp||'COUNT')+' '+countIndex(a),col,null,a,'total',lblRotFor(a,'total'));
   }
   if(a.type==='ink'){
     g+=inkPath(pts,a.pts,(a.w||2)*V.zoom*1.5,col);
@@ -2258,6 +2371,19 @@ function drawAnn(a,selected,isDraft,multi){
     g+=chip(x,y-20,(a.detail?a.detail+'  ·  ':'')+(t?t.name.replace(/\.pdf$/i,''):'missing')
       +' p'+(a.target?a.target.page:'?'),col);
   }
+  if(deg) g+='</g>';
+  /* the grip is drawn unrotated at its rotated position, so it always reads as a
+     handle rather than a tilted blob */
+  if(selected&&!isDraft&&rotatable(a)){
+    const gr=rotGrip(a), c=rotCentre(a);
+    g+='<line x1="'+c[0].toFixed(1)+'" y1="'+c[1].toFixed(1)+'" x2="'+gr[0].toFixed(1)+'" y2="'+gr[1].toFixed(1)
+      +'" stroke="#F2A93B" stroke-width="1" stroke-opacity=".5" stroke-dasharray="3 3"/>'
+      +'<circle cx="'+gr[0].toFixed(1)+'" cy="'+gr[1].toFixed(1)+'" r="7" fill="#F2A93B" stroke="#20170A" stroke-width="1.2"/>'
+      +'<path d="M'+(gr[0]-3.2).toFixed(1)+' '+(gr[1]+1).toFixed(1)+' a3.2 3.2 0 1 1 3.2 2.2" fill="none" '
+      +'stroke="#20170A" stroke-width="1.3" stroke-linecap="round"/>'
+      +(deg?'<text x="'+(gr[0]+11).toFixed(1)+'" y="'+(gr[1]+4).toFixed(1)+'" fill="#F2A93B" '
+        +'font-family="ui-monospace,Menlo,monospace" font-size="10">'+Math.round(deg)+'°</text>':'');
+  }
   return g+'</g>';
 }
 
@@ -2305,26 +2431,32 @@ function hitTest(sx,sy,tol){
   const list=pageAnns().filter(annVisible).slice().reverse();
   for(const a of list){
     const pts=annPts(a).map(sp);
+    /* A turned markup is tested against its square geometry with the point
+       turned back the other way. X and Y are per-markup: mutating sx and sy here
+       would leave the next markup tested against a point rotated for this one. */
+    const deg=rotatable(a)?rotOf(a):0;
+    let X=sx, Y=sy;
+    if(deg){ const q=rotPt([sx,sy],rotCentre(a),-deg); X=q[0]; Y=q[1]; }
     if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'||a.type==='area'||a.type==='cloud'){
-      for(let i=1;i<pts.length;i++) if(distSeg([sx,sy],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
+      for(let i=1;i<pts.length;i++) if(distSeg([X,Y],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
       /* a region is a surface, not just its edge — clicking inside it selects it */
-      if((a.type==='area'||a.type==='cloud')&&pts.length>2&&ptInPoly([sx,sy],pts)) return a;
+      if((a.type==='area'||a.type==='cloud')&&pts.length>2&&ptInPoly([X,Y],pts)) return a;
     }else if(a.type==='box'||a.type==='tbox'){
       const x1=Math.min(pts[0][0],pts[1][0]),x2=Math.max(pts[0][0],pts[1][0]);
       const y1=Math.min(pts[0][1],pts[1][1]),y2=Math.max(pts[0][1],pts[1][1]);
-      if(sx>x1-tol&&sx<x2+tol&&sy>y1-tol&&sy<y2+tol) return a;
+      if(X>x1-tol&&X<x2+tol&&Y>y1-tol&&Y<y2+tol) return a;
     }else if(a.type==='text'){
       const fs=Math.max(4,(a.size||11)*V.zoom), lh=fs*1.25;
       const lines=String(a.text||'').split('\n');
       const w=Math.max(24,Math.max(...lines.map(l=>l.length))*fs*.55);
       const [x,y]=pts[0];
-      if(sx>x-tol&&sx<x+w+tol&&sy>y-fs-tol&&sy<y+lh*(lines.length-1)+fs*.3+tol) return a;
+      if(X>x-tol&&X<x+w+tol&&Y>y-fs-tol&&Y<y+lh*(lines.length-1)+fs*.3+tol) return a;
     }else{
       const [x,y]=pts[0];
-      if(Math.hypot(sx-x,sy-y)<Math.max(12,tol)) return a;
+      if(Math.hypot(X-x,Y-y)<Math.max(12,tol)) return a;
       if(a.type==='note'){ const lines=String(a.text||'').split('\n').slice(0,6);
         const w=Math.min(230,Math.max(90,Math.max(...lines.map(l=>l.length))*6.1+16)),h=lines.length*13+11;
-        if(sx>x+16&&sx<x+16+w&&sy>y-14-h&&sy<y-14) return a; }
+        if(X>x+16&&X<x+16+w&&Y>y-14-h&&Y<y-14) return a; }
     }
   }
   return null;
@@ -2569,7 +2701,10 @@ function hitHandle(sx,sy,tol){
   const a=P.ann.find(x=>x.id===V.sel);
   if(!a||a.doc!==V.docId||a.page!==V.page) return null;
   if(a.type==='ink'||(a.type==='line'&&a.free)) return null;   /* freehand moves as a whole */
-  const pts=a.pts.map(sp), r=Math.max(10,tol);
+  const deg=rotatable(a)?rotOf(a):0;
+  const c=deg?rotCentre(a):null;
+  const pts=a.pts.map(p=>{ const q=sp(p); return deg?rotPt(q,c,deg):q; });
+  const r=Math.max(10,tol);
   for(let i=0;i<pts.length;i++) if(Math.hypot(sx-pts[i][0],sy-pts[i][1])<r) return {a,i};
   return null;
 }
@@ -2631,6 +2766,18 @@ function editMove(e){
     drawOverlayFor(a);
     return;
   }
+  if(edit.mode==='rotate'){
+    const sc=toS(e);
+    const now=Math.atan2(sc[1]-edit.c[1],sc[0]-edit.c[0])*180/Math.PI;
+    let deg=edit.base+(now-edit.start);
+    /* magnetic at the right angles, and ⇧ forces 15° steps */
+    const step=15, near=Math.round(deg/step)*step;
+    if(e.shiftKey||Math.abs(deg-near)<4) deg=near;
+    a.rot=normDeg(deg);
+    drawOverlayFor(a);
+    $('#stCoord').textContent='Angle: '+Math.round(a.rot)+'°';
+    return;
+  }
   if(edit.mode==='moveMulti'){
     const dx=p[0]-edit.last[0], dy=p[1]-edit.last[1];
     edit.list.forEach(x=>shiftAnn(x,dx,dy));
@@ -2643,14 +2790,25 @@ function editMove(e){
     a.pts=a.pts.map(q=>q.length>2?[q[0]+dx,q[1]+dy,q[2]]:[q[0]+dx,q[1]+dy]);
   }else{
     const nb=a.pts[edit.i-1]||a.pts[edit.i+1];
-    const snapTo=snapAt(p);
-    a.pts[edit.i]=snapTo||((e.shiftKey&&nb)?ortho(nb,p,true):p);
-    V.snapHit=snapTo;
+    const deg=rotatable(a)?rotOf(a):0;
+    if(deg){
+      /* undo the rotation so the corner follows the finger on screen while the
+         stored box stays square */
+      const c=rotCentre(a), sc=toS(e);
+      const q=rotPt([sc[0],sc[1]],c,-deg);
+      a.pts[edit.i]=V.vp.convertToPdfPoint(q[0],q[1]);
+      V.snapHit=null;
+    }else{
+      const snapTo=snapAt(p);
+      a.pts[edit.i]=snapTo||((e.shiftKey&&nb)?ortho(nb,p,true):p);
+      V.snapHit=snapTo;
+    }
   }
   edit.last=p;
   drawOverlayFor(a); liveEditLen(a);
 }
 function liveEditLen(a){
+  if(edit&&edit.mode==='rotate') return;
   if(a.type!=='line') { $('#stCoord').textContent='—'; return; }
   const L=annLen(a); $('#stCoord').textContent='Length: '+(L==null?'—':fmtLen(L));
 }
@@ -2725,6 +2883,9 @@ function startLongPress(e,sc){
       viewport.classList.remove('drag');
       const p=V.vp?V.vp.convertToPdfPoint(lp.sc[0],lp.sc[1]):null;
       ctxPt=p;
+      const lc=hitChipAt(lp.sc[0],lp.sc[1]);
+      if(lc){ V.sel=lc.a.id; V.multi=[]; drawOverlay(); showInspector(lc.a); renderAnnList();
+        showCtx(lp.x,lp.y,ctxForLabel(lc)); return; }
       const h=hitTest(lp.sc[0],lp.sc[1],18);
       if(h){ V.sel=h.id; V.multi=[]; drawOverlay(); showInspector(h); renderAnnList(); }
       else { V.sel=null; showInspector(null); drawOverlay(); }
@@ -2798,6 +2959,15 @@ stage.addEventListener('pointerdown',e=>{
         drawOverlay();
         edit={mode:'label',a:lc.a,role:lc.role,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false,
           base:(offFor(lc.a,lc.role)||[0,0]).slice(),sx:sc[0],sy:sc[1]};
+        return;
+      }
+      /* the rotate grip comes before the vertex handles: it sits outside the
+         box, but on a small markup the two can be within a finger of each other */
+      const sa=V.sel&&P.ann.find(x=>x.id===V.sel);
+      if(sa&&sa.doc===V.docId&&sa.page===V.page&&hitRotGrip(sa,sc[0],sc[1],tol)){
+        const c=rotCentre(sa);
+        edit={mode:'rotate',a:sa,c,start:Math.atan2(sc[1]-c[1],sc[0]-c[0])*180/Math.PI,
+          base:rotOf(sa),last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
         return;
       }
       /* a handle on the selected markup drags that one vertex... */
@@ -3115,7 +3285,9 @@ viewport.addEventListener('wheel',e=>{
 
 /* ---- right-click ---- */
 function closeCtx(){ $('#ctx').classList.remove('show'); }
+let ctxLastX=0, ctxLastY=0;
 function showCtx(x,y,items){
+  ctxLastX=x; ctxLastY=y;
   const c=$('#ctx');
   c.innerHTML=items.map(i=>{
     if(i.hr) return '<div class="hr"></div>';
@@ -3136,6 +3308,12 @@ stage.addEventListener('contextmenu',e=>{
   e.preventDefault();
   if(pan){ pan=null; viewport.classList.remove('drag'); }
   if(suppressCtx){ suppressCtx=false; return; }
+  /* a label under the pointer gets its own menu — it is a thing in its own right */
+  {
+    const scL=toS(e), lc=hitChipAt(scL[0],scL[1]);
+    if(lc){ V.sel=lc.a.id; drawOverlay(); showInspector(lc.a); renderAnnList();
+      showCtx(e.clientX,e.clientY,ctxForLabel(lc)); return; }
+  }
   if(V.draft&&(V.draft.type==='line'||V.draft.type==='area'||V.draft.type==='cloud')&&V.draft.pts.length>2){ finishDraft(); return; }
   if(V.draft){ V.draft=null; drawOverlay(); syncDrawbar(); return; }
   const sc=toS(e); ctxPt=toPt(e);
@@ -3193,6 +3371,37 @@ async function offsetAnn(a){
   if(s) showInspector(s);
   toast(made===1?'Parallel run created':made+' parallel runs created');
 }
+/* the menu for one label, rather than for the markup it belongs to */
+function ctxForLabel(lc){
+  const a=lc.a, role=lc.role;
+  const name=role==='total'?'Total label':role==='sub'?'Detail label':'Segment '+(+role.split(':')[1]+1)+' label';
+  const cur=rotFor(a,role);
+  const turn=d=>()=>{ snap('Turn label'); setLblRot(a,role,(cur||0)+d); drawOverlay(); markDirty(); };
+  const items=[{hd:name+(cur!=null?'  ·  '+Math.round(cur)+'°':'')}];
+  items.push({id:'r90',t:'Turn 90° clockwise',fn:turn(90)});
+  items.push({id:'rm90',t:'Turn 90° anticlockwise',fn:turn(-90)});
+  items.push({id:'r15',t:'Turn 15° clockwise',fn:turn(15)});
+  items.push({id:'ra',t:'Angle…',fn:async()=>{
+    const r=await dlg({title:name,fields:[
+      {k:'deg',type:'num',label:'Angle (degrees clockwise)',val:Math.round(cur||0),step:15}
+    ],ok:'Turn',note:'0 is flat. Blank the field and press Turn to go back to following the run.'});
+    if(!r) return;
+    snap('Turn label');
+    setLblRot(a,role,r.deg===''?null:+r.deg);
+    drawOverlay(); markDirty();
+  }});
+  if(cur!=null) items.push({id:'rr',t:'Straighten this label',fn:()=>{
+    snap('Turn label'); setLblRot(a,role,null); drawOverlay(); markDirty(); }});
+  items.push({hr:1});
+  items.push({id:'al',t:alignRuns(a)?'Lay this markup\u2019s labels flat':'Run this markup\u2019s labels along it',
+    fn:()=>{ snap('Label angle'); a.lblAlign=alignRuns(a)?'flat':'run'; drawOverlay();
+      if(V.sel===a.id) showInspector(a); markDirty(); }});
+  if(offFor(a,role)) items.push({id:'lb',t:'Put this label back',fn:()=>{
+    snap('Move label'); setOff(a,role,null); drawOverlay(); markDirty(); }});
+  items.push({hr:1},{id:'op',t:'The markup instead…',fn:()=>{
+    showCtx(ctxLastX,ctxLastY,ctxForAnn(a)); }});
+  return items;
+}
 function ctxForAnn(a){
   const names=ANN_NAMES;
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
@@ -3216,6 +3425,19 @@ function ctxForAnn(a){
       items.push({id:'dp',t:'Delete this point ('+(vi+1)+' of '+a.pts.length+')',fn:()=>delPointFrom(a,vi)});
     if(vi<0&&sc) items.push({id:'ap',t:'Add a point here',fn:()=>addPointTo(a,ctxPt,sc[0],sc[1])});
   }
+  if(rotatable(a)) items.push({id:'rt',t:rotOf(a)?'Turn…  ('+Math.round(rotOf(a))+'°)':'Turn…',fn:async()=>{
+    const r=await dlg({title:'Turn '+(ANN_NAMES[a.type]||'markup').toLowerCase(),fields:[
+      {k:'deg',type:'num',label:'Angle (degrees clockwise)',val:Math.round(rotOf(a)),step:15}
+    ],ok:'Turn',note:'Or drag the round grip above it on the sheet.'});
+    if(!r) return;
+    snap('Angle'); a.rot=normDeg(+r.deg||0); if(!a.rot) delete a.rot;
+    drawOverlay(); if(V.sel===a.id) showInspector(a); markDirty(); }});
+  if(/^(line|area|arc)$/.test(a.type)) items.push({id:'la',
+    t:alignRuns(a)?'Lay the labels flat':'Run the labels along the measurement',
+    fn:()=>{ snap('Label angle'); a.lblAlign=alignRuns(a)?'flat':'run';
+      drawOverlay(); if(V.sel===a.id) showInspector(a); markDirty(); }});
+  if(rotsOf(a)) items.push({id:'ls',t:'Straighten every label',fn:()=>{
+    snap('Label angle'); delete a.lblRot; drawOverlay(); markDirty(); }});
   if(offsOf(a)) items.push({id:'lr',t:'Put the labels back',fn:()=>{
     snap(); delete a.lblOffs; delete a.lblOff; drawOverlay(); markDirty(); }});
   items.push({id:'hd',t:a.hidden?'Show this markup':'Hide this markup',fn:()=>{
@@ -3647,6 +3869,35 @@ async function goToAnn(a,frame){
   drawOverlay(); showInspector(a); renderAnnList();
 }
 
+/* the angle control shared by everything that turns */
+function rotRow(a){
+  const deg=Math.round(rotOf(a));
+  return '<div class="f"><label>Angle</label>'
+    +'<div style="display:flex;gap:5px;align-items:center">'
+    +'<input type="number" data-rot="rot" value="'+deg+'" min="-360" max="360" step="1" style="width:78px">'
+    +'<span class="hint">°</span>'
+    +'<button class="btn sm" data-rotby="-90">↺ 90°</button>'
+    +'<button class="btn sm" data-rotby="90">↻ 90°</button>'
+    +(deg?'<button class="btn sm" data-rotby="reset">Square</button>':'')
+    +'</div></div>';
+}
+/* labels can lie flat, follow the run, or be turned by hand */
+function lblRotRow(a){
+  const mode=a.lblAlign||'';
+  const manual=rotsOf(a)?Object.keys(rotsOf(a)).length:0;
+  return '<div class="f"><label>Length labels</label><select data-lblalign>'
+    +'<option value=""'+(mode?'':' selected')+'>Follow the setting ('+(P.lblAlign==='run'?'along the run':'flat')+')</option>'
+    +'<option value="flat"'+(mode==='flat'?' selected':'')+'>Flat</option>'
+    +'<option value="run"'+(mode==='run'?' selected':'')+'>Along the run</option>'
+    +'</select>'
+    +'<div style="display:flex;gap:5px;align-items:center;margin-top:5px">'
+    +'<input type="number" data-lblrot value="" min="-360" max="360" step="15" placeholder="turn all…" style="width:96px">'
+    +'<button class="btn sm" data-lblrotby="-90">↺ 90°</button>'
+    +'<button class="btn sm" data-lblrotby="90">↻ 90°</button>'
+    +(manual?'<button class="btn sm" data-lblrotby="reset">Reset '+manual+'</button>':'')
+    +'</div>'
+    +'<div class="hint" style="margin-top:4px">Right-click or long-press a label to turn just that one.</div></div>';
+}
 /* ---- inspector ---- */
 function showInspector(a){
   const box=$('#inspector');
@@ -3750,7 +4001,9 @@ function showInspector(a){
     h+='<div class="f"><label>Size (pt)</label><input type="number" min="4" max="96" step="1" data-n="size" value="'+(a.size||11)+'"></div>';
     if(a.type==='tbox') h+='<div class="f"><label style="display:flex;gap:7px;align-items:center;text-transform:none;letter-spacing:0;font-size:12px;color:var(--txt)">'
       +'<input type="checkbox" data-b="fill"'+(a.fill!==false?' checked':'')+' style="width:auto"> Solid background</label></div>';
-    h+='<div class="hint">Drag the handles to '+(a.type==='tbox'?'resize the box':'move it')+'.</div>';
+    h+=rotRow(a);
+    h+='<div class="hint">Drag the handles to '+(a.type==='tbox'?'resize the box':'move it')
+      +', or the round grip above it to turn it.</div>';
   }
   /* line weight, for every markup that draws a stroke */
   if(a.type!=='cal'){
@@ -3760,7 +4013,10 @@ function showInspector(a){
       +(WEIGHTS.some(x=>Math.abs(cw-x.v)<.01)?'':'<option value="'+cw+'" selected>Custom · '+cw+'</option>')
       +'</select></div>';
   }
-  if(a.type==='note') h+='<div class="f"><label>Text</label><textarea data-f="text">'+esc(a.text||'')+'</textarea></div>';
+  if(a.type==='note') h+='<div class="f"><label>Text</label><textarea data-f="text">'+esc(a.text||'')+'</textarea></div>'+rotRow(a);
+  if(a.type==='box') h+=rotRow(a);
+  /* every markup that carries a length label can angle it */
+  if(/^(line|area|arc|count|cloud|driver)$/.test(a.type)) h+=lblRotRow(a);
   if(a.type==='link'&&a.target){ const d=P.docs.find(x=>x.id===a.target.doc);
     h+='<div class="kv"><span>Target</span><b>'+esc(d?d.name.slice(0,20):'missing')+'</b></div><button class="btn" data-act="open">Open linked drawing</button>'; }
   if(a.type!=='cal'&&a.type!=='link') h+='<div class="f"><label>Colour</label><div class="swatches">'+COLORS.map(c=>'<span class="sw'+(c===a.color?' on':'')+'" data-c="'+c+'" style="background:'+c+'"></span>').join('')+'</div></div>';
@@ -3780,6 +4036,39 @@ function showInspector(a){
     P.cntRate=P.cntRate||{};
     P.cntRate[el.dataset.rate]=Math.max(0,+el.value||0);
     renderBom(); markDirty();
+  });
+  $$('[data-rot]',bd).forEach(el=>el.onchange=()=>{
+    snap('Angle'); a.rot=normDeg(+el.value||0);
+    drawOverlay(); showInspector(a); markDirty();
+  });
+  $$('[data-rotby]',bd).forEach(b=>b.onclick=()=>{
+    snap('Angle');
+    a.rot=b.dataset.rotby==='reset'?0:normDeg(rotOf(a)+ +b.dataset.rotby);
+    if(!a.rot) delete a.rot;
+    drawOverlay(); showInspector(a); markDirty();
+  });
+  $$('[data-lblalign]',bd).forEach(el=>el.onchange=()=>{
+    snap('Label angle');
+    if(el.value) a.lblAlign=el.value; else delete a.lblAlign;
+    drawOverlay(); showInspector(a); markDirty();
+  });
+  const lblRoles=()=>{
+    const out=['total','sub'];
+    annSegs(a).forEach((sg,i)=>out.push('seg:'+i));
+    return out;
+  };
+  $$('[data-lblrot]',bd).forEach(el=>el.onchange=()=>{
+    const v=+el.value;
+    if(!isFinite(v)) return;
+    snap('Label angle');
+    lblRoles().forEach(r=>setLblRot(a,r,v));
+    drawOverlay(); showInspector(a); markDirty();
+  });
+  $$('[data-lblrotby]',bd).forEach(b=>b.onclick=()=>{
+    snap('Label angle');
+    if(b.dataset.lblrotby==='reset'){ delete a.lblRot; }
+    else lblRoles().forEach(r=>setLblRot(a,r,(rotFor(a,r)||0)+ +b.dataset.lblrotby));
+    drawOverlay(); showInspector(a); markDirty();
   });
   $$('[data-f2]',bd).forEach(el=>el.onchange=()=>{ a[el.dataset.f2]=el.value; drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty(); });
   $$('[data-srv]',bd).forEach(el=>el.onchange=()=>{
@@ -4070,7 +4359,7 @@ function approveTreat(t){
 function unapproveTreat(t){
   t.approved=false;
   delete t.apAt; delete t.apLen; delete t.apCut;
-  t.cutLock=0;
+  t.cutLock=0; delete t.cutOpt;
 }
 const apDrift=t=>{
   if(!t.approved||t.apLen==null) return 0;
@@ -4256,6 +4545,9 @@ function renderTreatments(){
       snap();
       const v=+b.dataset.cut;
       t.cutLock=v>0?v:0;
+      /* nearest often lands on the same length as up or down, so remember which
+         box was pressed — that is the one to highlight */
+      if(v>0) t.cutOpt=b.dataset.opt; else delete t.cutOpt;
       const rr=calc(t);
       $('#out_'+t.id).innerHTML=outHtml(rr,t);
       const rsel=el.querySelector('[data-t="round"]'); if(rsel) rsel.disabled=rr.locked||!(rr.inc>0);
@@ -4407,13 +4699,19 @@ function outHtml(r,t){
       ['down','Next shortest',r.opts.down,false],
       ['near','Nearest',r.opts.near,true],
       ['up','Next longest',r.opts.up,false]];
-    pick='<div class="pick"><span class="pl">Cut point — pick one to lock it for this run</span>'
-      +cand.map(([k,l,v,isNear])=>{
+    pick='<div class="pick'+(r.locked?' locked':'')+'"><span class="pl">Cut point'
+      +(r.locked?' — locked; unlock to compare the others again':' — pick one to lock it for this run')+'</span>'
+      +cand.map(([k,l,v])=>{
         if(!(v>0)) return '';
-        const on=Math.abs(r.cut-v)<1e-6&&(!r.locked||k!=='near'||nearIsUp===(k==='up'));
+        /* the box that is actually in force. Once locked it is the box that was
+           pressed, since two of them can carry the same length. */
+        const at=r.locked&&t.cutOpt
+          ? t.cutOpt===k
+          : Math.abs(r.cut-v)<1e-6&&(!r.locked||k!=='near'||nearIsUp===(k==='up'));
         const sub=k==='near'?(nearIsUp?'rounds up':'rounds down'):(k==='down'?'-'+fmtRun(r.L-v):'+'+fmtRun(v-r.L));
-        return '<button class="btn cutopt'+(Math.abs(r.cut-v)<1e-6?' pri':'')+'" data-cut="'+v.toFixed(4)+'" data-opt="'+k+'">'
-          +'<span class="cl">'+esc(l)+'</span>'
+        return '<button class="btn cutopt'+(at?' pri chosen':'')+'" data-cut="'+v.toFixed(4)+'" data-opt="'+k+'"'
+          +(r.locked&&!at?' title="Locked at '+esc(fmtLen(r.cut))+' — unlock to choose this instead"':'')+'>'
+          +'<span class="cl">'+(at&&r.locked?'🔒 ':'')+esc(l)+'</span>'
           +'<span class="cv">'+esc((v/12).toFixed(2))+' ft</span>'
           +'<span class="ci">'+esc(inchTxt(v))+' in</span>'
           +'<span class="cd">'+esc(sub)+'</span></button>';
@@ -6180,6 +6478,14 @@ function boot(keepDoc){
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(V.vp) drawOverlay();      /* markups are state too — keep the sheet in step */
+  /* the inspector belongs to the selection, so a re-render must not leave a panel
+     wired to an annotation object that no longer exists (undo replaces them) */
+  if((V.multi||[]).length>1) showMultiInspector();
+  else {
+    const sa=V.sel&&P.ann.find(x=>x.id===V.sel);
+    if(!sa) V.sel=null;
+    showInspector(sa||null);
+  }
   if(P.docs.length&&!Object.keys(FILES).length){
     $('#blank').querySelector('h2').textContent='Re-import your drawings';
     $('#blank').querySelector('p').textContent='This project has '+P.docs.length+' sheet'+(P.docs.length===1?'':'s')+' with saved markups and takeoff. PDFs are not stored in the project — import the same files and every dimension, note and link reattaches.';
@@ -6264,6 +6570,8 @@ function settingsHtml(){
       setChk('segLabels',P.segLabels!==false,P.segLabels!==false?'Shown':'Total only'))
     +setRow('Arc radius and angle','Second label under an arc with its radius and included angle.',
       setChk('arcDetail',P.arcDetail!==false,P.arcDetail!==false?'Shown':'Hidden'))
+    +setRow('Length label angle','Flat reads at a glance; along the run keeps a sloping cove readable.',
+      setSel('lblAlign',[{v:'flat',t:'Flat'},{v:'run',t:'Along the run'}],P.lblAlign==='run'?'run':'flat'))
     +setRow('Count labels','Every stamp named and numbered, or just the symbol.',
       setChk('cntLabels',P.cntLabels!==false,P.cntLabels!==false?'Shown':'Symbol only'))
     +'</div><div class="setgrp"><h4>Size</h4>'
@@ -6374,6 +6682,7 @@ function applySetting(el){
     case 'segLabels': P.segLabels=val; drawOverlay(); break;
     case 'arcDetail': P.arcDetail=val; drawOverlay(); break;
     case 'cntLabels': P.cntLabels=val; drawOverlay(); break;
+    case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'maxHome': { const v=parseLen(val); P.maxHome=(isFinite(v)&&v>0)?v:240;
       drawOverlay(); renderBom(); break; }
@@ -6441,6 +6750,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   pdfSave,pdfLoad,pdfDrop,pdfKeys,pdfStoreSize,pdfForget,pdfPrune,restoreDrawings,
   snapCache:()=>({pages:SNAP.cache.size,keys:[...SNAP.cache.keys()]}),
   polyMetrics,areaMetrics,ringDir,offsetPts,offsetAnn,fmtArea,ptInPoly,
+  rotOf,rotPt,rotAABB,normDeg,segAngle,rotatable,rotCentre,rotGrip,hitRotGrip,
+  setLblRot,rotFor,rotsOf,alignRuns,lblRotFor,ctxForLabel,
   setMulti,toggleMulti,multiAnns,inMulti,alignMulti,distributeMulti,annBox,shiftAnn,aligns:ALIGNS,
   narrowUI,railOpen,setRail,closeRails,startLongPress,cancelLongPress,syncMultiBtn,syncFingerBtn,
   probeInsets,checkForUpdate,syncVerTag,update:UPDATE,

@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.21.1**
+**Version 1.22.0**
 
 ## What it does
 
@@ -131,8 +131,10 @@ than silently accepted.
 A run sits between two cut points. The Calculated panel offers **next shortest**,
 **nearest** and **next longest**, each in decimal feet and in inches, with how far
 each is from the measurement. Picking one **locks** the cut for that treatment, so
-re-measuring the markup no longer moves it. Unlock to go back to following the
-measurement.
+re-measuring the markup no longer moves it: the box you chose is ringed and the
+other two grey out, because they are no longer the answer. Unlock and all three
+come back. Nearest often lands on the same length as one of its neighbours, so
+the box that lights up is the one you actually pressed.
 
 Treatment tags are built from **TYPE** and **Zone #** — set those and the tag
 becomes e.g. `COVE Z2`, shown on the drawing, in the cut list and in exports.
@@ -215,6 +217,13 @@ Markups can be hidden by kind while measuring, and coloured automatically by
 TYPE or Zone # instead of by hand. Every list and table sorts — the markup list,
 treatments, the library, the cut list, BOM, rollups and the piece list — and the
 order is remembered. Treatments also filter by tag, type, zone, room or product.
+
+**Labels turn.** A length label can lie flat or run along the measurement it
+belongs to — per markup, or as the default in Settings — and any single label can
+be turned by hand from its right-click or long-press menu. Text, text boxes,
+callout notes and area boxes turn too: drag the round grip above a selected one,
+or type an angle in the inspector. Angles snap to 15° when you get close, and
+carry into the exported sheet.
 
 **Content-aware labels** keep measurement labels from stacking on top of each
 other when two runs sit close together; each steps aside to the nearest clear
