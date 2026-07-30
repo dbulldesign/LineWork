@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.48.0**
+**Version 1.49.0**
 
 ## What it does
 
@@ -228,6 +228,34 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Flatten
+
+Locks markups to the sheet so they cannot be picked up, dragged or edited by
+accident. They still **draw**, at a slightly softer weight so you can tell which
+ones are locked. Choose what it covers:
+
+- **this page**, **this sheet** or **the whole job**
+- **notes and review markups only** (the default — it leaves the takeoff alone),
+  **measurements and counts only**, or all of them
+- whether to **allow unflattening later**. Leave it ticked and Document ›
+  Unflatten puts a batch back; untick it and a second dialog asks again, because
+  from then on nothing in the app can recover them.
+
+Each run of it is a **batch**, stamped with when it happened, so Unflatten can put
+back just the batch you meant. Permanently locked batches are reported by count and
+never offered.
+
+Two places this deliberately differs from Revu:
+
+- **A flattened markup keeps counting in the takeoff**, and a run whose markup is
+  flattened keeps measuring it. Locking the drawing should not change what is being
+  ordered — what flattening takes away is editing, not arithmetic.
+- **The file is untouched.** A genuinely flat PDF comes from Export marked-up PDF,
+  which burns everything into the image; this is about the project.
+
+While flattened, a markup leaves the markups list and the markup list in the
+sidebar, and layer toggles no longer hide it — it is part of the sheet now.
 
 ## Spaces (Z)
 

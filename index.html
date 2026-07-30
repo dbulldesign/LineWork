@@ -716,6 +716,8 @@ body.haspen #penFlag{display:inline}
       <button class="btn pri" id="btnXlsx">Export workbook (.xlsx)</button>
       <button class="btn pri" id="btnReport">Takeoff report…</button>
       <button class="btn" id="btnPdf">Export marked-up PDF</button>
+      <button class="btn" id="btnFlat">Flatten markups…</button>
+      <button class="btn" id="btnUnflat">Unflatten…</button>
       <button class="btn" id="btnJsonCopy">Copy JSON</button>
     </div></div>
     <div class="sec"><h3>Project file</h3><div class="body">
@@ -825,7 +827,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.48.0';
+const APP_VER='1.49.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1399,6 +1401,12 @@ function applyProject(d){
   P.ann.forEach(a=>{ if(a&&a.stated!=null){ const v=+a.stated; if(v>0) a.stated=v; else delete a.stated; } });
   /* a feed point or splice only means something attached to a run */
   P.ann.forEach(a=>{ if(a&&(a.type==='feed'||a.type==='splice')) a.at=clamp(+a.at||0,0,1); });
+  /* a flatten batch is only meaningful as a string, and a lock only with one */
+  P.ann.forEach(a=>{
+    if(a.flat!=null){ const v=String(a.flat).trim();
+      if(v) a.flat=v; else { delete a.flat; delete a.flatAt; delete a.flatLock; } }
+    if(a.flatLock&&!a.flat) delete a.flatLock;
+  });
   /* a space without a name attributes nothing, so it is not kept */
   P.ann=P.ann.filter(a=>!(a.type==='space'&&!String(a.name||'').trim()));
   P.ann.forEach(a=>{ if(a.type==='space') a.name=String(a.name).trim(); });
@@ -2897,7 +2905,9 @@ function hitRotGrip(a,sx,sy,tol){
   return Math.hypot(sx-g[0],sy-g[1])<Math.max(13,tol);
 }
 function drawAnn(a,selected,isDraft,multi){
-  const col=colOf(a), pts=a.pts.map(sp), o=isDraft?.8:(selected?1:.95), W=wOf(a)*W_MUL;
+  const col=colOf(a), pts=a.pts.map(sp), W=wOf(a)*W_MUL;
+  /* a flattened markup reads as part of the sheet rather than as something to grab */
+  const o=isDraft?.8:(isFlat(a)?.72:(selected?1:.95));
   /* the vertices are the handles; the curve is what gets stroked */
   const cpts=hasBulge(a)?annPath(a).map(sp):pts;
   const deg=rotatable(a)?rotOf(a):0;
@@ -3361,7 +3371,7 @@ const invalidateAnns=()=>{ _pcKey=null; };
 function hitTest(sx,sy,tol){
   if(!V.vp) return null;            /* callable before a sheet is open */
   tol=tol||7;
-  const list=pageAnns().filter(annVisible).slice().reverse();
+  const list=pageAnns().filter(annVisible).filter(a=>!isFlat(a)).slice().reverse();
   for(const a of list){
     const pts=annPath(a).map(sp);
     /* A turned markup is tested against its square geometry with the point
@@ -3669,7 +3679,7 @@ function bowGrip(a,i){
 function hitBow(sx,sy,tol){
   if(!V.sel||!V.vp) return null;
   const a=P.ann.find(x=>x.id===V.sel);
-  if(!a||a.doc!==V.docId||a.page!==V.page) return null;
+  if(!a||a.doc!==V.docId||a.page!==V.page||isFlat(a)) return null;
   if(!vertexType(a)||a.free||rotatable(a)) return null;
   const pts=annPts(a);
   const r=Math.max(9,tol);
@@ -3697,7 +3707,7 @@ function bowFromPoint(a,i,p){
 function hitHandle(sx,sy,tol){
   if(!V.sel||!V.vp) return null;
   const a=P.ann.find(x=>x.id===V.sel);
-  if(!a||a.doc!==V.docId||a.page!==V.page) return null;
+  if(!a||a.doc!==V.docId||a.page!==V.page||isFlat(a)) return null;
   if(a.type==='ink'||(a.type==='line'&&a.free)) return null;   /* freehand moves as a whole */
   const deg=rotatable(a)?rotOf(a):0;
   const c=deg?rotCentre(a):null;
@@ -5406,6 +5416,99 @@ function countTotals(){
   return Object.values(g).map(v=>({grp:v.grp,sym:v.sym,n:v.n,sheets:[...v.sheets].sort().join(', ')}))
     .sort((a,b)=>a.grp.localeCompare(b.grp));
 }
+/* ---- flatten ----
+   Locking markups into the sheet before it goes out: they stay drawn, stop being
+   editable or selectable, and leave the markups list. Recovery keeps the option of
+   unflattening; without it they are locked for good.
+
+   Two deliberate differences from Revu, because they would otherwise cost you
+   numbers. Flattened markups keep counting in the takeoff — locking the drawing
+   should not change what is being ordered — and a run whose markup is flattened
+   keeps measuring it. What flattening takes away is editing, not arithmetic. A
+   genuinely flat *file* comes from Export marked-up PDF, which burns everything
+   into the image; this is about the project. */
+const flatOf=a=>(a&&a.flat)?String(a.flat):'';
+const isFlat=a=>!!flatOf(a);
+const flatBatches=()=>{
+  const g={};
+  P.ann.forEach(a=>{ const f=flatOf(a); if(!f) return;
+    g[f]=g[f]||{id:f,n:0,at:a.flatAt||'',lock:!!a.flatLock};
+    g[f].n++; });
+  return Object.values(g).sort((x,y)=>String(y.at).localeCompare(String(x.at)));
+};
+const FLAT_SCOPES=[
+  {v:'page',t:'this page'},
+  {v:'doc',t:'this sheet'},
+  {v:'job',t:'the whole job'},
+];
+/* what a scope covers, never including something already flattened */
+function flatTargets(scope,kinds){
+  return P.ann.filter(a=>{
+    if(a.type==='cal'||isFlat(a)) return false;
+    if(kinds==='review'&&/^(line|arc|area|ell|ang|rad|count|space)$/.test(a.type)) return false;
+    if(kinds==='measure'&&!/^(line|arc|area|ell|ang|rad|count)$/.test(a.type)) return false;
+    if(scope==='job') return true;
+    if(scope==='doc') return a.doc===V.docId;
+    return a.doc===V.docId&&(a.page||1)===(V.page||1);
+  });
+}
+async function flattenMarkups(){
+  const done=flatBatches();
+  const r=await dlg({title:'Flatten markups',fields:[
+    {k:'scope',type:'select',label:'Flatten on',opts:FLAT_SCOPES,val:'doc'},
+    {k:'kinds',type:'select',label:'Which markups',opts:[
+      {v:'all',t:'all of them'},
+      {v:'review',t:'notes and review markups only — leave the takeoff alone'},
+      {v:'measure',t:'measurements and counts only'}],val:'review'},
+    {k:'recover',type:'check',cap:'Allow unflattening later',val:true}
+  ],ok:'Flatten',
+    note:'They stay on the sheet and keep counting in the takeoff — what they lose is editing, selecting, and their place in the markups list. Untick recovery and that cannot be undone from here.'
+      +(done.length?'  Already flattened: '+done.reduce((s2,b)=>s2+b.n,0)+' in '+done.length+' batch'+(done.length===1?'':'es')+'.':'')});
+  if(!r) return;
+  const list=flatTargets(r.scope,r.kinds);
+  if(!list.length){ toast('Nothing there to flatten'); return; }
+  if(!r.recover){
+    const sure=await dlg({title:'Flatten '+list.length+' for good?',fields:[
+      {k:'go',type:'check',cap:'Yes — lock them permanently',val:false}
+    ],ok:'Flatten permanently',
+      note:'Without recovery there is no unflatten. Save the project first if you want a copy that still has them editable.'});
+    if(!sure||!sure.go) return;
+  }
+  snap('Flatten');
+  const id=uid('flat_'), at=new Date().toISOString();
+  list.forEach(a=>{ a.flat=id; a.flatAt=at; if(!r.recover) a.flatLock=true; });
+  V.sel=null; V.multi=[]; showInspector(null);
+  invalidateAnns(); drawOverlay(); renderAnnList(); renderRollups(); renderTreatments(); stats(); markDirty();
+  toast(list.length+' markup'+(list.length===1?'':'s')+' flattened'
+    +(r.recover?' — Document › Unflatten puts them back':' — permanently'));
+}
+async function unflattenMarkups(){
+  const batches=flatBatches().filter(b=>!b.lock);
+  const locked=flatBatches().filter(b=>b.lock).reduce((s2,b)=>s2+b.n,0);
+  if(!batches.length){
+    toast(locked?(locked+' flattened markup'+(locked===1?' was':'s were')+' locked permanently — they cannot be recovered')
+      :'Nothing has been flattened');
+    return;
+  }
+  const r=await dlg({title:'Unflatten',fields:[
+    {k:'which',type:'select',label:'Which batch',
+      opts:[{v:'all',t:'every recoverable batch ('+batches.reduce((s2,b)=>s2+b.n,0)+')'}]
+        .concat(batches.map(b=>({v:b.id,
+          t:b.n+' markup'+(b.n===1?'':'s')+' · '+(b.at?new Date(b.at).toLocaleString():'unknown when')}))),
+      val:'all'}
+  ],ok:'Unflatten',
+    note:locked?(locked+' more were flattened without recovery and are not offered here.'):''});
+  if(!r) return;
+  snap('Unflatten');
+  let n=0;
+  P.ann.forEach(a=>{
+    if(!isFlat(a)||a.flatLock) return;
+    if(r.which!=='all'&&flatOf(a)!==r.which) return;
+    delete a.flat; delete a.flatAt; n++;
+  });
+  invalidateAnns(); drawOverlay(); renderAnnList(); renderRollups(); renderTreatments(); stats(); markDirty();
+  toast(n+' markup'+(n===1?'':'s')+' editable again');
+}
 /* ---- spaces ----
    A named region of the drawing — a room, a level, a zone — so a markup is
    attributed to where it actually is rather than to whatever someone typed. A
@@ -6486,7 +6589,9 @@ const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','
   ['arrow','Arrows'],['hl','Highlights'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
 const layerOn=type=>!(P.hide&&P.hide[type]);
-const annVisible=a=>layerOn(a.type)&&!a.hidden;
+/* flattened markups are page content now: a layer toggle no longer hides them,
+   because they are not markup any more as far as the sheet is concerned */
+const annVisible=a=>isFlat(a)?true:(layerOn(a.type)&&!a.hidden);
 function renderLayers(){
   renderCodeKey(); syncSmartBtn();
   const box=$('#layerBox'); if(!box) return;
@@ -6644,7 +6749,7 @@ function markSubject(a){
 function markRows(){
   const scope=P.markScope||'doc';
   const list=P.ann.filter(a=>{
-    if(a.type==='cal') return false;
+    if(a.type==='cal'||isFlat(a)) return false;   /* flattened markups are no longer listed */
     if(scope==='job') return true;
     if(scope==='page') return a.doc===V.docId&&(a.page||1)===(V.page||1);
     return a.doc===V.docId;
@@ -6669,7 +6774,7 @@ function markMatch(r,q){
 function renderAnnList(){
   renderLayers();
   const h=$('#annList'); h.innerHTML='';
-  const raw=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page&&a.type!=='cal');
+  const raw=P.ann.filter(a=>a.doc===V.docId&&a.page===V.page&&a.type!=='cal'&&!isFlat(a));
   const st=sortState('ann');
   const key=a=>{
     if(st.by==='type') return (a.type==='line'&&a.poly?'poly':a.type);
@@ -9920,6 +10025,8 @@ async function openProjectFile(file){
         : ' — re-import the drawings to see markups'):'')));
 }
 $('#btnPdf').onclick=exportSheetPdf;
+$('#btnFlat').onclick=flattenMarkups;
+$('#btnUnflat').onclick=unflattenMarkups;
 $('#btnCsvPieces').onclick=()=>{
   const rows=[['Mark','Piece','Of','Tag','Type','Zone','Detail','Run','Kind','Item','Order code',
     'Cut length (ft)','Cut length (in)','Note','Locked']];
@@ -10670,6 +10777,8 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Flatten','Locking markups into the sheet before it goes out. They stay drawn, stop being editable or selectable, and leave the markups list. Choose this page, this sheet or the whole job, and whether to flatten everything, only the notes and review markups, or only the measurements \u2014 so a review can be locked without touching the takeoff. Recovery keeps the option of unflattening, by batch or all at once; without it there is no unflatten, and it asks twice before doing that.'],
+      ['What flattening does not do','Two differences from Revu, because they would otherwise cost you numbers: a flattened markup keeps counting in the takeoff, and a run whose markup is flattened keeps measuring it. What flattening takes away is editing, not arithmetic. A layer toggle no longer hides one either, because it is part of the sheet now. For a genuinely flat <em>file</em>, Export marked-up PDF burns everything into the image \u2014 flattening is about the project.'],
       ['Spaces (Z)','A named region of the drawing \u2014 a room, a level, a zone \u2014 so a markup is attributed to where it actually is rather than to whatever someone typed. Trace it, name it, and everything whose middle falls inside belongs to it: the markups list gets a Space column, the cut list and the workbook carry it, there is a By space rollup, and a legend can group by it. Where spaces nest the smallest one wins, so a level and a room inside it both work and the finer answer is the one reported. A space is a label, not a measurement \u2014 it never feeds a run \u2014 and one left unnamed is not kept, because it would attribute nothing.'],
       ['Markups list','Every markup in the job as rows \u2014 sheet and page, kind, subject, what it measures, a status, and any columns you add. Click a row to jump to the markup. Filter across every field at once, show this page, this sheet or the whole job, and export what is showing. The value column totals by unit, so feet and degrees are never added together.'],
       ['Statuses','A status per markup, from a set you can rewrite to match how the office tracks work \u2014 the standard set is Open, In review, Closed, Accepted, Rejected. When a status is set the time is recorded with it. A status already on a markup is kept even if it leaves the set, so changing the set never quietly rewrites a decision.'],
@@ -11144,6 +11253,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   palTools,noteRecent,recentMax:RECENT_MAX,
   ellOf,ellPts,angOf,radOf,tapThree,
   legendRows,legendBox,placeLegend,legendBy:LEG_BY,legendScopes:LEG_SCOPE,
+  flattenMarkups,unflattenMarkups,flatBatches,flatTargets,isFlat,flatOf,
   spaces,spaceArea,spaceAt,spaceOf,spaceName,treatSpace,nameSpace,annCentre,
   markRows,markMatch,markValue,markSubject,renderMarks,manageCols,manageStatuses,
   statusList,colDefs,colVal,setColVal,colTypes:COL_TYPES,markScopes:MARK_SCOPES,
