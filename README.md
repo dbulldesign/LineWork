@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.41.0**
+**Version 1.42.0**
 
 ## What it does
 
@@ -186,9 +186,30 @@ the flag, because approving *is* the re-measure the flag asked for. Runs on othe
 sheets are set aside rather than reported clear.
 
 **Curved segments.** A cove that turns a corner on a radius is not two straight
-legs, and measuring it as a chord loses real feet. Right-click any segment of a
-run — or press the **arc** button beside it in the inspector's segment list — and
-give it an **included angle** or a **radius**. 90° is the usual cove corner; give
+legs, and measuring it as a chord loses real feet.
+
+**Drag it into shape.** Every segment of a selected run carries a round grip
+halfway along it. Drag that and the segment bows into an arc, with the radius, the
+included angle and the length live in the status bar as you go. It is magnetic at
+straight and at 45, 60, 90, 120 and 180°; **⇧** forces a quarter circle;
+**alt-click** straightens it again. The grip sits on the chord while the segment is
+straight and rides the arc once it is curved.
+
+**Curve as you trace.** Hold **ctrl** (or **⌘**) as you place a point and the
+segment just laid becomes a 90° arc, so a run can be drawn with its curves in it
+rather than converted afterwards.
+
+**Round all corners.** The other way a cove turns: the legs are where they should
+be and the corner between them is radiused. Rounding pulls both legs back by the
+tangent distance and puts an arc between them, so the run gets *shorter* — the
+opposite of curving a chord, and both are real. On a right-angle corner of two 100"
+legs at R 24", the legs become 76" each with a 37.7" arc between: 200" becomes
+189.7". A corner too tight for the radius is left alone and reported, and nothing
+goes on the undo stack if none of them fit.
+
+For an exact figure rather than a drag: right-click any segment of a run — or press
+the **arc** button beside it in the inspector's segment list — and give it an
+**included angle** or a **radius**. 90° is the usual cove corner; give
 one and the other follows. A radius too tight to reach across the chord is refused,
 and it tells you the smallest that fits.
 

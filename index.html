@@ -792,7 +792,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.41.0';
+const APP_VER='1.42.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2803,6 +2803,19 @@ function drawAnn(a,selected,isDraft,multi){
       if(pts.length>1) g+=tick(pts[pts.length-2],pts[pts.length-1],pts[pts.length-1]);
       g+='</g>';
     }
+    /* the round grip halfway along each segment: drag it and the segment bows
+       into an arc. Faint on a straight segment, solid once it is curved. */
+    if(selected&&!isDraft&&a.type==='line'&&!a.free&&pts.length>1){
+      annSegs(a).forEach((sg,si)=>{
+        const g2=bowGrip(a,si+1); if(!g2) return;
+        const A=sp(sg.a),B=sp(sg.b);
+        if(Math.hypot(B[0]-A[0],B[1]-A[1])<26) return;      /* no room for a grip */
+        const on=!!sg.bulge;
+        g+='<circle cx="'+g2[0].toFixed(1)+'" cy="'+g2[1].toFixed(1)+'" r="'+(on?4.4:3.6).toFixed(1)
+          +'" fill="'+(on?'#5AB6DE':OVL)+'" fill-opacity="'+(on?'.95':'.75')+'" stroke="#5AB6DE"'
+          +' stroke-width="'+(on?1.5:1.1)+'" stroke-opacity="'+(on?'1':'.7')+'"/>';
+      });
+    }
     /* vertex handles make a tapped poly readable at a glance */
     if(a.type==='line'&&!a.free&&pts.length>2)
       g+=pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)+'" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
@@ -3348,6 +3361,49 @@ const PT=new Map();
 let pan=null, press=null, stroke=null, pinch=null, wz=null, activePen=null, lastPenAt=0;
 let suppressCtx=false, ctxPt=null, CLIP=null, edit=null;
 /* grab points on the selected markup, so a committed markup stays editable */
+/* Where the bow grip sits for a segment: on the arc's midpoint when it is
+   already curved, on the chord's midpoint when it is straight. Dragging it is the
+   whole interaction — the dialog is only there for typing an exact radius. */
+function bowGrip(a,i){
+  const pts=annPts(a);
+  if(!pts||i<1||i>=pts.length) return null;
+  const A=pts[i-1], B=pts[i], b=bulgeOf(a,i);
+  if(b){
+    const arcP=segArcPts(A,B,b);
+    const m=arcP[Math.floor(arcP.length/2)];
+    return m?sp(m):null;
+  }
+  return sp([(A[0]+B[0])/2,(A[1]+B[1])/2]);
+}
+/* the bow grip under the pointer, if any — vertices win, so a corner still drags */
+function hitBow(sx,sy,tol){
+  if(!V.sel||!V.vp) return null;
+  const a=P.ann.find(x=>x.id===V.sel);
+  if(!a||a.doc!==V.docId||a.page!==V.page) return null;
+  if(!vertexType(a)||a.free||rotatable(a)) return null;
+  const pts=annPts(a);
+  const r=Math.max(9,tol);
+  /* a vertex nearby means the finger is on a corner, not on a bow */
+  for(let k=0;k<pts.length;k++){ const q=sp(pts[k]);
+    if(Math.hypot(sx-q[0],sy-q[1])<Math.max(10,tol)) return null; }
+  for(let i=1;i<pts.length;i++){
+    const g=bowGrip(a,i);
+    if(g&&Math.hypot(sx-g[0],sy-g[1])<r) return {a,i};
+  }
+  return null;
+}
+/* how much bulge puts the arc's midpoint under this point */
+function bowFromPoint(a,i,p){
+  const pts=annPts(a);
+  const A=pts[i-1], B=pts[i];
+  const c=ptLen(A,B);
+  if(!(c>0)) return 0;
+  const ux=(B[0]-A[0])/c, uy=(B[1]-A[1])/c;
+  const mx=(A[0]+B[0])/2, my=(A[1]+B[1])/2;
+  /* the signed distance off the chord is the sagitta, and bulge is 2h/chord */
+  const h=(-uy)*(p[0]-mx)+ux*(p[1]-my);
+  return clamp((2*h)/c,-8,8);              /* |8| is 353°, past which it is a full circle */
+}
 function hitHandle(sx,sy,tol){
   if(!V.sel||!V.vp) return null;
   const a=P.ann.find(x=>x.id===V.sel);
@@ -3403,6 +3459,88 @@ function shiftBulge(a,at,by){
   });
   a.bulge=out;
   if(!Object.keys(a.bulge).length) delete a.bulge;
+}
+/* ---- rounding corners ----
+   The other way a cove turns: the two legs are right and the corner between them
+   is radiused. Rounding pulls both legs back by the tangent distance and puts an
+   arc between them, which is shorter than the corner it replaces — the opposite
+   of curving a chord, and both are real. */
+function roundOne(a,vi,R){
+  const pts=a.pts;
+  if(vi<1||vi>=pts.length-1) return null;
+  const P0=pts[vi-1], C=pts[vi], P1=pts[vi+1];
+  const v0=[P0[0]-C[0],P0[1]-C[1]], v1=[P1[0]-C[0],P1[1]-C[1]];
+  const l0=Math.hypot(v0[0],v0[1]), l1=Math.hypot(v1[0],v1[1]);
+  if(!(l0>0)||!(l1>0)) return null;
+  const u0=[v0[0]/l0,v0[1]/l0], u1=[v1[0]/l1,v1[1]/l1];
+  const dot=clamp(u0[0]*u1[0]+u0[1]*u1[1],-1,1);
+  const ang=Math.acos(dot);                          /* angle between the legs */
+  if(ang<1e-3||Math.PI-ang<1e-3) return null;        /* straight through, or doubled back */
+  const t=R/Math.tan(ang/2);                         /* how far back along each leg */
+  if(!(t>0)||t>l0-1e-6||t>l1-1e-6) return {tooBig:true,max:Math.min(l0,l1)*Math.tan(ang/2)};
+  const A=[C[0]+u0[0]*t,C[1]+u0[1]*t];
+  const B=[C[0]+u1[0]*t,C[1]+u1[1]*t];
+  /* the arc turns through pi minus the angle between the legs */
+  const sweep=Math.PI-ang;
+  const b=Math.tan(sweep/4);
+  /* it must bow toward the corner it replaces */
+  const c=ptLen(A,B);
+  const ux=(B[0]-A[0])/c, uy=(B[1]-A[1])/c;
+  const mx=(A[0]+B[0])/2, my=(A[1]+B[1])/2;
+  const side=(-uy)*(C[0]-mx)+ux*(C[1]-my);
+  return {A,B,bulge:side<0?-b:b,t,deg:sweep*180/Math.PI};
+}
+async function roundCorners(a){
+  if(!vertexType(a)||a.free){ toast('Corners can be rounded on a run or a region'); return false; }
+  const k=inPerPt();
+  if(!k){ toast('Calibrate the sheet first — a radius is a real distance'); return false; }
+  const inner=a.pts.length-2+((a.closed&&canClose(a))?2:0);
+  if(inner<1){ toast('That run has no corner to round'); return false; }
+  const r=await dlg({title:'Round the corners',fields:[
+    {k:'rad',label:'Radius',val:fmtLen(+P.roundR||12),ph:unitHint()},
+    {k:'all',type:'check',cap:'Every corner on this run ('+inner+')',val:true}
+  ],ok:'Round',
+    note:'Each corner is pulled back along both legs and an arc put between them, so the run gets shorter — the same way a cove actually turns. Corners too tight for the radius are left alone and reported.'});
+  if(!r) return false;
+  const R=parseLen(r.rad);
+  if(!isFinite(R)||R<=0){ toast('Could not read "'+r.rad+'" as a radius'); return false; }
+  P.roundR=R; 
+  const Rpt=R/k;
+  const before=annLen(a);
+  /* worked out before anything is touched, so a run where nothing fits is left
+     alone rather than changed and undone */
+  const plan=[];
+  let skipped=0, tight=0;
+  for(let vi=a.pts.length-2;vi>=1;vi--){
+    if(bulgeOf(a,vi)||bulgeOf(a,vi+1)){ skipped++; continue; }   /* already curved */
+    const res=roundOne(a,vi,Rpt);
+    if(!res){ skipped++; continue; }
+    if(res.tooBig){ tight++; continue; }
+    plan.push({vi,res});
+  }
+  if(!plan.length){
+    toast(tight?('Every corner is too tight for R '+fmtLen(R)+' — try a smaller one')
+      :'Nothing to round on this run');
+    return false;
+  }
+  snap('Round corners');
+  /* applied from the last corner back, so the earlier indices stay put */
+  let done=0;
+  plan.forEach(({vi,res})=>{
+    a.pts.splice(vi,1,res.A,res.B);
+    shiftBulge(a,vi+1,1);
+    setBulge(a,vi+1,res.bulge);
+    done++;
+  });
+  if(a.type==='line'&&a.pts.length>2) a.poly=true;
+  invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  const after=annLen(a);
+  toast(done+' corner'+(done===1?'':'s')+' rounded at R '+fmtLen(R)
+    +(before!=null&&after!=null?' — '+fmtLen(before)+' becomes '+fmtLen(after):'')
+    +(tight?'  ·  '+tight+' too tight, left alone':'')
+    +(skipped?'  ·  '+skipped+' skipped':''));
+  return true;
 }
 async function segToArc(a,i){
   if(!vertexType(a)||a.free){ toast('Only a run or a region has segments to curve'); return false; }
@@ -3691,6 +3829,23 @@ function editMove(e){
     $('#stCoord').textContent='Angle: '+Math.round(a.rot)+'°';
     return;
   }
+  if(edit.mode==='bow'){
+    let b=bowFromPoint(a,edit.i,p);
+    /* magnetic at straight and at the angles a cove is actually bent to */
+    const stops=[0,0.1989,0.2679,0.4142,0.5774,1];       /* 0, 45, 60, 90, 120, 180° */
+    const sgn=b<0?-1:1, m=Math.abs(b);
+    for(const t of stops) if(Math.abs(m-t)<0.022){ b=t*sgn; break; }
+    if(e.shiftKey) b=Math.tan(Math.PI/8)*sgn;            /* ⇧ forces a quarter circle */
+    setBulge(a,edit.i,Math.abs(b)<0.012?0:b);
+    ovInvalidate(a.id);
+    drawOverlayFor(a);
+    const pts=annPts(a), g=bulgeOf(a,edit.i)?bulgeGeom(pts[edit.i-1],pts[edit.i],bulgeOf(a,edit.i)):null;
+    const k=inPerPt()||0;
+    $('#stCoord').textContent=g
+      ? ('R '+(k?fmtRun(g.r*k):'—')+'  ·  '+g.deg.toFixed(1)+'°  ·  '+(k?fmtLen(g.len*k):'—'))
+      : 'straight';
+    return;
+  }
   if(edit.mode==='moveMulti'){
     const dx=p[0]-edit.last[0], dy=p[1]-edit.last[1];
     edit.list.forEach(x=>shiftAnn(x,dx,dy));
@@ -3894,6 +4049,17 @@ stage.addEventListener('pointerdown',e=>{
         if(e.altKey){ delPointFrom(hh.a,hh.i); return; }
         edit={mode:'vertex',a:hh.a,i:hh.i,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
         return; }
+      /* ...the round grip halfway along a segment bows it into an arc */
+      const hb=hitBow(sc[0],sc[1],tol);
+      if(hb){
+        if(e.altKey){                                /* alt-click a bow to straighten it */
+          if(bulgeOf(hb.a,hb.i)){ snap('Straighten segment'); setBulge(hb.a,hb.i,0);
+            invalidateAnns(); drawOverlay(); showInspector(hb.a);
+            renderTreatments(); renderBom(); stats(); markDirty(); }
+          return;
+        }
+        edit={mode:'bow',a:hb.a,i:hb.i,last:p,cx:e.clientX,cy:e.clientY,id:e.pointerId,did:false};
+        return; }
       /* ...anywhere else on a markup selects it and drags the whole thing */
       const h=hitTest(sc[0],sc[1],tol);
       if(h){ if(V.sel!==h.id){ V.sel=h.id; showInspector(h); renderAnnList(); }
@@ -3935,6 +4101,7 @@ stage.addEventListener('pointermove',e=>{
       const sc=toS(e);
       stage.style.cursor=hitChipAt(sc[0],sc[1])?'grab'
         :hitHandle(sc[0],sc[1],7)?'crosshair'
+        :hitBow(sc[0],sc[1],7)?'ns-resize'
         :(hitTest(sc[0],sc[1],7)?'move':'');
     }
   }else stage.style.cursor='';
@@ -4052,6 +4219,13 @@ function tapVertex(p,e){
     const a=V.draft.pts[V.draft.pts.length-2];
     V.draft.pts[V.draft.pts.length-1]=ortho(a,p,e.shiftKey);
     if(V.tool==='cal'){ finishDraft(); return; }
+    /* ctrl (or ⌘) while placing a point curves the segment just laid, so a run
+       can be traced with its curves in it rather than converted afterwards */
+    if((e.ctrlKey||e.metaKey)&&V.tool!=='area'&&V.tool!=='cloud'){
+      const seg=V.draft.pts.length-1;
+      V.draft.bulge=V.draft.bulge||{};
+      V.draft.bulge[seg]=Math.tan(Math.PI/8)*bowSign(V.draft,seg);
+    }
     V.draft.pts.push(V.draft.pts[V.draft.pts.length-1].slice());
   }
   drawOverlayFor(); liveLen(V.draft);
@@ -4333,6 +4507,7 @@ function ctxForAnn(a){
   items.push({id:'ms',t:inMulti(a.id)?'Take out of the selection':'Add to the selection',
     fn:()=>{ toggleMulti(a.id); if(!V.addSel){ V.addSel=true; syncMultiBtn(); } }});
   if(vertexType(a)&&!a.free&&a.pts.length>1) items.push({id:'of',t:'Parallel run…',fn:()=>offsetAnn(a)});
+  if(vertexType(a)&&!a.free&&a.pts.length>2) items.push({id:'rc',t:'Round all corners…',fn:()=>roundCorners(a)});
   if(a.type==='line'||a.type==='arc'||a.type==='area') items.push(t
     ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
     : {id:'mk',t:'Create treatment from this',fn:()=>treatFromAnn(a)});
@@ -4505,6 +4680,14 @@ async function finishDraft(){
     snap();
     const a={id:uid('a_'),type:'line',doc:d.doc,page:d.page,pts,color:d.color,w:d.w||V.width,text:''};
     if(d.poly) a.poly=true;
+    /* curves laid while tracing: the last point was the moving one, so any bulge
+       on a segment that no longer exists is dropped */
+    if(d.bulge){
+      const keep={};
+      Object.keys(d.bulge).forEach(k=>{ const i=+k;
+        if(i>=1&&i<pts.length&&+d.bulge[k]) keep[i]=+d.bulge[k]; });
+      if(Object.keys(keep).length) a.bulge=keep;
+    }
     if(d.closed&&pts.length>2) a.closed=true;
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
@@ -5087,6 +5270,7 @@ function showInspector(a){
       +'<div class="hint" style="margin-top:4px">Where the sheet prints a dimension, type it and it governs. The trace stays visible above.</div></div>';
     if(a.pts.length>1&&!a.free) h+='<button class="btn" data-act="off">Parallel run…</button>';
     h+='<button class="btn" data-act="arr">Array along the grid…</button>';
+    if(a.pts.length>2) h+='<button class="btn" data-act="rnd">Round all corners…</button>';
     if(!a.closed) h+='<button class="btn" data-act="half">Split in half  <span class="hint">S</span></button>';
     h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
     /* Bluebeam-style per-segment readout */
@@ -5283,6 +5467,7 @@ function showInspector(a){
     if(act==='arr') arrayAnn(a);
     if(act==='pho') openPhoto(a);
     if(act==='half') splitHalf(a);
+    if(act==='rnd') roundCorners(a);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -9251,7 +9436,9 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
-      ['Curved segments','A cove that turns a corner on a radius is not two straight legs, and measuring it as a chord loses real feet. Right-click any segment of a run \u2014 or use the arc button beside it in the inspector\u2019s segment list \u2014 and give it an included angle or a radius: 90\u00b0 is the usual cove corner, and whichever you give, the other follows. The length then follows the curve everywhere it matters: the run total, the cut list, the piece list, the feed points and the wire schedule. The curve is stored the way a CAD polyline stores one, so the segment is still one segment with two ends you can drag, and the label sits on the arc where the length is. Straighten it again from the same menu. Adding or removing a vertex on a curved segment is refused rather than quietly flattening it, and a split whose halfway point lands inside an arc says so instead.'],
+      ['Rounding corners','The other way a cove turns: the two legs are where they should be and the corner between them is radiused. Round all corners pulls both legs back by the tangent distance and puts an arc between them, so the run gets <em>shorter</em> — the opposite of curving a chord, and both are real. A corner too tight for the radius is left alone and reported rather than forced.'],
+      ['Curving while you trace','Hold ctrl (or \u2318) as you place a point and the segment just laid becomes a 90\u00b0 arc, so a run can be traced with its curves in it rather than converted afterwards. Drag its grip to shape it.'],
+      ['Curved segments','A cove that turns a corner on a radius is not two straight legs, and measuring it as a chord loses real feet. Every segment of a selected run carries a round grip halfway along it: drag that and the segment bows into an arc, with the radius, the angle and the length live in the status bar as you go. It is magnetic at straight and at 45, 60, 90, 120 and 180\u00b0, \u21e7 forces a quarter circle, and alt-click straightens it again. For an exact figure, right-click the segment \u2014 or use the arc button beside it in the inspector\u2019s segment list \u2014 and give it an included angle or a radius: 90\u00b0 is the usual cove corner, and whichever you give, the other follows. The length then follows the curve everywhere it matters: the run total, the cut list, the piece list, the feed points and the wire schedule. The curve is stored the way a CAD polyline stores one, so the segment is still one segment with two ends you can drag, and the label sits on the arc where the length is. Straighten it again from the same menu. Adding or removing a vertex on a curved segment is refused rather than quietly flattening it, and a split whose halfway point lands inside an arc says so instead.'],
       ['Split in half (S)','Two different things, and they are not the same. Splitting a run in half gives two runs of equal length \u2014 the point is found by walking the path, so a dog-legged polyline halves by length and not by vertex count, and an arc halves into two arcs. Press S again for quarters. Halving a segment instead \u2014 click any segment in the inspector\u2019s list \u2014 puts a vertex at its midpoint and changes no length at all.'],
       ['What a split carries','The first half keeps the original run, so anything pointing at it still does. The second half can become its own run with the same product choices, arriving without a zone number and unapproved. Placed feed points and splices move to the half they are actually on and are rescaled to it. A stated length is halved with the run. The original loses its approval, because it was approved against a length that no longer exists.'],
       ['Photos (H)','Pin a site photo where it was taken, with a caption. The picture is kept in this browser alongside the drawings and travels inside a “Save with drawings” file, so the one file really is the whole job. A pin whose picture is not in this browser says so rather than showing a blank.'],
@@ -9645,6 +9832,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   placePhoto,photoUrl,openPhoto,photoKey,pdfPrune,grpHead,
   splitHalf,halveSeg,halvePath,halveArc,halveRun,
   segToArc,setBulge,shiftBulge,bulgeOf,bulgeGeom,bulgeFromDeg,bulgeFromRadius,bowSign,delPointFrom,
+  bowGrip,hitBow,bowFromPoint,roundCorners,roundOne,finishDraft,
   annPath,annPathSeg,segArcOf,segArcPts,hasBulge,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
