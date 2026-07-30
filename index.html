@@ -856,7 +856,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.53.0';
+const APP_VER='1.54.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1499,6 +1499,7 @@ function applyProject(d){
     psuId:P.psu.some(x=>x.id===sp.psuId)?sp.psuId:'',
     note:String(sp.note||'')}));
   if(typeof P.libFind!=='string') P.libFind='';
+  if(P.onlyFit!==false) P.onlyFit=true;
   /* a legend has to list something it knows how to list */
   P.ann.forEach(a=>{ if(a&&a.type==='legend'){
     if(!LEG_BY.some(x=>x.v===a.by)) a.by='type';
@@ -6607,6 +6608,9 @@ const WARN_KINDS=[
   {c:'class2',t:'Class 2 output over 96 W'},
   {c:'nostock',t:'No stock length on the channel'},
   {c:'undermin',t:'Run shorter than the minimum the fixture is made in'},
+  {c:'psvolt',t:'Supply voltage does not match the product'},
+  {c:'psfit',t:'Supply does not list this product'},
+  {c:'chfit',t:'Product and channel are not listed as fitting each other'},
   {c:'noclip',t:'No clip spacing on the channel'},
   {c:'revflag',t:'Changed by a revision'},
   {c:'apdrift',t:'Approved length no longer matches the drawing'},
@@ -6975,6 +6979,60 @@ const feedLimit=f=>{ const m=+((f||{}).maxLen); return m>0?m:Math.max(0,+((f||{}
    different product for takeoff purposes: it runs shorter and it is dimmer. The
    variant therefore overrides whatever it states, and the base figures are used
    only where it is silent. */
+/* ---- what fits what, on the run ----
+   The three choices on a run are not independent: a strip is made to sit in certain
+   extrusions and a driver is made to run certain strips, and both sheets say so.
+   Where they say so, the lists narrow each other. Where they do not, nothing is
+   hidden and the run says the pairing could not be checked — an incomplete
+   compatibility list must not make a valid product unreachable. */
+/* the product code at the head of a name. A hyphen only separates when it has
+   spaces around it: SW-HE, SD-SW, RGBW-HE and OPTI-FLAT are single codes, and
+   splitting on a bare hyphen collapsed every one of them to its prefix. */
+const codeOf=o=>String((o&&o.name)||'')
+  .split(/\s[\u00b7\u2014\u2013-]\s|\u00b7|\s{2,}/)[0].trim().split(/\s+/)[0].toUpperCase();
+/* a product's family: SW24/1.5 is SW, and the numbers are its wattage */
+function fixFam(f){
+  const stem=(f&&f.code&&f.code.stem)?String(f.code.stem):codeOf(f);
+  let c=String(stem).toUpperCase();
+  if(/\d+\//.test(c)) c=c.replace(/\d.*$/,'');
+  return c.replace(/[-+/\s.]+$/,'');
+}
+const chCode=c=>codeOf(c);
+/* does a listed code name this item? Exact first, then one containing the other,
+   which is what lets SW match SW24/1.5 without letting SW match SW-HE. */
+function codeHits(list,code){
+  if(!Array.isArray(list)||!list.length||!code) return false;
+  const a=normStem(code);
+  if(!a) return false;
+  return list.some(x=>{
+    const b=normStem(x);
+    return b&&(b===a||(b.length>=3&&a.startsWith(b))||(a.length>=3&&b.startsWith(a)));
+  });
+}
+/* 'yes' where a sheet says so, 'no' where a sheet lists and excludes, 'unknown'
+   where neither states it. Either sheet saying yes is enough. */
+function fitCh(f,c){
+  if(!f||!c) return {k:'unknown'};
+  /* direct mount is not a compatibility question — there is nothing to fit into.
+     It is always offered, and it is not evidence that anything was stated. */
+  if(c.id==='C_NONE') return {k:'any',why:'direct mount takes any product'};
+  const A=Array.isArray(f.fitCh)&&f.fitCh.length, B=Array.isArray(c.fitFix)&&c.fitFix.length;
+  if(!A&&!B) return {k:'unknown'};
+  if(A&&codeHits(f.fitCh,chCode(c))) return {k:'yes',why:'on '+f.name+'\u2019s cutsheet'};
+  if(B&&codeHits(c.fitFix,fixFam(f))) return {k:'yes',why:'on '+c.name+'\u2019s cutsheet'};
+  return {k:'no',why:'not on '+(A?f.name:c.name)+'\u2019s list of what it fits'};
+}
+function fitPsu(f,ps){
+  if(!f||!ps) return {k:'unknown'};
+  /* voltage is not a compatibility list, it is electricity */
+  if(+f.volts>0&&+ps.volts>0&&+f.volts!==+ps.volts)
+    return {k:'no',hard:true,why:ps.volts+'V supply on a '+f.volts+'V product'};
+  if(!(Array.isArray(ps.fitFix)&&ps.fitFix.length)) return {k:'unknown'};
+  if(codeHits(ps.fitFix,fixFam(f))) return {k:'yes',why:'on '+ps.name+'\u2019s cutsheet'};
+  return {k:'no',why:'not on '+ps.name+'\u2019s list of what it drives'};
+}
+/* the whole-run view, used by the card and by the warnings */
+const fitOf=(f,c,ps)=>({ch:fitCh(f,c),psu:fitPsu(f,ps)});
 /* ---- saved fixture specs ----
    A product plus every option it is ordered with — build, colour temperature, a
    connector at each end, wire colour and type, how it dims, and what it is
@@ -7018,6 +7076,26 @@ const specMatches=(t,sp)=>!!sp&&SPEC_KEYS.every(k=>{
   const b=k==='cct'?(+sp[k]||0):String(sp[k]||'');
   return a===b;
 });
+/* A product change is not just a name: the build codes, colour temperatures,
+   connectors and wire options all belong to the product. Carrying a choice the new
+   product is not offered with across would order something that cannot be made, so
+   it is dropped — and named, rather than silently swapped for something else. */
+function reconcileFix(t){
+  const f=P.fix.find(x=>x.id===t.fixId);
+  if(!f) return [];
+  const gone=[];
+  if(t.variant&&varList(f).length&&!varOf(f,t.variant)){ gone.push('build '+t.variant); t.variant=''; }
+  else if(t.variant&&!varList(f).length){ gone.push('build '+t.variant); t.variant=''; }
+  if(+t.cct>0&&Array.isArray(f.ccts)&&f.ccts.length&&!f.ccts.includes(+t.cct)){
+    gone.push(t.cct+'K'); t.cct=0; }
+  const inL=feedsFor(f,'in'), outL=feedsFor(f,'out');
+  if(t.feedIn&&outL.length&&!inL.includes(t.feedIn)){ gone.push(feedTerms(f.kind).in+' '+t.feedIn); t.feedIn=''; }
+  if(t.feedOut&&outL.length&&!outL.includes(t.feedOut)){ gone.push(feedTerms(f.kind).out+' '+t.feedOut); t.feedOut=''; }
+  const wires=codeListOf(f,'wires'), types=codeListOf(f,'types');
+  if(t.wire&&wires&&!wires.includes(t.wire)){ gone.push('wire '+t.wire); t.wire=''; }
+  if(t.wtype&&types&&!types.includes(t.wtype)){ gone.push('wire type '+t.wtype); t.wtype=''; }
+  return gone;
+}
 function applySpec(t,sp){
   if(!sp) return;
   SPEC_KEYS.forEach(k=>{
@@ -7100,6 +7178,7 @@ function calc(t){
      below, with the rest of them. */
   const minLen=+f.minLen||0;
   const shortPc=minLen>0&&cut>0&&cut<minLen-1e-6;
+  const fit=fitOf(f,c,ps);
   const ccts=(f.ccts&&f.ccts.length)?f.ccts:null;
   let cct=+t.cct||+f.cct||3000;
   const cctBad=!!(ccts&&t.cct&&!ccts.includes(cct));
@@ -7146,6 +7225,11 @@ function calc(t){
   if(L>0&&!(f.wft>0)) warn('nowft','No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
   if(shortPc) warn('undermin',fmtRun(cut)+' is shorter than the '+fmtRun(minLen)
     +' minimum '+f.name+' is made in — it cannot be ordered at that length.');
+  /* what the sheets say fits what. Silence where nothing is stated: an incomplete
+     compatibility list is not evidence of incompatibility. */
+  if(fit.psu.hard) warn('psvolt','A '+ps.volts+'V supply cannot run '+f.name+' at '+f.volts+'V.');
+  else if(fit.psu.k==='no') warn('psfit',ps.name+' does not list '+f.name+' among the LEDs it drives.');
+  if(fit.ch.k==='no') warn('chfit',f.name+' and '+c.name+' are not listed as fitting each other — '+fit.ch.why+'.');
   if(cctBad) warn('cctbad',cct+'K is not one of the colour temperatures '+f.name+' is offered in ('
     +(ccts||[]).map(x=>x+'K').join(', ')+').');
   /* a wet-location build runs shorter and dimmer, so guessing dry is not safe */
@@ -7212,7 +7296,7 @@ function calc(t){
     fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,placed,
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     dim,psDims,dimKnown,dimBad,
-    clips,clipSp,stock,madeTo,perPiece,chCut:+c.chCut||0,minLen,shortPc,sp:specOf(t.specId),
+    clips,clipSp,stock,madeTo,perPiece,chCut:+c.chCut||0,minLen,shortPc,sp:specOf(t.specId),fit,
     pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w,warnAll:wAll};
 }
 
@@ -7515,9 +7599,38 @@ function renderTreatments(){
   shown.forEach(t=>{
     const r=calc(t);
     const el=document.createElement('div'); el.className='card'+(open.includes(t.id)?' on':''); el.dataset.id=t.id;
-    const fixOpts=P.fix.map(f=>'<option value="'+f.id+'"'+(f.id===t.fixId?' selected':'')+'>'+esc(f.name)+'</option>').join('');
-    const chOpts=P.ch.map(c=>'<option value="'+c.id+'"'+(c.id===t.chId?' selected':'')+'>'+esc(c.name)+'</option>').join('');
-    const psOpts=P.psu.map(p=>'<option value="'+p.id+'"'+(p.id===t.psuId?' selected':'')+'>'+esc(p.name)+'</option>').join('');
+    /* Grouped by whether the sheets say it fits, so the list narrows itself as the
+       product changes. What is already chosen is always in the list, whatever it
+       says, because a job that has been saved must never quietly change under a
+       compatibility list that arrived later. */
+    const fitOpts=(list,sel,state)=>{
+      const g={yes:[],unknown:[],no:[]};
+      let stated=0;
+      list.forEach(o=>{
+        const st=state(o), on=o.id===sel;
+        const why=st.k==='no'?'  \u2014 '+(st.why||'not listed'):'';
+        const html='<option value="'+o.id+'"'+(on?' selected':'')+'>'+esc(o.name+why)+'</option>';
+        if(st.k==='no'&&!on&&P.onlyFit!==false) return;      /* hidden, not lost */
+        if(st.k==='yes'||st.k==='no') stated++;
+        g[st.k==='any'?'yes':st.k].push(html);
+      });
+      const grp=(k,label)=>g[k].length?'<optgroup label="'+esc(label)+'">'+g[k].join('')+'</optgroup>':'';
+      /* with nothing stated either way there is nothing to group by */
+      if(!stated) return g.yes.concat(g.unknown).join('');
+      return grp('yes','Fits this product')+grp('unknown','Not stated on either cutsheet')
+        +grp('no','Not listed as fitting');
+    };
+    const fixOpts=fitOpts(P.fix,t.fixId,f2=>{
+      const a2=fitCh(f2,r.c), b2=fitPsu(f2,r.ps);
+      if(a2.k==='no'||b2.k==='no') return {k:'no',why:(a2.k==='no'?a2.why:b2.why)};
+      return (a2.k==='yes'||b2.k==='yes')?{k:'yes'}:{k:'unknown'};
+    });
+    const chOpts=fitOpts(P.ch,t.chId,c2=>fitCh(r.f,c2));
+    const psOpts=fitOpts(P.psu,t.psuId,p2=>fitPsu(r.f,p2));
+    const hidden=(P.onlyFit!==false)?(
+      P.fix.filter(x=>x.id!==t.fixId&&(fitCh(x,r.c).k==='no'||fitPsu(x,r.ps).k==='no')).length
+      +P.ch.filter(x=>x.id!==t.chId&&fitCh(r.f,x).k==='no').length
+      +P.psu.filter(x=>x.id!==t.psuId&&fitPsu(r.f,x).k==='no').length):0;
     const shopOpts='<option value="">— none —</option>'+P.docs.map(d=>'<option value="'+d.id+'"'+(d.id===t.shop?' selected':'')+'>'+esc(d.name)+'</option>').join('');
     el.innerHTML=
       '<div class="hd"><input type="checkbox" class="tsel" data-tsel="'+t.id+'"'
@@ -7569,6 +7682,11 @@ function renderTreatments(){
         +'<div class="f"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
         +'<div class="f"><label>Colour temperature</label>'+cctControl(r)+'</div>'
       +'</div>'
+      +(hidden?'<div class="hint" style="margin-top:4px">'+hidden+' product'+(hidden===1?'':'s')
+        +' the cutsheets do not list as fitting '+(hidden===1?'is':'are')+' hidden. '
+        +'<button class="btn sm ghost" data-a="allfit">Show everything</button></div>'
+        :(P.onlyFit===false?'<div class="hint" style="margin-top:4px">Showing everything, fitting or not. '
+          +'<button class="btn sm ghost" data-a="onlyfit">Only what fits</button></div>':''))
       +(r.vars.length?'<div class="f" style="margin-top:8px"><label>Build / location</label>'
         +'<select data-t="variant">'
         +'<option value=""'+(r.vr?'':' selected')+'>\u2014 not specified \u2014</option>'
@@ -7644,6 +7762,14 @@ function renderTreatments(){
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
         else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
+        else if(k==='fixId'){
+          t.fixId=inp.value;
+          const cleared=reconcileFix(t);
+          renderTreatments(); renderBom(); stats(); markDirty(); openTreat(t.id);
+          if(cleared.length) toast(P.fix.find(x=>x.id===t.fixId).name+' is not offered with '
+            +cleared.join(', ')+' — '+(cleared.length===1?'that is':'those are')+' now unset');
+          return;
+        }
         else if(k==='specId'){
           const sp=specOf(inp.value);
           if(sp){ snap('Apply fixture spec'); applySpec(t,sp); }
@@ -7712,6 +7838,11 @@ function renderTreatments(){
       }
       if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t);
         unapproveTreat(c2);              /* a copy has not been approved */ P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
+      if(a==='allfit'||a==='onlyfit'){
+        P.onlyFit=(a==='onlyfit');
+        renderTreatments(); markDirty(); openTreat(t.id);
+        return;
+      }
       if(a==='spec'){
         const sp=await editSpec(null,t);
         if(sp){ t.specId=sp.id; renderTreatments(); markDirty(); openTreat(t.id);
@@ -7994,6 +8125,10 @@ async function checkSheet(o){
    A cross-origin page cannot be scraped from here, but a cutsheet you have in
    your hands can be read: drop the PDF in and pdf.js hands us its text, or paste
    the text yourself. Then it is a matter of finding the numbers. */
+/* An explicit page boundary. A compatibility block is the last thing on a page, and
+   without this it ran straight into the next page's header and collected the
+   company name as a product code. */
+const PAGE_MARK='<<<page>>>';
 async function pdfText(file,maxPages,enough){
   const buf=await file.arrayBuffer();
   /* A cutsheet read here is transient, unlike a drawing, which is kept open to be
@@ -8010,7 +8145,7 @@ async function pdfText(file,maxPages,enough){
       /* pdf.js marks the item that ends a line. Keeping those breaks is what lets
          a CCT / lumens-per-foot table be read out of the PDF and not only out of
          text someone pasted — flattened to one line, every row runs into the next. */
-      out+=(tc.items||[]).map(x=>x.str+(x.hasEOL?'\n':'')).join(' ')+'\n';
+      out+=(tc.items||[]).map(x=>x.str+(x.hasEOL?'\n':'')).join(' ')+'\n'+PAGE_MARK+'\n';
       pg.cleanup();
       /* the ordering block is on the first page or two of every sheet seen so far;
          once it has been found there is no reason to walk a 50-page document */
@@ -8046,6 +8181,42 @@ function allMatches(t,re){
   const out=[]; const r=new RegExp(re.source,re.flags.replace('g','')+'g');
   let m; while((m=r.exec(t))){ out.push(m); if(m.index===r.lastIndex) r.lastIndex++; }
   return out;
+}
+/* ---- what fits what ----
+   Every sheet carries a compatibility block: a strip lists the extrusions it fits,
+   an extrusion lists the strip families that fit it, and a supply lists the LEDs it
+   drives. Read them and the three choices on a run can narrow each other instead of
+   offering the whole catalogue every time. */
+const FIT_STOP=new Set(('DRY DMP WET ENC IP20 IP54 IP67 CL CL2 CL2P EXCLUDES LENS NO NOT AND OR SEE FOR '
+ +'THE WITH STATIC WHITE HIGH EFFICACY STANDARD SHIELD EXTREME TEMP PLUS OTHER SHEETS TUNABLE WARM DIM '
+ +'APPLICATIONS COMPATIBLE LED LEDS STRIPS STRIP EXTRUSIONS EXTRUSION POWER SUPPLY SUPPLIES DEG DELIVERED '
+ +'LUMENS CCT CRI SINGLE PASS THROUGH INPUT OUTPUT UNV WATTAGE PRODUCT FINISH MOUNTING WIRE COLOR COLOUR '
+ +'TYPE LENGTH IN OUT EA NA PAGE QTL REV').split(' '));
+/* the codes listed under one of those headings */
+function compatList(t,head){
+  const m0=new RegExp(head,'i').exec(t);
+  if(!m0) return null;
+  /* from the end of what actually matched — measuring the pattern instead ate the
+     first characters of the first code, and WIDE came out as DE */
+  let seg=t.slice(m0.index+m0[0].length,m0.index+m0[0].length+900);
+  const cut=seg.search(/(?:<<<page>>>|\u00a9|\bCOMPATIBLE\b|\bWARRANTY\b|year warranty|Specification subject|PRODUCT\s*-\s*DIMENSIONS|TEMPERATURE RATINGS)/i);
+  if(cut>0) seg=seg.slice(0,cut);
+  const out=[];
+  const push=v=>{
+    /* SW24/1.5-4.0 is the SW family and the numbers are the wattages it covers, so
+       they go. TRE3 is a whole extrusion name, so its digit stays — the difference
+       is the voltage-and-wattage slash. */
+    let code=String(v).toUpperCase();
+    if(/\d+\//.test(code)) code=code.replace(/\d.*$/,'');
+    code=code.replace(/[-+/\s.]+$/,'');
+    if(code.length<2||FIT_STOP.has(code)) return;
+    if(!out.includes(code)&&out.length<40) out.push(code);
+  };
+  /* where a sheet prints the code in brackets after the long name, those are it */
+  const par=seg.match(/\(([A-Z][A-Z0-9+/-]{1,14})\)/g);
+  if(par&&par.length>=2){ par.forEach(x=>push(x.slice(1,-1))); return out.length?out:null; }
+  (seg.match(/\b[A-Z][A-Z0-9]*(?:[-+/][A-Z0-9.]+)*\b/g)||[]).forEach(push);
+  return out.length?out:null;
 }
 function readSpecs(text,kind){
   const t=String(text||'').replace(/\u2033|\u201d/g,'"').replace(/\u2032|\u2019/g,"'").replace(/\s+/g,' ');
@@ -8138,6 +8309,9 @@ function readSpecs(text,kind){
        cut list nonsense, so the sheet's own words decide */
     if(/\b(?:neon|encapsulated|encapsulation|flexible\s+fixture|do\s*not\s*cut)\b/i.test(t)
       ||/non[-\s]*field[-\s]*cuttable/i.test(t)) out.form='fixture';
+    /* the extrusions this strip is made to sit in */
+    const fc=compatList(t,'COMPATIBLE\\s+EXTRUSIONS?');
+    if(fc) out.fitCh=fc;
   }
 
   if(fam!=='fix'&&fam!=='psu'){
@@ -8155,6 +8329,8 @@ function readSpecs(text,kind){
       out.chCut=parseFloat(m[1]); out.madeTo=parseFloat(m[2]);
     }
     else if((m=t.match(/(?:extrusion\s*)?lengths?\D{0,20}?1\s*"\s*[-\u2013]\s*(\d+(?:\.\d+)?)\s*"/i))) out.madeTo=num(m);
+    const cf=compatList(t,'COMPATIBLE\\s+LED\\s+STRIPS?')||compatList(t,'COMPATIBLE\\s+LEDS?');
+    if(cf) out.fitFix=cf;
   }
 
   if(fam!=='fix'&&fam!=='ch'){
@@ -8177,6 +8353,8 @@ function readSpecs(text,kind){
     if(/\bDMX\b|\bRDM\b/i.test(t)) d.push('dmx');
     if(/PWM\s*(?:dimming|control|input|signal)/i.test(t)) d.push('pwm');
     if(d.length) out.dims=d;
+    const pf=compatList(t,'COMPATIBLE\\s+LEDS?')||compatList(t,'COMPATIBLE\\s+LED\\s+STRIPS?');
+    if(pf) out.fitFix=pf;
   }
   return out;
 }
@@ -8512,6 +8690,8 @@ function libHay(o){
   if(o.lm) bits.push(o.lm+'lm');
   if(Array.isArray(o.ccts)) bits.push(o.ccts.map(k=>k+'k').join(' '));
   if(Array.isArray(o.feeds)) bits.push(o.feeds.join(' '));
+  if(Array.isArray(o.fitCh)) bits.push('fits '+o.fitCh.join(' '));
+  if(Array.isArray(o.fitFix)) bits.push('fits '+o.fitFix.join(' '));
   if(Array.isArray(o.dims)) bits.push(o.dims.map(dimLabel).join(' '));
   if(o.code&&o.code.sample) bits.push(o.code.sample);
   if(o.code&&o.code.stem) bits.push(o.code.stem);
@@ -11468,6 +11648,9 @@ function manualSections(){
       ['Where they live','In the project. That is what makes a job self-contained: it carries the products it was priced against, and nobody can change them underneath it later. The cost is that reading a folder of cutsheets into one job leaves the next one back on the seed \u2014 so <b>Use for new projects</b> keeps a copy beside your projects and every new one starts from it. It never touches a project already made, including the one in front of you.'],
       ['Library files','Keep your company\u2019s products in one file and load it into every job, merging or replacing. Saved fixture specs travel in it too.'],
       ['Saved fixture specs','A product plus every option it is ordered with \u2014 build, colour temperature, a connector at each end, wire colour and type, dimming, and optionally the channel and supply. That combination is what a schedule calls a fixture type, and it is chosen once instead of on every run. Save these options on a run to make one from what is already set; pick it on another run to set the lot in one go. The library row shows the part number it produces with only the length left to fill, and how many runs use it \u2014 including how many have been changed since, because a run that has drifted from its spec should say so rather than look identical.'],
+      ['What fits what','Every sheet carries a compatibility block \u2014 a strip lists the extrusions it is made to sit in, an extrusion lists the strip families that fit it, a driver lists the LEDs it runs \u2014 and reading a sheet takes those lists too. On a run, the three lists then narrow each other: the products are grouped into what fits, what no sheet mentions either way, and what is listed as not fitting. Only the first two are offered, with a count of what is hidden and a button to show everything. Nothing is ever hidden that is already chosen, because a saved job must not change under a compatibility list that arrived afterwards. Where neither sheet states anything the run says the pairing could not be checked, rather than treating silence as a refusal \u2014 an incomplete list must not make a real product unreachable.'],
+      ['Voltage','Not a compatibility list but electricity: a 24V supply on a 12V product is reported outright, and such a supply is never offered as fitting.'],
+      ['Changing the product','The build codes, colour temperatures, connectors and wire options belong to the product, so a choice the new one is not offered with is dropped and named rather than silently swapped for something else.'],
       ['Search','One box over the whole library, matching more than the name: wattage, colour temperature, connector codes, the order-code sample, the cutsheet revision, and whether something is still unverified. Each heading then reads "showing of total".'],
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
@@ -11961,6 +12144,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
+  fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,
+
   defaultLib,libKey:LIBKEY,blank:BLANK,progOpen,progStep,progClose,prog:PROG,
 
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,

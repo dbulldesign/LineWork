@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.53.0**
+**Version 1.54.0**
 
 ## What it does
 
@@ -228,6 +228,37 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## What fits what
+
+The three choices on a run are not independent, and the sheets say so: a strip lists
+the extrusions it is made to sit in, an extrusion lists the strip families that fit
+it, a driver lists the LEDs it runs. Reading a cutsheet takes those lists too, and
+then the three lists **narrow each other**.
+
+On a run, each list is grouped into **what fits**, **what no sheet mentions either
+way**, and **what is listed as not fitting**. Only the first two are offered, with a
+count of what is hidden and a button to show everything.
+
+Three rules keep it honest:
+
+- **Nothing already chosen is ever hidden.** A saved job must not change under a
+  compatibility list that arrived afterwards, so the current choice stays in the
+  list — labelled with why it is doubtful — and the run reports the pairing rather
+  than only styling it.
+- **Silence is not a refusal.** Where neither sheet states anything, the pairing is
+  reported as unchecked rather than wrong. An incomplete list must never make a real
+  product unreachable.
+- **`SW` does not match `SW-HE`.** A looser match would make every family fit
+  everything, which is worse than not filtering at all.
+
+**Voltage is not a compatibility list, it is electricity**: a 24V supply on a 12V
+product is called out outright, and never offered as fitting.
+
+**Changing the product** clears the options the new one is not offered with — a
+colour temperature it is not made in, a connector it does not have, a build it does
+not come in — and names what it dropped, rather than silently swapping in something
+else.
 
 ## Where the library lives, and saved fixture specs
 
