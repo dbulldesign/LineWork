@@ -604,7 +604,7 @@ body.haspen #penFlag{display:inline}
       <div class="hint" id="treatFindHint" style="margin-top:4px;display:none"></div>
     </div></div>
     <div class="sec"><h3>Runs &amp; treatments <span class="c" id="cTreat">0</span></h3>
-      <div class="body" style="display:flex;gap:6px"><button class="btn" id="btnAddTreat" style="flex:1">Add treatment</button><button class="btn" id="btnFromSel" title="Build from selected dimension">From selection</button></div>
+      <div class="body" style="display:flex;gap:6px"><button class="btn" id="btnAddTreat" style="flex:1">Add treatment</button><button class="btn" id="btnFromSel" title="Build from selected dimension">From selection</button><button class="btn" id="btnRenum" title="Renumber zone numbers">Renumber</button></div>
       <div class="body" id="tselBar" style="display:none;gap:6px;flex-wrap:wrap;padding-top:0">
         <span class="hint" id="tselN" style="flex:1 1 100%"></span>
         <button class="btn sm" id="btnTselEdit">Edit them together</button>
@@ -760,7 +760,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.36.0';
+const APP_VER='1.37.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1328,6 +1328,7 @@ function applyProject(d){
   const pref=P.scrollZoom!==false;
   P=Object.assign(BLANK(),d);
   ['docs','ann','treat'].forEach(k=>{ if(!Array.isArray(P[k])) P[k]=[]; });
+  P.ann.forEach(a=>{ if(a&&a.stated!=null){ const v=+a.stated; if(v>0) a.stated=v; else delete a.stated; } });
   P.ann=P.ann.filter(a=>a&&a.type!=='cal');       /* older files kept the calibration line */
   if(!P.cal||typeof P.cal!=='object'||Array.isArray(P.cal)) P.cal={};
   if(!Array.isArray(P.fix)||!P.fix.length) P.fix=clone(DEF_FIX);
@@ -2174,7 +2175,15 @@ function offsetPts(pts,dPt,closed){
   else out.unshift(out.pop());                /* the first vertex is the last join */
   return out;
 }
+/* ---- the dimension printed on the drawing ----
+   Plans are not to scale everywhere, and where a dimension string is written on
+   the sheet it governs — so a markup can carry a stated length that overrides
+   what it traces. It never replaces the measurement quietly: both are shown, the
+   difference is shown, and the run says which one it is ordering to. */
+const statedOf=a=>{ const v=+((a||{}).stated); return v>0?v:0; };
 function annLen(a){
+  const st=statedOf(a);
+  if(st>0) return st;
   const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
   if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
   /* for a region the length that matters downstream is the cove run, not the
@@ -2189,7 +2198,24 @@ function annSegs(a){
   if(a.type==='arc'){ const k=inPerPt(),g=arcOf(a); return g?[{a:a.pts[0],b:a.pts[2],len:k?g.len*k:null}]:[]; }
   const k=inPerPt(), pts=annPts(a), out=[];
   for(let i=1;i<pts.length;i++) out.push({a:pts[i-1],b:pts[i],len:k?ptLen(pts[i-1],pts[i])*k:null});
+  /* a stated total is shared out over the segments in proportion, so the parts
+     still add up to the whole that is being ordered */
+  const st=statedOf(a);
+  if(st>0&&k){
+    const raw=out.reduce((s2,g)=>s2+(g.len||0),0);
+    if(raw>0){ const f=st/raw; out.forEach(g=>{ if(g.len!=null) g.len*=f; }); }
+  }
   return out;
+}
+/* what it traces, ignoring any stated override — for showing the two side by side */
+function annMeasured(a){
+  if(!a) return null;
+  const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
+  if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
+  if(a.type==='area'){ const m=areaMetrics(a); return m?m.cove:null; }
+  const pts=annPts(a); let t=0;
+  for(let i=1;i<pts.length;i++) t+=ptLen(pts[i-1],pts[i]);
+  return t*k;
 }
 function setScale(ratio,all,label){
   const s={ratio,label:label||ratioLabel(ratio)};
@@ -3872,7 +3898,8 @@ function ctxForAnn(a){
     if(r){ snap(); a.w=+r.w; drawOverlay(); if(V.sel===a.id) showInspector(a); markDirty(); } }});
   items.push({hr:1},
     {id:'cp',t:'Copy markup',k:'⌘C',fn:()=>copyAnn()},
-    {id:'du',t:'Duplicate',k:'⌘D',fn:()=>{ V.sel=a.id; pasteAnn(null,a); }});
+    {id:'du',t:'Duplicate',k:'⌘D',fn:()=>{ V.sel=a.id; pasteAnn(null,a); }},
+    {id:'ar',t:'Array along the grid…',fn:()=>arrayAnn(a)});
   if(a.type!=='cal'&&a.type!=='link') items.push({sw:1});
   items.push({hr:1},{id:'dl',t:'Delete markup',k:'⌫',danger:1,fn:()=>{
     snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(x=>{if(x.annId===a.id)x.annId=null});
@@ -4389,8 +4416,18 @@ function showInspector(a){
   }
   if(a.type==='line'){
     const L=annLen(a), segs=annSegs(a);
-    h+='<div class="kv"><span>Measured</span><b class="hi">'+fmtLen(L)+'</b></div>';
+    const st=statedOf(a), mz=annMeasured(a);
+    h+='<div class="kv"><span>'+(st>0?'Ordering to':'Measured')+'</span><b class="hi">'+fmtLen(L)+'</b></div>';
+    if(st>0){
+      h+='<div class="kv"><span>Traced</span><b>'+(mz==null?'—':fmtLen(mz))+'</b></div>';
+      if(mz!=null) h+='<div class="kv"><span>Difference</span><b'+(Math.abs(st-mz)>Math.max(0.5,mz*0.02)
+        ?' style="color:var(--flag)"':'')+'>'+(st-mz>0?'+':'')+fmtLen(st-mz)+'</b></div>';
+    }
+    h+='<div class="f" style="margin-top:6px"><label>Stated length on the drawing</label>'
+      +'<input type="text" data-ins="stated" value="'+esc(st>0?fmtLen(st):'')+'" placeholder="'+esc(unitHint())+' — blank to use the trace">'
+      +'<div class="hint" style="margin-top:4px">Where the sheet prints a dimension, type it and it governs. The trace stays visible above.</div></div>';
     if(a.pts.length>1&&!a.free) h+='<button class="btn" data-act="off">Parallel run…</button>';
+    h+='<button class="btn" data-act="arr">Array along the grid…</button>';
     h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
     /* Bluebeam-style per-segment readout */
     if(segs.length>1&&!a.free){
@@ -4552,6 +4589,17 @@ function showInspector(a){
     if(el.value!==up){ const c=el.selectionStart; el.value=up; try{el.setSelectionRange(c,c)}catch(_){} }
     a[el.dataset.up]=up; drawOverlay(); renderAnnList(); renderBom(); markDirty();
   });
+  $$('[data-ins="stated"]',bd).forEach(el=>el.onchange=()=>{
+    const txt=String(el.value||'').trim();
+    if(!txt){ if(statedOf(a)){ snap('Stated length'); delete a.stated; } }
+    else{
+      const v=parseLen(txt);
+      if(!isFinite(v)||v<=0){ toast('Could not read "'+txt+'" as a length'); showInspector(a); return; }
+      snap('Stated length'); a.stated=v;
+    }
+    ovInvalidate(a.id);
+    showInspector(a); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  });
   $$('.sw',bd).forEach(el=>el.onclick=()=>{ a.color=el.dataset.c; showInspector(a); drawOverlay(); markDirty(); });
   $$('[data-act]',bd).forEach(el=>el.onclick=()=>{
     const act=el.dataset.act;
@@ -4559,6 +4607,7 @@ function showInspector(a){
     if(act==='open'&&a.target){ openDoc(a.target.doc,a.target.page); }
     if(act==='mk') treatFromAnn(a);
     if(act==='off') offsetAnn(a);
+    if(act==='arr') arrayAnn(a);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -4586,6 +4635,7 @@ $('#insClose').onclick=()=>{ V.sel=null; showInspector(null); drawOverlay(); };
    issues panel still counts what it is not showing. */
 const WARN_KINDS=[
   {c:'nolen',t:'Not measured yet'},
+  {c:'stated',t:'Ordering to a stated length, not the trace'},
   {c:'tooshort',t:'Shorter than one cut increment'},
   {c:'nocut',t:'No cut increment on the product'},
   {c:'nomax',t:'No maximum length on the product'},
@@ -5006,6 +5056,11 @@ function calc(t){
   const warn=(code,msg)=>{ wAll.push({c:code,m:msg}); if(!wMuted(code)) w.push(msg); };
   if(L<=0) warn('nolen','No length yet — measure it on the drawing or type it in.');
   else if(cut<=0) warn('tooshort','Run is shorter than one cut increment of '+fmtLen(inc)+'.');
+  /* an overridden length is a decision worth seeing every time, not once */
+  const an0=t.annId&&P.ann.find(x=>x.id===t.annId);
+  const stat=statedOf(an0), meas=an0?annMeasured(an0):null;
+  if(stat>0) warn('stated','Ordering to the stated '+fmtLen(stat)
+    +(meas!=null?', not the traced '+fmtLen(meas)+' ('+(stat-meas>0?'+':'')+fmtLen(stat-meas)+')':'')+'.');
   /* the seeded library carries what the catalogue states and no more, so say
      plainly where a number is missing rather than rounding on a guess */
   if(L>0&&inc<=0&&kind!=='channel')
@@ -5226,6 +5281,118 @@ async function editMany(){
   renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty();
   toast(sets.length+' field'+(sets.length===1?'':'s')+' set on '+(list.length-locked)+' run'
     +((list.length-locked)===1?'':'s')+(locked?' — '+locked+' left alone, still approved':''));
+}
+/* ---- renumbering ----
+   Runs get deleted and their zone numbers leave holes. Renumbering fills them,
+   in the order the estimator asks for, per type — because a zone number means
+   something inside its type and nothing across types. Approved runs are the
+   record of what was issued, so they keep their numbers unless told otherwise. */
+const RENUM_BY=[
+  {v:'order',t:'the order they were added'},
+  {v:'sheet',t:'sheet, then down the page'},
+  {v:'len',t:'longest run first'},
+];
+function renumSort(list,by){
+  if(by==='len') return list.slice().sort((x,y)=>lenOf(y)-lenOf(x));
+  if(by==='sheet') return list.slice().sort((x,y)=>{
+    const dx=(P.docs.findIndex(d=>d.id===x.docId)+1)||99, dy=(P.docs.findIndex(d=>d.id===y.docId)+1)||99;
+    if(dx!==dy) return dx-dy;
+    if((x.page||1)!==(y.page||1)) return (x.page||1)-(y.page||1);
+    /* down the page: PDF space has y up, so larger y is higher up the sheet */
+    const ax=x.annId&&P.ann.find(a=>a.id===x.annId), ay=y.annId&&P.ann.find(a=>a.id===y.annId);
+    const yx=ax?annBox(ax).y2:-1e9, yy=ay?annBox(ay).y2:-1e9;
+    return yy-yx;
+  });
+  return list.slice();
+}
+/* ---- arraying ----
+   Repeated bays hold the same cove over and over. Drawing one and stepping it is
+   both faster and more accurate than tracing each. The step is a real distance in
+   drawing units, so it lands where the grid says it should. */
+async function arrayAnn(a){
+  if(!a||!a.pts||!a.pts.length){ toast('Select a markup first'); return; }
+  const k=inPerPt();
+  if(!k){ toast('Calibrate the sheet first — the step is a real distance'); return; }
+  const t0=a.treat&&P.treat.find(x=>x.id===a.treat);
+  const r=await dlg({title:'Array '+(a.poly?'poly length':a.type),fields:[
+    {k:'n',type:'num',label:'How many more',val:3,step:1},
+    {k:'r1',type:'row'},
+    {k:'dx',label:'Step across',val:fmtLen(0),row:'r1',hint:unitHint()},
+    {k:'dy',label:'Step up',val:fmtLen(0),row:'r1'},
+    {k:'treat',type:'check',cap:t0?('Give each copy its own run, like '+tagOf(t0)):'No run on this markup to copy',
+      val:!!t0}
+  ],ok:'Array',
+    note:'Each copy is stepped from the one before it. Negative steps go the other way; up is up the sheet.'});
+  if(!r) return;
+  const n=Math.max(1,Math.min(200,parseInt(r.n)||0));
+  const dx=parseLen(r.dx)||0, dy=parseLen(r.dy)||0;
+  if(!dx&&!dy){ toast('A step of nothing would stack them all in one place'); return; }
+  snap('Array '+n);
+  const made=[];
+  for(let i=1;i<=n;i++){
+    const c=clone(a);
+    c.id=uid('a_'); delete c.treat;
+    c.pts=a.pts.map(p=>{
+      const q=[p[0]+(dx/k)*i,p[1]+(dy/k)*i];
+      return p.length>2?q.concat([p[2]]):q;
+    });
+    P.ann.push(c); made.push(c);
+    if(r.treat&&t0){
+      const t=clone(t0);
+      t.id=uid('t_'); t.annId=c.id; c.treat=t.id;
+      t.zone=''; t.manual=0;
+      unapproveTreat(t); delete t.rev;
+      P.treat.push(t);
+    }
+  }
+  invalidateAnns(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast(n+' cop'+(n===1?'y':'ies')+' placed'+(r.treat&&t0?', each with its own run':'')
+    +(r.treat&&t0?' — give them zone numbers or press Renumber':''));
+}
+async function renumber(){
+  if(!P.treat.length){ toast('Nothing to renumber'); return; }
+  const types=[...new Set(P.treat.map(t=>String(t.type||'').trim().toUpperCase()).filter(Boolean))].sort();
+  const r=await dlg({title:'Renumber zones',fields:[
+    {k:'by',type:'select',label:'In',opts:RENUM_BY,val:'sheet'},
+    {k:'type',type:'select',label:'Which runs',
+      opts:[{v:'',t:'Every type'}].concat(types.map(x=>({v:x,t:x+' only'}))),val:''},
+    {k:'pre',label:'Prefix',val:'Z',ph:'Z'},
+    {k:'start',type:'num',label:'Start at',val:1,step:1},
+    {k:'ap',type:'check',cap:'Renumber approved runs too',val:false}
+  ],ok:'Renumber',
+    note:'Zone numbers are renumbered within each type, so COVE and REVEAL each count from the start. Approved runs keep their numbers unless you say otherwise, because they are the record of what was issued.'});
+  if(!r) return;
+  const pre=String(r.pre||'').toUpperCase();
+  const from=Math.max(0,parseInt(r.start)||1);
+  const want=P.treat.filter(t=>{
+    if(r.type&&String(t.type||'').trim().toUpperCase()!==r.type) return false;
+    if(t.approved&&!r.ap) return false;
+    return true;
+  });
+  if(!want.length){ toast('No runs match that'); return; }
+  snap('Renumber');
+  /* the runs being left alone still hold their numbers, and two runs sharing a
+     tag would merge their piece marks — so those numbers are stepped over */
+  const held={};
+  P.treat.filter(t=>!want.includes(t)).forEach(t=>{
+    const k=String(t.type||'').trim().toUpperCase()||'\u0000';
+    const m=String(t.zone||'').toUpperCase().match(/^(.*?)(\d+)$/);
+    if(m&&m[1]===pre){ (held[k]=held[k]||new Set()).add(+m[2]); }
+  });
+  const byType={};
+  let n=0;
+  renumSort(want,r.by).forEach(t=>{
+    const k=String(t.type||'').trim().toUpperCase()||'\u0000';
+    let i=(byType[k]==null?from:byType[k]+1);
+    while(held[k]&&held[k].has(i)) i++;
+    byType[k]=i;
+    const z=pre+i;
+    if(t.zone!==z){ t.zone=z; n++; }
+  });
+  renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); renderCodeKey(); stats(); markDirty();
+  const skipped=P.treat.length-want.length;
+  toast(n+' run'+(n===1?'':'s')+' renumbered'
+    +(skipped?' — '+skipped+' left alone'+(r.ap?'':' (approved or another type)'):''));
 }
 function treatMatch(t,q){
   if(!q) return true;
@@ -7833,6 +8000,7 @@ $('#codeMode').innerHTML=CODE_MODES.map(m=>'<option value="'+m.v+'">'+m.t+'</opt
 $('#codeMode').onchange=e=>{ P.code=e.target.value; renderCodeKey(); drawOverlay(); renderAnnList(); markDirty(); };
 $('#treatFind').oninput=()=>renderTreatments();
 $('#treatFind').onsearch=()=>renderTreatments();
+$('#btnRenum').onclick=renumber;
 $('#btnTselEdit').onclick=editMany;
 $('#btnTselAll').onclick=()=>{
   const q=(($('#treatFind')||{}).value||'').trim();
@@ -8532,7 +8700,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   keys:KEYS,touchGestures:TOUCH,manualSections,manualHtml,manualPrintHtml,keyTableHtml,
   openManual,closeManual,printManual,
   approveTreat,unapproveTreat,editMany,tdefFor,saveTdef,clearTdef,applyTdef,tdefKeys:TDEF_KEYS,
-  tsel:()=>V.tsel||new Set(),issueData,renderIssues,warnKinds:WARN_KINDS,statusOf,statuses:STATUSES,apDrift,
+  tsel:()=>V.tsel||new Set(),issueData,renderIssues,warnKinds:WARN_KINDS,statusOf,statuses:STATUSES,
+  renumber,arrayAnn,annMeasured,statedOf,renumSort,showInspector,annSegs,annLen,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,

@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.36.0**
+**Version 1.37.0**
 
 ## What it does
 
@@ -125,6 +125,26 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**Stated lengths.** Plans are not to scale everywhere. Where the sheet prints a
+dimension, type it into the markup and it governs — but never quietly. The
+inspector shows what the markup traces, what it is ordering to, and the difference
+between them; a polyline shares the stated total over its segments in proportion so
+the parts still add up to the whole; and the run says *every time* that it is
+ordering to a stated length rather than the trace.
+
+**Renumber.** Zone numbers leave holes when runs get deleted. Renumbering fills
+them in the order you ask for — as added, down the sheet, or longest first —
+counting from the start within each type, since a zone number means something
+inside its type and nothing across types. Approved runs keep their numbers because
+they are the record of what was issued, and the numbers they hold are stepped over
+so no two runs end up sharing a tag (two runs on one tag would merge their piece
+marks).
+
+**Array.** Repeated bays hold the same run over and over. Array steps a markup by a
+real distance as many times as you like, and can give each copy its own run
+carrying every product choice from the original. No copy arrives approved, and none
+inherits the original's zone number — press **Renumber** and they fall into line.
 
 **The issues panel.** Every warning on the job in one place, grouped by kind — so
 a systemic gap reads as one line with a count of forty rather than forty identical
