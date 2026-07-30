@@ -669,9 +669,16 @@ body.haspen #penFlag{display:inline}
     <div class="empty" id="treatEmpty">A treatment is one lighting condition — a cove, a reveal, a toe-kick, a display shelf. Measure it on the drawing, then set its fixture, channel, and supply here.</div>
   </div>
   <div class="pane" id="pLib">
+    <div class="sec"><div class="body"><div class="f">
+      <input type="search" id="libFind" placeholder="Search the library — name, wattage, CCT, connector, part number, revision">
+    </div></div></div>
     <div class="sec"><h3>LED product <span class="c" id="cFix">0</span></h3><div id="fixList"></div><div class="body"><button class="btn" id="btnAddFix">Add LED product</button></div></div>
     <div class="sec"><h3>Channel &amp; mounting <span class="c" id="cCh">0</span></h3><div id="chList"></div><div class="body"><button class="btn" id="btnAddCh">Add channel</button></div></div>
     <div class="sec"><h3>Power supplies <span class="c" id="cPsu">0</span></h3><div id="psuList"></div><div class="body"><button class="btn" id="btnAddPsu">Add supply</button></div></div>
+    <div class="sec"><h3>Saved fixture specs <span class="c" id="cSpec">0</span></h3>
+      <div id="specList"></div>
+      <div class="empty" id="specEmpty">A product plus every option it is ordered with — build, colour temperature, a connector at each end, wire, dimming, channel and supply. Save it once and put it on run after run.</div>
+      <div class="body"><button class="btn" id="btnAddSpec">Save a fixture spec</button></div></div>
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
       <input type="file" id="libInput" accept=".json,application/json" hidden>
       <input type="file" id="specInput" accept="application/pdf" multiple hidden>
@@ -680,8 +687,9 @@ body.haspen #penFlag{display:inline}
       <button class="btn" id="btnLibSeed">Load QTL starter library</button>
       <button class="btn" id="btnLibBulk">Read cutsheet PDFs</button>
       <button class="btn" id="btnLibCheck">Check every cutsheet link</button>
+      <button class="btn" id="btnLibDefault">Use for new projects</button>
       <div id="libSort" style="flex:1 1 100%"></div>
-    </div><div class="hint" style="padding:0 12px 10px">Keep your company's products in one file and load it into every project.</div></div>
+    </div><div class="hint" id="libWhere" style="padding:0 12px 10px"></div></div>
     <div class="sec"><div class="empty">Seeded with generic placeholder products. Replace the cut increment, watts per foot, maximum feed run, and stock lengths with the values from your actual manufacturer's cut sheet before issuing anything.</div></div>
   </div>
   <div class="pane" id="pBom">
@@ -848,7 +856,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.52.0';
+const APP_VER='1.53.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1189,12 +1197,34 @@ const DEF_PSU=[
 
 /* ---- project state ---- */
 const clone=o=>JSON.parse(JSON.stringify(o));
-const BLANK=()=>({
-  name:'Untitled Project',no:'',units:'imperial',
-  docs:[],cal:{},ann:[],treat:[],
-  fix:clone(DEF_FIX),ch:clone(DEF_CH),psu:clone(DEF_PSU),
-  waste:5,load:80,seq:1,scrollZoom:true
-});
+/* ---- the default library ----
+   The library lives in the project, which is what makes a job self-contained: the
+   products it was priced against travel with it and cannot be changed underneath
+   it later. The cost is that reading a manufacturer's folder into one job leaves
+   the next one back on the seed. So a library can be made the default for new
+   projects, kept beside the projects rather than inside them. */
+const LIBKEY='linework:library:v1';
+function defaultLib(){
+  let raw=null;
+  try{ raw=localStorage.getItem(LIBKEY); }catch(e){}
+  if(!raw) return null;
+  try{
+    const d=JSON.parse(raw);
+    if(!d||!Array.isArray(d.fix)||!d.fix.length) return null;
+    return d;
+  }catch(e){ return null; }
+}
+const BLANK=()=>{
+  const d=defaultLib();
+  return {
+    name:'Untitled Project',no:'',units:'imperial',
+    docs:[],cal:{},ann:[],treat:[],
+    fix:clone((d&&d.fix)||DEF_FIX),ch:clone((d&&d.ch)||DEF_CH),psu:clone((d&&d.psu)||DEF_PSU),
+    specs:clone((d&&d.specs)||[]),
+    libFrom:d?String(d.savedAt||''):'',
+    waste:5,load:80,seq:1,scrollZoom:true
+  };
+};
 let P=BLANK();
 const V={docId:null,page:1,zoom:1,tool:'pan',sel:null,draft:null,pageObj:null,vp:null,fitZoom:1};
 const FILES={};                       // docId -> {pdf}
@@ -1455,6 +1485,20 @@ function applyProject(d){
       } else delete a.col;
     });
   }
+  /* saved fixture specs: a spec whose product is gone cannot order anything */
+  if(!Array.isArray(P.specs)) P.specs=[];
+  P.specs=P.specs.filter(sp=>sp&&sp.id&&P.fix.some(f=>f.id===sp.fixId)).map(sp=>({
+    id:String(sp.id),name:String(sp.name||'Unnamed spec'),fixId:sp.fixId,
+    variant:String(sp.variant||'').toUpperCase(),cct:+sp.cct>0?Math.round(+sp.cct):0,
+    feedIn:FEEDS.some(x=>x.v===sp.feedIn)?sp.feedIn:'',
+    feedOut:FEEDS.some(x=>x.v===sp.feedOut)?sp.feedOut:'',
+    wire:WIRE_COLS.some(x=>x.v===sp.wire)?sp.wire:'',
+    wtype:WIRE_TYPES.some(x=>x.v===sp.wtype)?sp.wtype:'',
+    dim:DIMS.some(x=>x.v===sp.dim)?sp.dim:'',
+    chId:P.ch.some(c=>c.id===sp.chId)?sp.chId:'',
+    psuId:P.psu.some(x=>x.id===sp.psuId)?sp.psuId:'',
+    note:String(sp.note||'')}));
+  if(typeof P.libFind!=='string') P.libFind='';
   /* a legend has to list something it knows how to list */
   P.ann.forEach(a=>{ if(a&&a.type==='legend'){
     if(!LEG_BY.some(x=>x.v===a.by)) a.by='type';
@@ -1503,6 +1547,8 @@ function applyProject(d){
     } else delete t.rev;
     if(t.approved) delete t.rev;          /* approval settles it */
     t.wire=WIRE_COLS.some(x=>x.v===t.wire)?t.wire:'';
+    /* a spec reference to a spec that is gone is not a reference */
+    if(t.specId&&!(Array.isArray(P.specs)&&P.specs.some(x=>x&&x.id===t.specId))) delete t.specId;
     t.wtype=WIRE_TYPES.some(x=>x.v===t.wtype)?t.wtype:'';
     /* older files carried a single feed choice; it was the incoming one */
     if(typeof t.feed==='string'&&t.feed&&!t.feedIn) t.feedIn=t.feed;
@@ -6929,6 +6975,57 @@ const feedLimit=f=>{ const m=+((f||{}).maxLen); return m>0?m:Math.max(0,+((f||{}
    different product for takeoff purposes: it runs shorter and it is dimmer. The
    variant therefore overrides whatever it states, and the base figures are used
    only where it is silent. */
+/* ---- saved fixture specs ----
+   A product plus every option it is ordered with — build, colour temperature, a
+   connector at each end, wire colour and type, how it dims, and what it is
+   mounted in and driven by. That combination is what a schedule calls a fixture
+   type, and it is chosen once and used on run after run. Kept in the project, so
+   it travels with the job, and carried in a library file so an office standard is
+   one file. */
+const SPEC_KEYS=['fixId','variant','cct','feedIn','feedOut','wire','wtype','dim','chId','psuId'];
+const specs=()=>Array.isArray(P.specs)?P.specs:(P.specs=[]);
+const specOf=id=>specs().find(x=>x.id===id)||null;
+/* what a saved spec says, in the order the part number reads */
+function specLine(sp){
+  const f=P.fix.find(x=>x.id===sp.fixId);
+  const bits=[];
+  if(!f) return 'the product it was saved against is gone';
+  bits.push(f.name);
+  if(sp.variant) bits.push(sp.variant);
+  if(+sp.cct>0) bits.push(sp.cct+'K');
+  if(sp.feedIn||sp.feedOut) bits.push((sp.feedIn||'—')+' in / '+(sp.feedOut||'—')+' out');
+  if(sp.wire) bits.push(wireLabel(sp.wire));
+  if(sp.wtype) bits.push(sp.wtype);
+  if(sp.dim) bits.push(dimLabel(sp.dim));
+  const c=sp.chId&&P.ch.find(x=>x.id===sp.chId);
+  if(c) bits.push(c.name);
+  const ps=sp.psuId&&P.psu.find(x=>x.id===sp.psuId);
+  if(ps) bits.push(ps.name);
+  return bits.join('  ·  ');
+}
+/* the part number a spec produces, with only the length left to fill */
+function specCode(sp){
+  const f=P.fix.find(x=>x.id===sp.fixId);
+  if(!f||!codeFmtOf(f)) return '';
+  const r=orderCode(f,{build:sp.variant||'',cct:sp.cct?cctCode(f,sp.cct):'',
+    in:sp.feedIn||'',out:sp.feedOut||'',wire:sp.wire||'',type:sp.wtype||''},0);
+  return r.code;
+}
+/* has the run been changed since the spec was put on it? */
+const specMatches=(t,sp)=>!!sp&&SPEC_KEYS.every(k=>{
+  if((k==='chId'||k==='psuId')&&!sp[k]) return true;   /* blank means "leave it alone" */
+  const a=k==='cct'?(+t[k]||0):String(t[k]||'');
+  const b=k==='cct'?(+sp[k]||0):String(sp[k]||'');
+  return a===b;
+});
+function applySpec(t,sp){
+  if(!sp) return;
+  SPEC_KEYS.forEach(k=>{
+    if((k==='chId'||k==='psuId')&&!sp[k]) return;
+    t[k]=k==='cct'?(+sp[k]||0):sp[k];
+  });
+  t.specId=sp.id;
+}
 const varList=f=>Array.isArray(f&&f.variants)?f.variants.filter(v=>v&&v.c):[];
 const varOf=(f,code)=>varList(f).find(v=>v.c===code)||null;
 const varLabel=v=>v?(v.c+(v.ip?' · '+v.ip:'')):'';
@@ -7115,7 +7212,7 @@ function calc(t){
     fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,placed,
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     dim,psDims,dimKnown,dimBad,
-    clips,clipSp,stock,madeTo,perPiece,chCut:+c.chCut||0,minLen,shortPc,
+    clips,clipSp,stock,madeTo,perPiece,chCut:+c.chCut||0,minLen,shortPc,sp:specOf(t.specId),
     pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w,warnAll:wAll};
 }
 
@@ -7456,7 +7553,18 @@ function renderTreatments(){
         +'<div class="f"><label>'+(r.fixed?'Fixtures per run':'Cuts per run')+'</label>'
           +'<input type="text" value="'+esc(r.inc>0?String(r.units):'—')+'" disabled></div>'
       +'</div>'
-      +grpHead('Product',r.f.name+(r.cct?'  ·  '+r.cct+'K':''))
+      +grpHead('Product',r.f.name+(r.cct?'  ·  '+r.cct+'K':'')
+        +(r.sp?'  ·  '+r.sp.name+(specMatches(t,r.sp)?'':' (changed)'):''))
+      /* a saved spec sets the product and every option it is ordered with at once */
+      +(specs().length?'<div class="f" style="margin-top:8px"><label>Saved fixture spec</label>'
+        +'<select data-t="specId">'
+        +'<option value=""'+(t.specId?'':' selected')+'>\u2014 set the options below \u2014</option>'
+        +specs().map(sp=>'<option value="'+esc(sp.id)+'"'+(t.specId===sp.id?' selected':'')+'>'
+          +esc(sp.name)+(t.specId===sp.id&&!specMatches(t,sp)?' \u2014 changed since':'')+'</option>').join('')
+        +'</select>'
+        +(r.sp&&!specMatches(t,r.sp)?'<div class="hint" style="margin-top:4px">This run no longer matches '
+          +esc(r.sp.name)+' \u2014 pick it again to put it back, or save the changes as a new spec.</div>':'')
+        +'</div>':'')
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
         +'<div class="f"><label>Colour temperature</label>'+cctControl(r)+'</div>'
@@ -7496,6 +7604,7 @@ function renderTreatments(){
       +'<div class="f" style="margin-top:8px"><label>Notes</label><textarea data-t="notes">'+esc(t.notes||'')+'</textarea></div>'
       +'<div id="out_'+t.id+'">'+outHtml(r,t)+'</div>'
       +'<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">'
+        +'<button class="btn sm" data-a="spec">Save these options</button>'
         +'<button class="btn sm'+(t.approved?' pri':'')+'" data-a="ap">'+(t.approved?'Approved 🔒':'Approve')+'</button>'
         +(t.annId?'<button class="btn sm" data-a="loc">Show on drawing</button><button class="btn sm" data-a="unlink">Unlink dimension</button>'
                  :'<button class="btn sm" data-a="link">Link selected dimension</button>')
@@ -7535,6 +7644,13 @@ function renderTreatments(){
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
         else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
+        else if(k==='specId'){
+          const sp=specOf(inp.value);
+          if(sp){ snap('Apply fixture spec'); applySpec(t,sp); }
+          else delete t.specId;
+          renderTreatments(); renderBom(); stats(); markDirty();
+          return;
+        }
         else if(k==='variant') t.variant=inp.value;
         else if(k==='dim') t.dim=inp.value;
         else if(k==='wire') t.wire=inp.value;
@@ -7596,6 +7712,12 @@ function renderTreatments(){
       }
       if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t);
         unapproveTreat(c2);              /* a copy has not been approved */ P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
+      if(a==='spec'){
+        const sp=await editSpec(null,t);
+        if(sp){ t.specId=sp.id; renderTreatments(); markDirty(); openTreat(t.id);
+          toast('Saved as "'+sp.name+'" — it is in the library, ready for the next run'); }
+        return;
+      }
       if(a==='ap'){
         if(t.approved){
           const r2=await dlg({title:'Unapprove '+tagOf(t),fields:[
@@ -8377,6 +8499,34 @@ function libRow(txt,sub,onclick,onDel,item,kind){
   };
   return el;
 }
+/* Everything about a library item that someone might type looking for it: not just
+   the name, but the wattage, the colour temperatures, the connector codes, the
+   order-code sample and the cutsheet revision. A folder of imported products is
+   long enough that finding one by scrolling is not finding it. */
+function libHay(o){
+  const bits=[o.name,o.note,o.kind,o.readFrom,sheetOf(o),o.sheetRev&&('rev-'+o.sheetRev)];
+  if(o.volts) bits.push(o.volts+'v');
+  if(o.wft) bits.push(o.wft+'w/ft');
+  if(o.watts) bits.push(o.watts+'w');
+  if(o.c2) bits.push('class 2');
+  if(o.lm) bits.push(o.lm+'lm');
+  if(Array.isArray(o.ccts)) bits.push(o.ccts.map(k=>k+'k').join(' '));
+  if(Array.isArray(o.feeds)) bits.push(o.feeds.join(' '));
+  if(Array.isArray(o.dims)) bits.push(o.dims.map(dimLabel).join(' '));
+  if(o.code&&o.code.sample) bits.push(o.code.sample);
+  if(o.code&&o.code.stem) bits.push(o.code.stem);
+  if(o.stock) bits.push('stock '+o.stock);
+  if(o.madeTo) bits.push('made to length '+o.madeTo);
+  if(o.verified===false) bits.push('unverified');
+  varList(o).forEach(v=>bits.push(v.c+' '+(v.ip||'')));
+  return bits.filter(Boolean).join(' ').toLowerCase();
+}
+const libQ=()=>String((P.libFind||'')).trim().toLowerCase();
+function libMatch(o,extra){
+  const q=libQ(); if(!q) return true;
+  const hay=libHay(o)+' '+(extra||'').toLowerCase();
+  return q.split(/\s+/).every(w=>hay.includes(w));
+}
 function renderLib(){
   const st=sortState('lib');
   const order=list=>{
@@ -8385,10 +8535,14 @@ function renderLib(){
       :st.by==='kind'?(x.kind||x.stock!==undefined?'':'')||(x.kind||''):0;
     return sortBy(list,key,st);
   };
+  /* the count on each heading reads "showing of total" once a search is on */
+  const q=libQ();
+  const cnt=(id,shown,total)=>{ const el=$(id); if(el) el.textContent=q?(shown+' of '+total):total; };
   const ls=$('#libSort'); if(ls){ ls.innerHTML=sortSelect('lib'); wireSortSelects(ls); }
-  const F=$('#fixList'); F.innerHTML=''; $('#cFix').textContent=P.fix.length;
+  const F=$('#fixList'); F.innerHTML='';
+  const fixShown=P.fix.filter(x=>libMatch(x)); cnt('#cFix',fixShown.length,P.fix.length);
   const kindLbl={tape:'Tape',fixture:'Fixture',neon:'Neon'};
-  order(P.fix).forEach(f=>F.appendChild(libRow(f.name,
+  order(fixShown).forEach(f=>F.appendChild(libRow(f.name,
     (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+(f.wft?f.wft+' W/ft':'W/ft not set')
     +' · '+(f.cut>0?('cuts every '+fmtLen(f.cut)):'cut point not set')
     +' · '+(f.maxLen>0?('up to '+fmtRun(f.maxLen)+' per run and per feed'):'max length not set')
@@ -8401,8 +8555,33 @@ function renderLib(){
     +(rateOf(f)?' · <b style="color:var(--amber)">'+esc(money(f.cost))+(f.kind==='fixture'?' ea':'/ft')+'</b>':'')
     +usedBy('fixId',f.id),
     ()=>editFix(f),()=>delLib('fixId',f,'LED product',P.fix,x=>{P.fix=x}),f,'fix')));
-  const C=$('#chList'); C.innerHTML=''; $('#cCh').textContent=P.ch.length;
-  order(P.ch).forEach(c=>C.appendChild(libRow(c.name,
+  const S=$('#specList');
+  if(S){
+    S.innerHTML='';
+    const spShown=specs().filter(sp=>libMatch(sp,specLine(sp)+' '+specCode(sp)));
+    cnt('#cSpec',spShown.length,specs().length);
+    spShown.forEach(sp=>{
+      const used=P.treat.filter(t=>t.specId===sp.id);
+      const off=used.filter(t=>!specMatches(t,sp)).length;
+      const code=specCode(sp);
+      const el=document.createElement('div'); el.className='item';
+      el.innerHTML='<div style="flex:1;min-width:0"><div class="t">'+esc(sp.name||'Unnamed spec')+'</div>'
+        +'<div class="s">'+esc(specLine(sp))+'</div>'
+        +(code?'<div class="s" style="margin-top:3px;color:var(--amber)">'+esc(code)+'</div>':'')
+        +(sp.note?'<div class="s" style="margin-top:3px">'+esc(sp.note)+'</div>':'')
+        +'<div class="s" style="margin-top:3px">'
+          +(used.length?used.length+' run'+(used.length===1?'':'s')
+            +(off?' \u00b7 '+off+' changed since':''):'not used yet')
+        +'</div></div>'
+        +'<button class="btn sm ghost" data-del="1" style="color:var(--faint)">\u2715</button>';
+      el.onclick=e=>{ if(e.target.closest('[data-del]')) delSpec(sp); else editSpec(sp); };
+      S.appendChild(el);
+    });
+    $('#specEmpty').style.display=spShown.length?'none':'';
+  }
+  const C=$('#chList'); C.innerHTML='';
+  const chShown=P.ch.filter(x=>libMatch(x)); cnt('#cCh',chShown.length,P.ch.length);
+  order(chShown).forEach(c=>C.appendChild(libRow(c.name,
     (c.madeTo?'made to length up to '+fmtRun(c.madeTo)+(c.chCut?' in '+fmtLen(c.chCut)+' increments':'')
       :c.stock?'cut to any length · bought in '+fmtRun(c.stock)+' stock':'no channel')
     +' · clips '+fmtLen(c.clip)+' o.c.'
@@ -8410,8 +8589,12 @@ function renderLib(){
     +(rateOf(c)?' · <b style="color:var(--amber)">'+esc(money(c.cost))+(c.stock&&!c.madeTo?'/length':'/ft')+'</b>':'')
     +usedBy('chId',c.id),
     ()=>editCh(c),()=>delLib('chId',c,'channel',P.ch,x=>{P.ch=x}),c,'ch')));
-  const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
-  order(P.psu).forEach(p=>S.appendChild(libRow(p.name,
+  const fi=$('#libFind');
+  if(fi&&fi.value!==(P.libFind||'')&&document.activeElement!==fi) fi.value=P.libFind||'';
+  if(typeof libWhere==='function') libWhere();
+  const PS=$('#psuList'); PS.innerHTML='';
+  const psShown=P.psu.filter(x=>libMatch(x)); cnt('#cPsu',psShown.length,P.psu.length);
+  order(psShown).forEach(p=>PS.appendChild(libRow(p.name,
     p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')
     +' · '+(dimsOf(p)&&dimsOf(p).length?'dims '+dimsOf(p).map(dimLabel).join(', '):'dimming not on file')
     +(rateOf(p)?' · <b style="color:var(--amber)">'+esc(money(p.cost))+' ea</b>':'')+usedBy('psuId',p.id),
@@ -8461,6 +8644,69 @@ async function editFix(f){
   else delete f.code;
   if(isNew) P.fix.push(f);
   renderLib(); renderTreatments(); renderBom(); markDirty();
+}
+async function editSpec(sp,fromTreat){
+  const isNew=!sp;
+  sp=sp||Object.assign({id:uid('sp_'),name:'',note:''},
+    fromTreat?{fixId:fromTreat.fixId,variant:fromTreat.variant||'',cct:+fromTreat.cct||0,
+      feedIn:fromTreat.feedIn||'',feedOut:fromTreat.feedOut||'',wire:fromTreat.wire||'',
+      wtype:fromTreat.wtype||'',dim:fromTreat.dim||'',chId:fromTreat.chId||'',psuId:fromTreat.psuId||''}
+    :{fixId:P.fix[0]&&P.fix[0].id,variant:'',cct:0,feedIn:'',feedOut:'',wire:'',wtype:'',dim:'',chId:'',psuId:''});
+  const f=P.fix.find(x=>x.id===sp.fixId)||P.fix[0];
+  const none=[{v:'',t:'\u2014 not specified \u2014'}];
+  const cctOpts=none.concat(((f&&f.ccts&&f.ccts.length)?f.ccts:[2700,3000,3500,4000]).map(k=>({v:k,t:k+'K'})));
+  const vs=varList(f);
+  const r=await dlg({title:isNew?'Save a fixture spec':'Edit fixture spec',fields:[
+    {k:'name',label:'Name it',val:sp.name,ph:'COVE \u2014 3000K warm, dry'},
+    {k:'fixId',type:'select',label:'LED product',opts:P.fix.map(x=>({v:x.id,t:x.name})),val:sp.fixId},
+    {k:'r1',type:'row'},
+    {k:'cct',type:'select',label:'Colour temperature',opts:cctOpts,val:sp.cct||'',row:'r1'},
+    {k:'variant',type:'select',label:'Build / location',
+      opts:none.concat(vs.map(v=>({v:v.c,t:varLabel(v)}))),val:sp.variant,row:'r1'},
+    {k:'r2',type:'row'},
+    {k:'feedIn',type:'select',label:feedTerms(f&&f.kind).in,
+      opts:none.concat(feedsFor(f,'in').map(v=>({v,t:feedLabel(v)}))),val:sp.feedIn,row:'r2'},
+    {k:'feedOut',type:'select',label:feedTerms(f&&f.kind).out,
+      opts:none.concat(feedsFor(f,'out').map(v=>({v,t:feedLabel(v)}))),val:sp.feedOut,row:'r2'},
+    {k:'r3',type:'row'},
+    {k:'wire',type:'select',label:'Wire colour',
+      opts:none.concat((codeListOf(f,'wires')||WIRE_COLS.map(x=>x.v)).map(v=>({v,t:wireLabel(v)}))),
+      val:sp.wire,row:'r3'},
+    {k:'wtype',type:'select',label:'Wire type',
+      opts:none.concat((codeListOf(f,'types')||WIRE_TYPES.map(x=>x.v)).map(v=>({v,t:wtypeLabel(v)}))),
+      val:sp.wtype,row:'r3'},
+    {k:'dim',type:'select',label:'Dimming',opts:none.concat(DIMS.map(d=>({v:d.v,t:d.t}))),val:sp.dim},
+    {k:'r4',type:'row'},
+    {k:'chId',type:'select',label:'Channel / mounting',
+      opts:[{v:'',t:'\u2014 leave the run\u2019s own \u2014'}].concat(P.ch.map(x=>({v:x.id,t:x.name}))),
+      val:sp.chId,row:'r4'},
+    {k:'psuId',type:'select',label:'Power supply',
+      opts:[{v:'',t:'\u2014 leave the run\u2019s own \u2014'}].concat(P.psu.map(x=>({v:x.id,t:x.name}))),
+      val:sp.psuId,row:'r4'},
+    {k:'note',label:'Note',val:sp.note||''}
+  ],ok:isNew?'Save it':'Save',
+    note:'Everything a run is ordered with, in one place, so it is chosen once instead of on every run. '
+      +'Change the product and reopen this to see that product\u2019s own options. '
+      +'Channel and supply can be left alone if the spec is only about the fixture.'});
+  if(!r) return null;
+  snap(isNew?'Save fixture spec':'Edit fixture spec');
+  Object.assign(sp,{name:r.name||'Unnamed spec',fixId:r.fixId,variant:String(r.variant||'').toUpperCase(),
+    cct:+r.cct||0,feedIn:r.feedIn||'',feedOut:r.feedOut||'',wire:r.wire||'',wtype:r.wtype||'',
+    dim:r.dim||'',chId:r.chId||'',psuId:r.psuId||'',note:r.note||''});
+  if(isNew) specs().push(sp);
+  renderLib(); renderTreatments(); renderBom(); markDirty();
+  return sp;
+}
+async function delSpec(sp){
+  const used=P.treat.filter(t=>t.specId===sp.id).length;
+  const r=await dlg({title:'Delete fixture spec',fields:[],ok:'Delete',
+    note:'"'+sp.name+'" goes; '+(used?('the '+used+' run'+(used===1?'':'s')+' using it keep the options it gave them.')
+      :'nothing is using it.')});
+  if(!r) return;
+  snap('Delete fixture spec');
+  P.specs=specs().filter(x=>x!==sp);
+  P.treat.forEach(t=>{ if(t.specId===sp.id) delete t.specId; });
+  renderLib(); renderTreatments(); markDirty();
 }
 async function editCh(c){
   const isNew=!c; c=c||{id:uid('c_'),name:'',stock:78.74,clip:19.69,note:''};
@@ -10574,13 +10820,54 @@ async function openPreset(file){
 }
 /* ---- product library as its own file, so a company standard is shared ---- */
 const libFileText=()=>JSON.stringify({app:'linework-library',ver:1,appVer:APP_VER,
-  savedAt:new Date().toISOString(),fix:P.fix,ch:P.ch,psu:P.psu},null,1);
+  savedAt:new Date().toISOString(),fix:P.fix,ch:P.ch,psu:P.psu,specs:specs()},null,1);
 $('#btnLibSave').onclick=()=>{
   try{ download(slug(P.name)+'.linework-library.json',libFileText(),'application/json');
     toast('Library saved'); }
   catch(e){ exportBox(slug(P.name)+'.linework-library.json',libFileText()); }
 };
 $('#btnLibOpen').onclick=()=>$('#libInput').click();
+$('#libFind').oninput=e=>{ P.libFind=e.target.value; renderLib(); };
+$('#btnAddSpec').onclick=()=>editSpec(null);
+/* ---- where the library lives ----
+   Worth saying plainly, because it is the first question anyone asks after
+   importing a folder of cutsheets. */
+function libWhere(){
+  const el=$('#libWhere'); if(!el) return;
+  const d=defaultLib();
+  el.innerHTML='These products are saved <b>in this project</b>, so the job carries what it was priced against '
+    +'and nobody can change it underneath you later. '
+    +(d?('A default library of '+((d.fix||[]).length)+' products is set, so <b>new projects start with it</b>'
+        +(d.savedAt?' (saved '+esc(new Date(d.savedAt).toLocaleDateString())+')':'')+'.')
+      :'To stop re-importing them job after job, use <b>Use for new projects</b>.')
+    +' A library file is the portable copy, to share with someone else or load into a job already under way.';
+}
+$('#btnLibDefault').onclick=async()=>{
+  const d=defaultLib();
+  const r=await dlg({title:'Library for new projects',fields:[
+    {k:'mode',type:'select',label:'What to do',opts:[
+      {v:'set',t:'Make this project\u2019s library the default for new projects'}]
+      .concat(d?[{v:'clear',t:'Clear the default \u2014 new projects go back to the QTL seed'}]:[]),
+      val:'set'}
+  ],ok:'Do it',
+    note:'Kept beside your projects rather than inside them, in this browser. It changes what a '
+      +'new project starts with and never touches a project already made \u2014 including this one. '
+      +(d?('The default now holds '+((d.fix||[]).length)+' LED products, '+((d.ch||[]).length)+' channels and '
+        +((d.psu||[]).length)+' supplies.'):'')});
+  if(!r) return;
+  if(r.mode==='clear'){
+    try{ localStorage.removeItem(LIBKEY); }catch(e){}
+    libWhere(); toast('Default cleared — new projects start from the QTL seed');
+    return;
+  }
+  try{
+    localStorage.setItem(LIBKEY,JSON.stringify({app:'linework-library',ver:1,appVer:APP_VER,
+      savedAt:new Date().toISOString(),fix:P.fix,ch:P.ch,psu:P.psu,specs:specs()}));
+  }catch(e){ toast('No room in this browser to keep a default library'); return; }
+  libWhere();
+  toast(P.fix.length+' products, '+P.ch.length+' channels, '+P.psu.length+' supplies and '
+    +specs().length+' spec'+(specs().length===1?'':'s')+' will start every new project');
+};
 $('#btnLibSeed').onclick=async()=>{
   const r=await dlg({title:'Load the QTL starter library',fields:[
     {k:'mode',type:'select',label:'How',opts:[
@@ -10619,7 +10906,7 @@ $('#libInput').onchange=async e=>{
   const f=e.target.files[0]; e.target.value=''; if(!f) return;
   let d;
   try{ d=JSON.parse(await f.text()); }catch(err){ toast('Could not read '+f.name); return; }
-  const cats=[['fix','LED products'],['ch','channels'],['psu','power supplies']];
+  const cats=[['fix','LED products'],['ch','channels'],['psu','power supplies'],['specs','fixture specs']];
   if(!cats.some(([k])=>Array.isArray(d[k]))){ toast('Not a Linework library file'); return; }
   const counts=cats.map(([k,l])=>(Array.isArray(d[k])?d[k].length:0)+' '+l).join(', ');
   const r=await dlg({title:'Import library',fields:[
@@ -11178,7 +11465,10 @@ function manualSections(){
       ['Minimum length','A made-to-length fixture is not made below a certain length. A piece under it is a specification error rather than a rounding question, so it is called out as not orderable \u2014 the sheet says to contact the factory.'],
       ['While it reads','A folder of cutsheets is minutes of work, so a bar says which file it is on and how far through it is, and it can be stopped part way \u2014 what it read up to then is still offered. Each sheet is let go as soon as it has been read, and only the pages needed are read at all, so the size of the folder does not matter.'],
       ['What it cannot read','This is the PDF\u2019s text layer, not OCR. A sheet whose figures are drawn as part of a picture, or a scan, has nothing to read \u2014 it is reported as unrecognised rather than guessed at, and Read specs on the item takes pasted text instead.'],
-      ['Library files','Keep your company\u2019s products in one file and load it into every job, merging or replacing.'],
+      ['Where they live','In the project. That is what makes a job self-contained: it carries the products it was priced against, and nobody can change them underneath it later. The cost is that reading a folder of cutsheets into one job leaves the next one back on the seed \u2014 so <b>Use for new projects</b> keeps a copy beside your projects and every new one starts from it. It never touches a project already made, including the one in front of you.'],
+      ['Library files','Keep your company\u2019s products in one file and load it into every job, merging or replacing. Saved fixture specs travel in it too.'],
+      ['Saved fixture specs','A product plus every option it is ordered with \u2014 build, colour temperature, a connector at each end, wire colour and type, dimming, and optionally the channel and supply. That combination is what a schedule calls a fixture type, and it is chosen once instead of on every run. Save these options on a run to make one from what is already set; pick it on another run to set the lot in one go. The library row shows the part number it produces with only the length left to fill, and how many runs use it \u2014 including how many have been changed since, because a run that has drifted from its spec should say so rather than look identical.'],
+      ['Search','One box over the whole library, matching more than the name: wattage, colour temperature, connector codes, the order-code sample, the cutsheet revision, and whether something is still unverified. Each heading then reads "showing of total".'],
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
     {rows:[
@@ -11670,6 +11960,9 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
+  specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
+  defaultLib,libKey:LIBKEY,blank:BLANK,progOpen,progStep,progClose,prog:PROG,
+
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
   orderCode,cctCode,codeFmtOf,wireColours:WIRE_COLS,wireTypes:WIRE_TYPES,
   dimOptions:DIMS,dimLabel,dimsOf,driverLoad,whipData,revImpact,segHitsRect,rectsToPdf,

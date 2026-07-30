@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.52.0**
+**Version 1.53.0**
 
 ## What it does
 
@@ -228,6 +228,35 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Where the library lives, and saved fixture specs
+
+Products are saved **in the project**. That is what makes a job self-contained: it
+carries what it was priced against, and nobody can change that underneath it later.
+The cost is that reading a folder of cutsheets into one job leaves the next one back
+on the seed — so **Use for new projects** keeps a copy beside your projects, and
+every new project starts from it. It never touches a project already made, including
+the one in front of you. A library file is still the portable copy, for sharing or
+for loading into a job already under way.
+
+**Saved fixture specs** are a product plus every option it is ordered with: build,
+colour temperature, a connector at each end, wire colour and type, dimming, and
+optionally the channel and supply. That combination is what a schedule calls a
+fixture type, and it should be chosen once rather than on every run.
+
+- **Save these options** on a run makes a spec out of what is already set
+- picking a spec on another run sets the lot in one go — a channel or supply left
+  blank on the spec leaves the run's own alone
+- the library row shows **the part number it produces**, with only the length left
+  to fill, and how many runs use it
+- including **how many have changed since**, because a run that has drifted from its
+  spec should say so rather than look identical to one that has not
+- they travel in the project, in a library file, and into the default
+
+**Search** is one box over the whole library, and it matches more than the name:
+wattage, colour temperature, connector codes, the order-code sample, the cutsheet
+revision, and whether something is still unverified. Each heading then reads
+"showing of total".
 
 ## Reading cutsheets
 
