@@ -382,6 +382,19 @@ input.up{text-transform:uppercase}
 #lockBar .btn{flex:0 0 auto}
 .toast{position:fixed;left:50%;bottom:44px;transform:translate(-50%,14px);background:var(--s3);border:1px solid var(--line2);border-left:2px solid var(--amber);padding:9px 15px;font-size:12px;opacity:0;transition:.22s;pointer-events:none;z-index:80;border-radius:2px}
 .toast.show{opacity:1;transform:translate(-50%,0)}
+/* Progress for work that takes long enough to look broken. Reading a folder of
+   cutsheets is minutes, not seconds, so it says which file it is on and can be
+   stopped. */
+.prog{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);z-index:120;
+  background:var(--s2);border:1px solid var(--line2);border-radius:3px;padding:16px 18px;
+  min-width:340px;max-width:min(560px,92vw);display:none;box-shadow:0 12px 40px rgba(0,0,0,.5)}
+.prog.show{display:block}
+.prog h4{margin:0 0 9px;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
+.prog .pnow{font-size:12px;color:var(--txt);margin-bottom:9px;word-break:break-all;min-height:16px}
+.prog .pbar{height:6px;background:var(--s3);border:1px solid var(--line2);border-radius:3px;overflow:hidden}
+.prog .pfill{height:100%;width:0;background:var(--amber);transition:width .15s}
+.prog .pft{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px}
+.prog .pct{font-size:11px;color:var(--dim)}
 
 .mobtog{display:inline-flex}
 /* ---------- narrow screens: tablets, and a laptop with both rails wanted ----------
@@ -793,6 +806,12 @@ body.haspen #penFlag{display:inline}
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div id="pals"></div>
 <div class="toast" id="toast"></div>
+<div class="prog" id="prog" role="status" aria-live="polite">
+  <h4 id="progT">Working</h4>
+  <div class="pnow" id="progNow"></div>
+  <div class="pbar"><div class="pfill" id="progFill"></div></div>
+  <div class="pft"><span class="pct" id="progCt"></span><button class="btn" id="progStop">Stop</button></div>
+</div>
 <div id="lockBar"><span></span><button class="btn" id="btnTakeOver">Take over</button></div>
 <div class="scrim" id="cmdScrim"><div class="cmdbox">
   <input type="search" id="cmdQ" placeholder="Type a tool, an action, a setting, or a run…" autocomplete="off">
@@ -829,7 +848,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.51.0';
+const APP_VER='1.52.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1654,6 +1673,30 @@ function applyProject(d){
 /* ---- toast + dialog ---- */
 let toastT=null;
 function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2600); }
+/* ---- progress ----
+   For work measured in files rather than milliseconds. It has to yield to the
+   browser between steps or the bar never paints and the page looks hung, which is
+   the whole thing it exists to prevent. */
+const PROG={on:false,stop:false};
+const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));
+function progOpen(title,total){
+  PROG.on=true; PROG.stop=false; PROG.total=total||0;
+  $('#progT').textContent=title;
+  $('#progNow').textContent='';
+  $('#progFill').style.width='0';
+  $('#progCt').textContent=total?('0 of '+total):'';
+  $('#prog').classList.add('show');
+}
+async function progStep(i,name){
+  if(!PROG.on) return;
+  const t=PROG.total||0;
+  $('#progNow').textContent=name||'';
+  $('#progFill').style.width=(t?Math.round(i/t*100):0)+'%';
+  $('#progCt').textContent=t?(i+' of '+t):'';
+  await frame();
+}
+function progClose(){ PROG.on=false; $('#prog').classList.remove('show'); }
+$('#progStop').onclick=()=>{ PROG.stop=true; $('#progNow').textContent='Stopping…'; };
 function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
   return new Promise(res=>{
     $('#dlgT').textContent=title;
@@ -7829,18 +7872,30 @@ async function checkSheet(o){
    A cross-origin page cannot be scraped from here, but a cutsheet you have in
    your hands can be read: drop the PDF in and pdf.js hands us its text, or paste
    the text yourself. Then it is a matter of finding the numbers. */
-async function pdfText(file,maxPages){
+async function pdfText(file,maxPages,enough){
   const buf=await file.arrayBuffer();
+  /* A cutsheet read here is transient, unlike a drawing, which is kept open to be
+     drawn. Left undestroyed, one document per PDF stays alive with its worker
+     transport and its page objects, and reading a manufacturer's whole downloads
+     folder took the tab out of memory before it finished. */
   const pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
   const n=Math.min(pdf.numPages,maxPages||4);
   let out='';
-  for(let i=1;i<=n;i++){
-    const pg=await pdf.getPage(i);
-    const tc=await pg.getTextContent();
-    /* pdf.js marks the item that ends a line. Keeping those breaks is what lets a
-       CCT / lumens-per-foot table be read out of the PDF and not only out of text
-       someone pasted — flattened to one line, every row runs into the next. */
-    out+=(tc.items||[]).map(x=>x.str+(x.hasEOL?'\n':'')).join(' ')+'\n';
+  try{
+    for(let i=1;i<=n;i++){
+      const pg=await pdf.getPage(i);
+      const tc=await pg.getTextContent();
+      /* pdf.js marks the item that ends a line. Keeping those breaks is what lets
+         a CCT / lumens-per-foot table be read out of the PDF and not only out of
+         text someone pasted — flattened to one line, every row runs into the next. */
+      out+=(tc.items||[]).map(x=>x.str+(x.hasEOL?'\n':'')).join(' ')+'\n';
+      pg.cleanup();
+      /* the ordering block is on the first page or two of every sheet seen so far;
+         once it has been found there is no reason to walk a 50-page document */
+      if(enough&&enough(out)) break;
+    }
+  }finally{
+    try{ await pdf.destroy(); }catch(e){}
   }
   return out;
 }
@@ -8172,13 +8227,25 @@ async function bulkSpecs(files){
     note:'Each PDF is read in this browser and matched to a product by its file name — nothing is uploaded. '
       +'Left unticked, the sheets only fill in what is unset, so figures you have already checked stand.'});
   if(!r0) return;
-  toast('Reading '+files.length+' sheet'+(files.length===1?'':'s')+'\u2026');
   const rows=[],bad=[];
-  for(const f of files){
+  let stopped=0;
+  progOpen('Reading cutsheets',files.length);
+  for(let i=0;i<files.length;i++){
+    const f=files[i];
+    await progStep(i,f.name);
+    if(PROG.stop){ stopped=files.length-i; break; }
     let found=null;
-    try{ found=readSpecs(await pdfText(f,6)); }
+    try{
+      /* enough is enough: the ordering block is on page one of every sheet seen so
+         far, so a 50-page document is not walked to the end for nothing */
+      const txt=await pdfText(f,6,t=>{
+        const g=readSpecs(t);
+        return g.family&&(g.maxLen>0||g.madeTo>0||g.wft>0||g.watts>0||g.stock>0||g.ccts);
+      });
+      found=readSpecs(txt);
+    }
     catch(e){ bad.push(f.name+' \u2014 could not be read'); continue; }
-    if(!Object.keys(found).some(k=>k!=='rev'&&k!=='form')){
+    if(!Object.keys(found).some(k=>k!=='rev'&&k!=='form'&&k!=='family')){
       bad.push(f.name+' \u2014 no specs recognised in its text'); continue; }
     const m=matchLibItem(f.name);
     if(m){ rows.push({f,found,kind:m.kind,item:m.item}); continue; }
@@ -8187,22 +8254,27 @@ async function bulkSpecs(files){
     if(r0.mode!=='add'){ bad.push(f.name+' \u2014 no product matches that file name'); continue; }
     rows.push({f,found,kind:k,item:null});
   }
+  await progStep(files.length-stopped,'');
+  progClose();
   const why=n=>bad.slice(0,n).join('  \u00b7  ')+(bad.length>n?'  \u00b7  and '+(bad.length-n)+' more':'');
+  const stopNote=stopped?('  Stopped early, with '+stopped+' sheet'+(stopped===1?'':'s')+' not read.'):'';
   if(!rows.length){
-    await dlg({title:'Nothing could be used',fields:[],ok:'Close',
-      note:(bad.length?why(12)+'.  ':'')
-        +'These are read from the PDF\u2019s text layer. A sheet whose figures are part of a picture, '
+    await dlg({title:stopped&&!bad.length?'Stopped':'Nothing could be used',fields:[],ok:'Close',
+      note:(bad.length?why(12)+'.  ':'')+stopNote
+        +'  These are read from the PDF\u2019s text layer. A sheet whose figures are part of a picture, '
         +'or a scan, has no text to read \u2014 use Read specs on the item and paste the block instead.'});
     return;
   }
+  /* new products first: those are the rows a person actually has to look at */
+  rows.sort((a2,b2)=>(a2.item?1:0)-(b2.item?1:0));
   const conf=await dlg({title:'Found in '+rows.length+' sheet'+(rows.length===1?'':'s'),
     fields:rows.map((r,i)=>({k:'r'+i,type:'check',val:true,
       cap:r.f.name+'  \u2192  '+(r.item?r.item.name:'new '+(LIB_CATS.find(c=>c[0]===r.kind)||[,'item'])[1]),
       hint:foundSummary(r.kind,r.found)})),
     ok:'Apply',
-    note:'Untick anything matched to the wrong product. This reads text, it does not understand it \u2014 '
-      +'check the figures against the sheet before you issue from them.'
-      +(bad.length?'  Not used: '+why(6)+'.':'')});
+    note:'New products are listed first. Untick anything matched to the wrong one. This reads text, it does '
+      +'not understand it \u2014 check the figures against the sheet before you issue from them.'
+      +(bad.length?'  Not used: '+why(6)+'.':'')+stopNote});
   if(!conf) return;
   snap('Read cutsheets');
   let nUp=0,nNew=0,nF=0;
@@ -11104,6 +11176,7 @@ function manualSections(){
       ['One sheet, several products','A supply sheet covering 30W, 60W, 96W, 192W and 288W is five supplies, and a flexible fixture offered in 1.0, 2.0 and 4.0 W/ft is three. Taking the first would quietly order the smallest, so a sheet new to the library becomes one item per output, each named for its own wattage. A sheet matched to a product already here fills that one in instead.'],
       ['Made to length','Two ways an extrusion is bought. Bar stock is a fixed length you cut from, which leaves off-cuts to nest. Made to length is ordered at the length you want, in its own increment, up to the longest piece it is made in \u2014 so there is nothing to nest, no waste to report, and the last piece is rounded up to the increment rather than carried as an off-cut. Reading a sheet that says so sets both figures, and the BOM stops asking for a stock length it does not have.'],
       ['Minimum length','A made-to-length fixture is not made below a certain length. A piece under it is a specification error rather than a rounding question, so it is called out as not orderable \u2014 the sheet says to contact the factory.'],
+      ['While it reads','A folder of cutsheets is minutes of work, so a bar says which file it is on and how far through it is, and it can be stopped part way \u2014 what it read up to then is still offered. Each sheet is let go as soon as it has been read, and only the pages needed are read at all, so the size of the folder does not matter.'],
       ['What it cannot read','This is the PDF\u2019s text layer, not OCR. A sheet whose figures are drawn as part of a picture, or a scan, has nothing to read \u2014 it is reported as unrecognised rather than guessed at, and Read specs on the item takes pasted text instead.'],
       ['Library files','Keep your company\u2019s products in one file and load it into every job, merging or replacing.'],
     ]}]},

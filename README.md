@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend â€
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.51.0**
+**Version 1.52.0**
 
 ## What it does
 
@@ -278,6 +278,12 @@ to the longest piece it is made in. For the second there is nothing to nest and 
 waste to report, and the last piece is rounded up to the increment instead of being
 carried as an off-cut. A **minimum** length works the other way: a piece below what
 a fixture is made in is called out as not orderable rather than quietly rounded.
+
+**While it reads**, a bar says which file it is on and how far through it is, and
+it can be **stopped part way** â€” whatever it read up to then is still offered. Each
+sheet is let go as soon as it has been read, and only the pages actually needed are
+read, so the size of the folder does not matter. (Before that, reading a whole
+downloads folder held every document open at once and took the tab out of memory.)
 
 This is the PDF's **text layer, not OCR**. A sheet whose figures are drawn as part
 of a picture, or a scan, has nothing to read: it is reported by name as
