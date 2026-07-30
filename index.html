@@ -873,7 +873,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.55.0';
+const APP_VER='1.56.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1751,17 +1751,30 @@ const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));
 
    Matching is the same as the library search, so a wattage, a colour temperature, a
    connector code or a part number all find a product, not only its name. */
-const comboMatch=(o,q)=>{ const h=libHay(o); return q.split(/\s+/).every(w=>h.includes(w)); };
+/* everything typeable about a library item, by id, so a dialog select over products
+   matches on wattage and part number exactly as the library search does */
+const libHayFor=key=>v=>{ const o=(P[key]||[]).find(x=>x.id===v); return o?libHay(o):''; };
+const comboMatch=(o,q)=>{ const h=(o&&o.hay!=null)?String(o.hay):libHay(o);
+  return q.split(/\s+/).every(w=>h.includes(w)); };
+/* the run card knows its whole list, including entries the compatibility filter is
+   hiding; a dialog select only knows its own options, which is enough */
+const comboFromSelect=(sel,hay)=>[...sel.options].map(o=>({id:o.value,name:o.textContent,
+  hay:((hay&&hay(o.value))||o.textContent).toLowerCase()}));
 function wireCombo(root,key,list,state,label){
   const sel=root.querySelector('[data-t="'+key+'"]');
+  comboOn(sel,{list,state,label});
+}
+function comboOn(sel,{list,state,label,hay}={}){
   if(!sel||sel.disabled||sel.dataset.combo) return;
   sel.dataset.combo='1';
-  const cur=()=>list.find(o=>o.id===sel.value)||null;
+  const items=list||comboFromSelect(sel,hay);
+  const st=state||(()=>({k:'unknown'}));
+  const cur=()=>items.find(o=>o.id===sel.value)||null;
   const box=document.createElement('div'); box.className='combo';
   const inp=document.createElement('input');
   inp.type='text'; inp.setAttribute('role','combobox'); inp.setAttribute('autocomplete','off');
   inp.setAttribute('aria-expanded','false');
-  inp.placeholder='Type to find '+(label||'a product')+'\u2026';
+  inp.placeholder='Type to find '+(label||'one')+'\u2026';
   const menu=document.createElement('div'); menu.className='cbmenu';
   box.appendChild(inp); box.appendChild(menu);
   sel.style.display='none';
@@ -1773,14 +1786,14 @@ function wireCombo(root,key,list,state,label){
     const q=inp.value.trim().toLowerCase();
     const typed=!!q&&(!cur()||q!==cur().name.toLowerCase());
     const g={yes:[],unknown:[],no:[]};
-    list.forEach(o=>{
+    items.forEach(o=>{
       if(typed&&!comboMatch(o,q)) return;
-      const st=state(o)||{k:'unknown'};
+      const st2=st(o)||{k:'unknown'};
       /* Browsing respects the "only what fits" setting; typing does not, because a
          product asked for by name must be findable. It is still put last and said
          to be unlisted. */
-      if(st.k==='no'&&!typed&&o.id!==sel.value&&P.onlyFit!==false) return;
-      g[st.k==='any'?'yes':st.k].push({o,st});
+      if(st2.k==='no'&&!typed&&o.id!==sel.value&&P.onlyFit!==false) return;
+      g[st2.k==='any'?'yes':st2.k].push({o,st:st2});
     });
     const stated=g.yes.some(x=>x.st.k==='yes')||g.no.length;
     rows=[];
@@ -1788,16 +1801,16 @@ function wireCombo(root,key,list,state,label){
     const sect=(k,lab)=>{
       if(!g[k].length) return;
       if(stated) html+='<div class="cbg">'+esc(lab)+'</div>';
-      g[k].forEach(({o,st})=>{
+      g[k].forEach(({o,st:s2})=>{
         html+='<div class="cbo'+(o.id===sel.value?' cur':'')+'" data-i="'+rows.length+'">'
-          +esc(o.name)+(st.k==='no'?'<span class="why">'+esc(st.why||'not listed as fitting')+'</span>':'')
+          +esc(o.name)+(s2.k==='no'?'<span class="why">'+esc(s2.why||'not listed as fitting')+'</span>':'')
           +'</div>';
         rows.push(o.id);
       });
     };
     sect('yes','Fits this product'); sect('unknown','Not stated on either cutsheet');
     sect('no','Not listed as fitting');
-    if(!rows.length) html='<div class="cbnone">Nothing in the library matches that.</div>';
+    if(!rows.length) html='<div class="cbnone">Nothing here matches that.</div>';
     menu.innerHTML=html;
     at=rows.indexOf(sel.value);
     mark();
@@ -1813,7 +1826,9 @@ function wireCombo(root,key,list,state,label){
     sel.value=id;
     sel.dispatchEvent(new Event('input',{bubbles:true}));
   };
-  inp.onfocus=()=>{ inp.select(); openIt(); };
+  /* not on focus: a dialog autofocuses its first field, and a menu that opens
+     itself the moment the dialog appears is in the way rather than helpful */
+  inp.onfocus=()=>inp.select();
   inp.onclick=()=>{ if(!open) openIt(); };
   inp.oninput=()=>{ if(!open){ open=true; menu.classList.add('show'); } build(); };
   inp.onkeydown=e=>{
@@ -1876,6 +1891,12 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
       else ctl='<input type="text" data-k="'+f.k+'" value="'+esc(f.val??'')+'" placeholder="'+esc(f.ph||'')+'">';
       d.innerHTML=(f.label&&f.type!=='check'?'<label>'+esc(f.label)+'</label>':'')+ctl+(f.hint?'<div class="hint" style="margin-top:4px">'+esc(f.hint)+'</div>':'');
       host.appendChild(d);
+    });
+    /* a select long enough to need it can ask to be typed into */
+    fields.forEach(f=>{
+      if(f.type!=='select'||!f.find) return;
+      const sel=b.querySelector('[data-k="'+f.k+'"]');
+      if(sel) comboOn(sel,{label:f.findLabel||f.label,hay:f.hay});
     });
     if(note) b.insertAdjacentHTML('beforeend','<div class="hint">'+esc(note)+'</div>');
     const ft=$('#dlgF'); ft.innerHTML='<button class="btn" id="dlgX">'+esc(cancel)+'</button><button class="btn pri" id="dlgOK">'+esc(ok)+'</button>';
@@ -7504,7 +7525,8 @@ async function editMany(){
     {k:'r1',type:'row'},
     {k:'type',label:'Type',val:'',row:'r1',ph:KEEP},
     {k:'zone',label:'Zone #',val:'',row:'r1',ph:KEEP},
-    {k:'fixId',type:'select',label:'LED product',opts:fixOpts,val:''},
+    {k:'fixId',type:'select',label:'LED product',opts:fixOpts,val:'',find:true,
+      findLabel:'an LED product',hay:libHayFor('fix')},
     {k:'r2',type:'row'},
     {k:'cct',type:'select',label:'Colour temperature'+mixed,row:'r2',
       opts:keep.concat((cctU.length?cctU:CCT_ALL).map(k=>({v:k,t:k+'K'}))),val:''},
@@ -7521,8 +7543,10 @@ async function editMany(){
     {k:'wtype',type:'select',label:'Wire type',row:'r4',
       opts:keep.concat(WIRE_TYPES.map(x=>({v:x.v,t:x.t}))),val:''},
     {k:'r5',type:'row'},
-    {k:'chId',type:'select',label:'Channel / mounting',opts:chOpts,val:'',row:'r5'},
-    {k:'psuId',type:'select',label:'Power supply',opts:psOpts,val:'',row:'r5'},
+    {k:'chId',type:'select',label:'Channel / mounting',opts:chOpts,val:'',row:'r5',find:true,
+      findLabel:'a channel',hay:libHayFor('ch')},
+    {k:'psuId',type:'select',label:'Power supply',opts:psOpts,val:'',row:'r5',find:true,
+      findLabel:'a supply',hay:libHayFor('psu')},
     {k:'r6',type:'row'},
     {k:'dim',type:'select',label:'Dimming',row:'r6',
       opts:keep.concat(DIMS.map(d=>({v:d.v,t:d.t}))),val:''},
@@ -7540,7 +7564,7 @@ async function editMany(){
   const sets=Object.keys(r).filter(k=>k!=='unlock'&&!/^r\d$/.test(k)&&String(r[k]||'').trim()!=='');
   if(!sets.length&&!r.unlock){ toast('Nothing chosen, so nothing changed'); return; }
   snap('Edit '+list.length+' runs');
-  let locked=0;
+  let locked=0, dropped=0;
   list.forEach(t=>{
     if(t.approved){
       if(r.unlock) unapproveTreat(t); else { locked++; return; }
@@ -7551,11 +7575,15 @@ async function editMany(){
       else if(k==='type'||k==='zone'||k==='detail') t[k]=v.toUpperCase();
       else t[k]=v;
     });
+    /* a batch product change can leave a run holding an option that product is not
+       offered with, exactly as a single change can */
+    if(sets.includes('fixId')) dropped+=reconcileFix(t).length;
     if(V.fresh) V.fresh.delete(t.id);
   });
   renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty();
   toast(sets.length+' field'+(sets.length===1?'':'s')+' set on '+(list.length-locked)+' run'
-    +((list.length-locked)===1?'':'s')+(locked?' — '+locked+' left alone, still approved':''));
+    +((list.length-locked)===1?'':'s')+(locked?' — '+locked+' left alone, still approved':'')
+    +(dropped?' — '+dropped+' option'+(dropped===1?'':'s')+' the new product is not offered with unset':''));
 }
 /* ---- renumbering ----
    Runs get deleted and their zone numbers leave holes. Renumbering fills them,
@@ -8953,7 +8981,8 @@ async function editSpec(sp,fromTreat){
   const vs=varList(f);
   const r=await dlg({title:isNew?'Save a fixture spec':'Edit fixture spec',fields:[
     {k:'name',label:'Name it',val:sp.name,ph:'COVE \u2014 3000K warm, dry'},
-    {k:'fixId',type:'select',label:'LED product',opts:P.fix.map(x=>({v:x.id,t:x.name})),val:sp.fixId},
+    {k:'fixId',type:'select',label:'LED product',opts:P.fix.map(x=>({v:x.id,t:x.name})),val:sp.fixId,
+      find:true,findLabel:'an LED product',hay:libHayFor('fix')},
     {k:'r1',type:'row'},
     {k:'cct',type:'select',label:'Colour temperature',opts:cctOpts,val:sp.cct||'',row:'r1'},
     {k:'variant',type:'select',label:'Build / location',
@@ -8974,22 +9003,30 @@ async function editSpec(sp,fromTreat){
     {k:'r4',type:'row'},
     {k:'chId',type:'select',label:'Channel / mounting',
       opts:[{v:'',t:'\u2014 leave the run\u2019s own \u2014'}].concat(P.ch.map(x=>({v:x.id,t:x.name}))),
-      val:sp.chId,row:'r4'},
+      val:sp.chId,row:'r4',find:true,findLabel:'a channel',hay:libHayFor('ch')},
     {k:'psuId',type:'select',label:'Power supply',
       opts:[{v:'',t:'\u2014 leave the run\u2019s own \u2014'}].concat(P.psu.map(x=>({v:x.id,t:x.name}))),
-      val:sp.psuId,row:'r4'},
+      val:sp.psuId,row:'r4',find:true,findLabel:'a supply',hay:libHayFor('psu')},
     {k:'note',label:'Note',val:sp.note||''}
   ],ok:isNew?'Save it':'Save',
     note:'Everything a run is ordered with, in one place, so it is chosen once instead of on every run. '
-      +'Change the product and reopen this to see that product\u2019s own options. '
+      +'The option lists below are this product\u2019s \u2014 change the product and reopen to see the new one\u2019s, '
+      +'and anything it is not offered with is left unset when you save. '
       +'Channel and supply can be left alone if the spec is only about the fixture.'});
   if(!r) return null;
   snap(isNew?'Save fixture spec':'Edit fixture spec');
   Object.assign(sp,{name:r.name||'Unnamed spec',fixId:r.fixId,variant:String(r.variant||'').toUpperCase(),
     cct:+r.cct||0,feedIn:r.feedIn||'',feedOut:r.feedOut||'',wire:r.wire||'',wtype:r.wtype||'',
     dim:r.dim||'',chId:r.chId||'',psuId:r.psuId||'',note:r.note||''});
+  /* The option lists were built from the product this dialog opened on. Change the
+     product inside it and they are the wrong product's, so the same check a run gets
+     is applied here — a spec that cannot be ordered is worse than a run that cannot,
+     because it goes on to make more of them. */
+  const dropped=reconcileFix(sp);
   if(isNew) specs().push(sp);
   renderLib(); renderTreatments(); renderBom(); markDirty();
+  if(dropped.length) toast(P.fix.find(x=>x.id===sp.fixId).name+' is not offered with '
+    +dropped.join(', ')+' — left unset on the spec');
   return sp;
 }
 async function delSpec(sp){
@@ -11766,7 +11803,7 @@ function manualSections(){
       ['What fits what','Every sheet carries a compatibility block \u2014 a strip lists the extrusions it is made to sit in, an extrusion lists the strip families that fit it, a driver lists the LEDs it runs \u2014 and reading a sheet takes those lists too. On a run, the three lists then narrow each other: the products are grouped into what fits, what no sheet mentions either way, and what is listed as not fitting. Only the first two are offered, with a count of what is hidden and a button to show everything. Nothing is ever hidden that is already chosen, because a saved job must not change under a compatibility list that arrived afterwards. Where neither sheet states anything the run says the pairing could not be checked, rather than treating silence as a refusal \u2014 an incomplete list must not make a real product unreachable.'],
       ['Voltage','Not a compatibility list but electricity: a 24V supply on a 12V product is reported outright, and such a supply is never offered as fitting.'],
       ['Changing the product','The build codes, colour temperatures, connectors and wire options belong to the product, so a choice the new one is not offered with is dropped and named rather than silently swapped for something else.'],
-      ['Typing to find one','The product, channel and supply boxes on a run are typed into, not scrolled: the same matching as the library search, so a wattage, a colour temperature, a connector code or a part number finds a product and not only its name. Arrow keys move, Enter picks, Escape leaves it alone. Browsing shows what fits; typing searches everything, because a product asked for by name has to be findable \u2014 it is just put last and said to be unlisted. An approved run keeps its plain read-only boxes.'],
+      ['Typing to find one','The product, channel and supply boxes on a run, in batch edit and in the spec editor are typed into, not scrolled: the same matching as the library search, so a wattage, a colour temperature, a connector code or a part number finds a product and not only its name. Arrow keys move, Enter picks, Escape leaves it alone. Browsing shows what fits; typing searches everything, because a product asked for by name has to be findable \u2014 it is just put last and said to be unlisted. An approved run keeps its plain read-only boxes.'],
       ['Search','One box over the whole library, matching more than the name: wattage, colour temperature, connector codes, the order-code sample, the cutsheet revision, and whether something is still unverified. Each heading then reads "showing of total".'],
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
@@ -12260,7 +12297,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
-  fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboMatch,
+  fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboOn,comboMatch,libHayFor,
 
   defaultLib,libKey:LIBKEY,blank:BLANK,progOpen,progStep,progClose,prog:PROG,
 

@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.55.0**
+**Version 1.56.0**
 
 ## What it does
 
@@ -231,7 +231,8 @@ everything.
 
 ## Typing to find a product
 
-The LED product, channel and supply boxes on a run are **typed into, not scrolled**.
+The LED product, channel and supply boxes are **typed into, not scrolled** — on a
+run, in **batch edit**, and in the **saved-spec editor**.
 A library with a manufacturer's catalogue in it is too long to browse, so the same
 matching as the library search applies: a wattage, a colour temperature, a connector
 code or a part number finds a product, not only its name. Arrow keys move, Enter
@@ -241,6 +242,11 @@ picks, Escape leaves the run alone.
 name has to be findable, so one the cutsheets do not list still appears — put last,
 under a heading saying so, with the reason attached. An approved run keeps its plain
 read-only boxes.
+
+Changing the product in **batch edit** or in the **spec editor** gets the same check
+a run gets: options the new product is not offered with are left unset and named. A
+spec that cannot be ordered matters more than a run that cannot, because it goes on
+to make more of them.
 
 ## What fits what
 
