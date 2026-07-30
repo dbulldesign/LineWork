@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.61.0**
+**Version 1.62.0**
 
 ## What it does
 
@@ -79,6 +79,30 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   About. An installed copy opens from its own cache, so it also checks what is on
   the server: the chip turns amber with an arrow when a newer build is waiting,
   and the answer is always to close the app fully and reopen it.
+
+## The Power pane
+
+Circuits, drivers and the whips between them, read as **capacity rather than as
+numbers**: every row says what it carries against what it may carry, with a bar on
+the same measure, so one glance down the list finds the one in trouble.
+
+- a **circuit** names its panel, breaker and voltage, and whether it is inside the
+  80% continuous ceiling
+- a **driver on no circuit** is a dashed row, not a silent omission
+- a driver **past its ceiling** goes red and says to split the load or move up a
+  supply
+- the **wire size** is six buttons here rather than buried in Settings, because
+  changing it is how you find out whether a whip is long enough to matter — the drop
+  table underneath moves with it
+- clicking a driver **goes to it on the sheet**
+
+## Buying the tape
+
+The choice and its consequence together, at the top of the cut list: *ordered to
+length* or *by the reel*. Pick reels and the plan appears underneath, one card per
+product — how many reels, how much comes off them, the yield, what is left over and
+the longest piece still worth keeping. A product whose sheet lists no reels is never
+offered one, and it says so rather than showing an empty list.
 
 ## The schedule, the panel, and the wire
 

@@ -669,6 +669,7 @@ body.haspen #penFlag{display:inline}
     <button class="tab" data-pane="pBom">Cut list &amp; BOM</button>
     <button class="tab" data-pane="pCuts">Pieces</button>
     <button class="tab" data-pane="pMarks">Markups <span class="c" id="cMark">0</span></button>
+    <button class="tab" data-pane="pPower">Power</button>
     <button class="tab" data-pane="pIssues">Issues <span class="c" id="cIss">0</span></button>
   </div>
   <div class="pane on" id="pTreat">
@@ -714,6 +715,13 @@ body.haspen #penFlag{display:inline}
     <div class="sec"><div class="empty">Seeded with generic placeholder products. Replace the cut increment, watts per foot, maximum feed run, and stock lengths with the values from your actual manufacturer's cut sheet before issuing anything.</div></div>
   </div>
   <div class="pane" id="pBom">
+    <div class="sec"><h3>How the tape is bought</h3>
+      <div class="body" style="padding-bottom:8px">
+        <div id="buySeg" style="display:flex;gap:5px;flex-wrap:wrap"></div>
+        <div class="hint" style="margin-top:7px">Only a product whose own sheet lists reels is ever reeled, and a reel is bought whole — what is left on it is paid for.</div>
+      </div>
+      <div id="reelList"></div>
+    </div>
     <div class="sec"><h3>Estimate settings</h3><div class="body grid2">
       <div class="f"><label>Material waste %</label><input type="number" id="waste" value="5" min="0" max="50" step="1"></div>
       <div class="f"><label>Supply load ceiling %</label><input type="number" id="loadF" value="80" min="40" max="100" step="5"></div>
@@ -794,6 +802,30 @@ body.haspen #penFlag{display:inline}
     </div></div>
     <div class="sec"><div class="body" style="padding:0"><div class="tw"><table id="markTbl"></table></div></div></div>
     <div class="empty" id="markEmpty">Nothing marked up yet. Every markup lands here with its measurement, a status you can set, and any columns you add.</div>
+  </div>
+  <div class="pane" id="pPower">
+    <div class="sec"><h3>Branch circuits <span class="c" id="cCirc">0</span></h3>
+      <div class="body" style="padding-bottom:6px">
+        <div class="hint">Connected load grossed up by the supply&rsquo;s efficiency where the sheet publishes one. A breaker is not loaded past 80% continuously.</div>
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button class="btn sm" id="btnCirc">Circuits&hellip;</button>
+        </div>
+      </div>
+      <div id="circList"></div>
+      <div class="empty" id="circEmpty">No circuits yet. A circuit is the breaker feeding some of the drivers on this job.</div>
+    </div>
+    <div class="sec"><h3>Drivers placed <span class="c" id="cDrv">0</span></h3>
+      <div id="drvList"></div>
+      <div class="empty" id="drvEmpty">Place a driver on the sheet and assign runs to it.</div>
+    </div>
+    <div class="sec"><h3>Home-run wire &middot; voltage drop</h3>
+      <div class="body" style="padding-bottom:6px">
+        <div class="hint">DC resistance of copper at 20&nbsp;&deg;C, so a hot conductor is a little worse than shown.</div>
+        <div id="awgSeg" style="display:flex;gap:5px;margin-top:7px;flex-wrap:wrap;align-items:center"></div>
+      </div>
+      <div class="tw"><table id="vdTbl"></table></div>
+      <div class="empty" id="vdEmpty">No home runs to measure yet.</div>
+    </div>
   </div>
   <div class="pane" id="pIssues">
     <div class="sec"><div class="body" style="padding-bottom:6px">
@@ -877,7 +909,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.61.0';
+const APP_VER='1.62.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -6624,7 +6656,11 @@ function driverRows(){
   return P.ann.filter(a=>a.type==='driver').map(a=>{
     const d=driverLoad(a), doc=P.docs.find(x=>x.id===a.doc);
     return {a,name:a.name||'PS',supply:d.ps.name,watts:d.watts,cap:d.cap,pct:d.pct,home:d.home,
-      serves:d.serves,warn:d.warn,sheet:(doc?doc.name.replace(/\.pdf$/i,''):'—')+' p'+a.page};
+      serves:d.serves,warn:d.warn,over:d.over,
+      /* which runs it feeds, by tag, so the row says so without another lookup */
+      tags:(Array.isArray(a.serves)?a.serves:[]).map(id=>{ const t=P.treat.find(x=>x.id===id);
+        return t?tagOf(t):null; }).filter(Boolean),
+      sheet:(doc?doc.name.replace(/\.pdf$/i,''):'—')+' p'+a.page};
   }).sort((x,y)=>String(x.name).localeCompare(String(y.name),undefined,{numeric:true}));
 }
 async function placeNote(p){
@@ -7381,6 +7417,123 @@ function renderSheets(){
       openDoc(d.id,1,true); if(narrowUI()) closeRails(); };
     h.appendChild(el);
   });
+}
+/* ---- how the tape is bought ----
+   The choice and its consequence in one place: pick reels and the plan appears
+   underneath, per product, saying how many, how much comes off them and what is
+   left. Only a product whose sheet lists reels is offered one. */
+function renderBuy(){
+  const seg=$('#buySeg'); if(!seg) return;
+  seg.innerHTML=BUY_BY.map(o=>'<button class="btn sm'+(String(P.buyBy||'cut')===o.v?' pri':'')
+    +'" data-buy="'+o.v+'">'+esc(o.t)+'</button>').join('');
+  seg.querySelectorAll('[data-buy]').forEach(b=>{ b.onclick=()=>{
+    P.buyBy=b.dataset.buy==='reel'?'reel':'cut';
+    renderBom(); renderTreatments(); stats(); markDirty();
+  }; });
+  const el=$('#reelList');
+  const plan=reelPlan();
+  const reelable=P.fix.filter(f=>reelsOf(f).length);
+  el.innerHTML=plan.length?plan.map(r=>
+    '<div class="item" style="display:block;cursor:default">'
+    +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+      +'<div class="t">'+esc(r.name)+' <span style="color:var(--faint);font-weight:400">on '
+        +fmtRun(r.reel)+' reels</span></div>'
+      +'<div class="t" style="color:var(--amber)">'+r.n+' reel'+(r.n===1?'':'s')+'</div>'
+    +'</div>'
+    +'<div class="s" style="margin-top:4px">'+fmtRun(r.used)+' cut from '+fmtRun(r.bought)
+      +' · '+Math.round(r.yield*100)+'% yield</div>'
+    +'<div class="s">left over '+fmtRun(r.left)
+      +(r.bestOff>0?' · longest usable '+fmtRun(r.bestOff):'')+'</div>'
+    +(r.over.length?'<div class="s" style="color:var(--flag);margin-top:3px">'+r.over.length+' run'
+      +(r.over.length===1?'':'s')+' longer than a reel — not covered by these</div>':'')
+    +'</div>').join('')
+    :('<div class="empty">'+(P.buyBy==='reel'
+      ?(reelable.length?'Nothing measured yet on a product that comes on a reel.'
+        :'No product in this job lists reels on its cutsheet, so there is nothing to buy that way.')
+      :'Ordered to length — every run is cut to size and there are no reels to plan.')+'</div>');
+}
+/* ---- the power pane ----
+   Circuits, drivers and the whips between them, read as capacity rather than as
+   numbers in a table: every row says what it carries against what it may carry, and
+   the bar is the same measure so a glance across the list finds the one in trouble.
+   All of it comes from circuitData, driverRows and whipData — nothing is computed
+   twice. */
+function bar(pct,over){
+  const w=clamp(pct,0,100);
+  return '<div style="height:5px;background:var(--s3);border-radius:3px;overflow:hidden;margin:7px 0 5px">'
+    +'<div style="height:100%;width:'+w.toFixed(0)+'%;background:'+(over?'var(--flag)':'var(--ok)')+'"></div></div>';
+}
+function renderPower(){
+  const el=$('#circList'); if(!el) return;
+  const cd=circuitData();
+  $('#cCirc').textContent=cd.rows.length;
+  el.innerHTML=cd.rows.map(r=>{
+    const nm=(r.panel&&r.panel!=='—'?r.panel+'-':'')+r.name;
+    return '<div class="item" style="display:block;cursor:default">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+        +'<div class="t">'+esc(nm)+' <span style="color:var(--faint);font-weight:400">'+r.volts+'V · '+r.breaker+'A</span></div>'
+        +'<div class="t"'+(r.over?' style="color:var(--flag)"':'')+'>'+Math.round(r.va)+' VA '
+          +'<span style="color:var(--faint);font-weight:400">of '+Math.round(r.cap)+' usable</span></div>'
+      +'</div>'
+      +bar(r.pct,r.over)
+      +'<div class="s" style="display:flex;justify-content:space-between;gap:8px">'
+        +'<span>'+esc(r.marks)+'</span>'
+        +'<span'+(r.over?' style="color:var(--flag)"':'')+'>'
+          +(r.over?'Over the 80% continuous ceiling':'Within the 80% continuous ceiling')+'</span>'
+      +'</div>'
+      +(r.unknownEff?'<div class="s" style="margin-top:3px">'+r.unknownEff
+        +(r.unknownEff===1?' supply':' supplies')+' with no efficiency on file — losses not counted</div>':'')
+      +'</div>';
+  }).join('')
+  +cd.loose.map(a=>{
+    const d=driverLoad(a);
+    return '<div class="item" style="display:block;cursor:default;border-style:dashed">'
+      +'<div class="t">'+esc(a.name||'PS')+' <span style="color:var(--faint);font-weight:400">'
+      +esc(d.ps.name)+' · '+d.watts.toFixed(0)+' W · on no circuit</span></div></div>';
+  }).join('');
+  $('#circEmpty').style.display=(cd.rows.length||cd.loose.length)?'none':'';
+
+  const dl=$('#drvList'); const drv=driverRows();
+  $('#cDrv').textContent=drv.length;
+  dl.innerHTML=drv.map(r=>{
+    const pct=r.cap>0?r.watts/r.cap*100:0;
+    return '<div class="item" style="display:block" data-drv="'+esc(r.a.id)+'">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline">'
+        +'<div class="t">'+esc(r.name)+' <span style="color:var(--faint);font-weight:400">'+esc(r.supply)+'</span></div>'
+        +'<div class="t"'+(r.over?' style="color:var(--flag)"':'')+'>'+r.watts.toFixed(0)+' W '
+          +'<span style="color:var(--faint);font-weight:400">of '+(r.cap>0?Math.round(r.cap):'—')+' usable</span></div>'
+      +'</div>'
+      +(r.cap>0?bar(pct,r.over):'')
+      +'<div class="s">'+(r.tags&&r.tags.length?'feeds '+esc(r.tags.join(', ')):'nothing assigned yet')+'</div>'
+      +(r.over?'<div class="s" style="color:var(--flag);margin-top:3px">Over the 80% ceiling — split the load or move up a supply</div>':'')
+      +'</div>';
+  }).join('');
+  $('#drvEmpty').style.display=drv.length?'none':'';
+  /* goToAnn takes the markup, not its id — the row is a way onto the drawing */
+  dl.querySelectorAll('[data-drv]').forEach(e=>{ e.onclick=async()=>{
+    const a=P.ann.find(x=>x.id===e.dataset.drv);
+    if(!a) return;
+    await goToAnn(a);
+    V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList();
+  }; });
+
+  /* the wire size is the one input here, so it is a control rather than a setting
+     you have to go looking for */
+  const seg=$('#awgSeg'); const w=whipData();
+  seg.innerHTML=AWG.map(([g])=>'<button class="btn sm'+(g===w.gauge?' pri':'')+'" data-awg="'+g+'">'+g+'</button>').join('')
+    +'<span class="hint" style="margin-left:4px">limit '+w.vdMax+'%</span>';
+  seg.querySelectorAll('[data-awg]').forEach(b=>{ b.onclick=()=>{
+    P.whipAwg=b.dataset.awg; renderPower(); renderBom(); markDirty();
+    toast('Home-run wire set to '+b.dataset.awg+' AWG');
+  }; });
+  const rows=w.rows.filter(r=>r.per>0);
+  $('#vdTbl').innerHTML=rows.length?('<thead><tr><th>Driver</th><th>Run</th><th class="n">Whip</th>'
+    +'<th class="n">Amps</th><th class="n">Drop</th></tr></thead><tbody>'
+    +rows.map(r=>'<tr'+(r.vdOver?' style="color:var(--flag)"':'')+'><td>'+esc(r.drv)+'</td><td>'+esc(r.tag)+'</td>'
+      +'<td class="n">'+fmtLen(r.per)+'</td><td class="n">'+r.amps.toFixed(2)+' A</td>'
+      +'<td class="n">'+r.vpct.toFixed(1)+'%'+(r.vdOver?' ▲':'')+'</td></tr>').join('')
+    +'</tbody>'):'';
+  $('#vdEmpty').style.display=rows.length?'none':'';
 }
 /* ---- the markups list ----
    Every markup in the job as rows: page, kind, what it measures, a status, and
@@ -10059,6 +10212,7 @@ function renderCost(){
       +' item'+(c.unpriced===1?'':'s')+' have no rate set — they are excluded from the total, not counted as free.</td></tr>':'');
 }
 function renderBom(){
+  renderBuy(); renderPower();
   const c=$('#cutTbl');
   /* counts and other tallies can exist before anything is measured, so the BOM
      below still gets built — only the cut list has nothing to say */
@@ -11926,6 +12080,7 @@ $('#btnLibSave').onclick=()=>{
 $('#btnLibOpen').onclick=()=>$('#libInput').click();
 $('#libFind').oninput=e=>{ P.libFind=e.target.value; renderLib(); };
 $('#btnAddSpec').onclick=()=>editSpec(null);
+$('#btnCirc').onclick=manageCircuits;
 /* ---- where the library lives ----
    Worth saying plainly, because it is the first question anyone asks after
    importing a folder of cutsheets. */
@@ -12559,12 +12714,14 @@ function manualSections(){
     {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
     {rows:[
       ['Fixture schedule','The table a lighting drawing is issued with: one row per TYPE, in the printed report and as its own sheet in the workbook. Everything in it is already known — this only gathers it. A TYPE is meant to be one thing, so where two runs share a designation but not their product, colour temperature or driver, the row says "mixed" and names which field disagrees rather than picking one of them. A schedule that quietly reports one of two different products is worse than one that admits the drawing contradicts itself.'],
+      ['The Power pane','Circuits, drivers and the whips between them, read as capacity rather than as numbers: every row says what it carries against what it may carry, with a bar on the same measure so one glance across the list finds the one in trouble. A circuit names its panel, breaker and voltage; a driver on no circuit is a dashed row rather than a silent omission; a driver past its ceiling is red and says to split the load or move up a supply. The wire size sits here as six buttons rather than buried in Settings, because changing it is how you find out whether a whip is long enough to matter \u2014 the drop table underneath moves with it. Clicking a driver goes to it on the sheet.'],
       ['Circuits and the panel schedule','A driver has a load; a circuit is the breaker feeding it. Name a circuit against its panel, give it a breaker and a voltage, and put drivers on it from the driver\u2019s own panel. A breaker is not loaded past 80% continuously, so a 20 A circuit at 120V carries 1920 VA of lighting, and a circuit over that is reported with the figures. The load counted is what the drivers deliver; a driver is not perfectly efficient, so where a supply carries an efficiency the figure is grossed up by it and where it does not the row says the losses are not counted rather than pretending the two sides are equal. A driver on no circuit is reported too, because nothing then checks what feeds it.'],
       ['Voltage drop','Feed points come from the product\u2019s maximum run, which is the drop along the strip itself. The whip from the driver to the run is a different conductor and was not checked at all: its length is measured off the drawing and its load is known, so the only thing missing was the wire size. Set that and the allowance in Settings \u203a Drivers, and every whip reports its current, its drop in volts and as a percentage, and whether it is past the allowance. The figures use the DC resistance of copper at 20 \u00b0C, so a hot conductor is a little worse than reported.'],
       ['Home-run wire','A placed driver knows how far it is from each run it feeds, so that distance is measured off the sheet and multiplied by the whips that run needs \u2014 one per feed point, per identical run. Slack per whip, a spare percentage and a rate per foot are in Settings \u203a Drivers, and the total lands in the BOM and the cost. Where a run has several feed points the extra whips are taken at the same measured distance, and the row says so; a run on another sheet from its driver is counted but reported as not measured, never guessed.'],
       ['Dimming','A run is specified to dim a particular way and a supply either does that or it does not, so the protocols live on the supply and the run names the one it needs. A mismatch is flagged on the treatment and on the driver. Where a catalogue page does not state the protocols the list is left unset and the calculator says compatibility cannot be checked, rather than assuming it is fine. A driver carrying runs that want two different protocols is flagged too \u2014 one driver dims one way.'],
       ['Order codes','A part number is a fixed run of positions, and each product carries the format its own cutsheet prints — so a product without one gets no code rather than a guessed one. The positions are filled from the choices already made: build, colour temperature, both connectors, wire colour and type, and the piece\u2019s own cut length. Every physical piece therefore gets its own orderable code, on the Pieces tab and in both exports. A position that is not filled in comes out as ? and is named, so an incomplete code reads as incomplete instead of plausible. Rules the sheet states are enforced: CL2P only with bare-wire leads, and a barrel takes N/A for wire colour.'],
       ['Builds','Where a product comes in dry, damp and wet-location builds, the run picks one — and the wet build is a different product for takeoff: it runs shorter and it is dimmer, so it overrides the maximum length and the lumens. Leave it unspecified and the base figures are used, with the calculator saying so.'],
+      ['Buying the tape','The choice and its consequence in one place, at the top of the cut list: ordered to length, or by the reel. Pick reels and the plan appears under it, one card per product \u2014 how many reels, how much comes off them, the yield, what is left over and the longest piece still worth keeping. A product whose sheet lists no reels is never offered one, and it says so rather than showing an empty list.'],
       ['Reels','A cuttable tape is sold two ways: to length, or on the reel it is wound on — SW24/1.5 comes on 64 ft and 100 ft reels. Which you buy is a decision for the job, in Settings › Estimate › Buying, and only a product whose own sheet lists reels is ever reeled. Buying by the reel is the same problem as nesting off-cuts into bar stock, so the runs are nested into reels: the BOM says how many reels, how much is cut from them and what is left on the last one. A reel is bought whole, so the cost is the whole reel and not the footage used. A run longer than the reel it would come off is reported rather than quietly split.'],
       ['Clips','QTL supplies clips with the extrusion and sells extras separately, so the clips a run needs at the profile\u2019s own spacing are listed but not ordered, and only a spacing closer than the extrusion provides becomes a line to buy. Counting all of them was charging twice for the ones already in the box. The switch is on the channel, since it is not true of every manufacturer.'],
       ['Connectors','A run is ordered with a connector at each end. The product carries the codes it can be had with — which differ from one product to the next — and a treatment picks one for the feed end and one for the far end. A closed end is only offered as the outgoing one, because it cannot feed anything. Leave an end unset and the calculator says the order line is incomplete rather than choosing for you.'],
@@ -13098,6 +13255,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
 
   bendOf,bendCurves,bendCorners,
   reelPlan,reelsOf,reelable,closedOf,buyBy:BUY_BY,feedCodes:FEEDS.map(x=>x.v),
+  renderPower,renderBuy,driverRows,
+
 
 
 
