@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.49.0**
+**Version 1.50.0**
 
 ## What it does
 
@@ -228,6 +228,39 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Reading cutsheets
+
+A manufacturer's downloads page is a folder of PDFs, and every number in it is a
+number the takeoff needs. **Library › Read cutsheet PDFs** takes the whole folder
+at once:
+
+- each PDF is read **here in the browser** — nothing is uploaded anywhere
+- it is matched to a product by its **file name**, so `QTL_SW24_1_5.pdf` finds
+  SW24/1.5 and is not mistaken for SW24/3.0 — the longer agreement wins, and an
+  extrusion is also matched through the tail of its catalogue link
+- every row is listed as **file → product**, with the figures found underneath, so
+  a wrong match is unticked before it is applied rather than discovered later
+- sheets matching nothing can be **added as new items**, filed by what the sheet
+  says: watts or lumens per foot make an LED product, a stock length a channel, a
+  wattage a supply. A sheet that says only "24V" is not filed on a guess. An
+  encapsulated or neon product is created as a made-to-length fixture rather than
+  as cuttable tape, because getting that wrong makes the cut list nonsense.
+- by default the sheets **only fill in what is unset**, so a figure you have already
+  checked stands; one tick lets the sheets win instead
+- the whole reading is **one undo**
+
+What comes out: volts, watts and lumens per foot, the cut point, the maximum length
+(which is also the run per feed), CRI, the colour temperatures offered, the
+connector options, a lumens-per-CCT table, stock length and clip spacing, rated
+watts and Class 2 — plus the sheet's own revision, so a newer one can be spotted
+later. Reading a sheet marks that item checked and records which file it came from.
+
+This is the PDF's **text layer, not OCR**. A sheet whose figures are drawn as part
+of a picture, or a scan, has nothing to read: it is reported by name as
+unrecognised rather than guessed at, and *Read specs* on the individual item takes
+pasted text instead. Everything it does find is still worth checking against the
+sheet — it reads text, it does not understand it.
 
 ## Flatten
 

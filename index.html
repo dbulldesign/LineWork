@@ -661,9 +661,11 @@ body.haspen #penFlag{display:inline}
     <div class="sec"><h3>Power supplies <span class="c" id="cPsu">0</span></h3><div id="psuList"></div><div class="body"><button class="btn" id="btnAddPsu">Add supply</button></div></div>
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
       <input type="file" id="libInput" accept=".json,application/json" hidden>
+      <input type="file" id="specInput" accept="application/pdf" multiple hidden>
       <button class="btn" id="btnLibSave">Save library file</button>
       <button class="btn" id="btnLibOpen">Import library</button>
       <button class="btn" id="btnLibSeed">Load QTL starter library</button>
+      <button class="btn" id="btnLibBulk">Read cutsheet PDFs</button>
       <button class="btn" id="btnLibCheck">Check every cutsheet link</button>
       <div id="libSort" style="flex:1 1 100%"></div>
     </div><div class="hint" style="padding:0 12px 10px">Keep your company's products in one file and load it into every project.</div></div>
@@ -827,7 +829,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.49.0';
+const APP_VER='1.50.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -7819,7 +7821,10 @@ async function pdfText(file,maxPages){
   for(let i=1;i<=n;i++){
     const pg=await pdf.getPage(i);
     const tc=await pg.getTextContent();
-    out+=(tc.items||[]).map(x=>x.str).join(' ')+'\n';
+    /* pdf.js marks the item that ends a line. Keeping those breaks is what lets a
+       CCT / lumens-per-foot table be read out of the PDF and not only out of text
+       someone pasted — flattened to one line, every row runs into the next. */
+    out+=(tc.items||[]).map(x=>x.str+(x.hasEOL?'\n':'')).join(' ')+'\n';
   }
   return out;
 }
@@ -7871,10 +7876,17 @@ function readSpecs(text){
     out.lmByCct=lmByCct;
     if(out.lm==null&&lmByCct[3000]) out.lm=lmByCct[3000];
   }
+  /* clip spacing, written as a spacing or as a count per length */
+  if((m=t.match(/clips?\D{0,28}?(?:every|at|spaced?(?:\s*at)?)\s*(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)/i))) out.clip=num(m);
+  else if((m=t.match(/(?:mounting\s*)?clips?\s*(?:spacing|centres?|centers?|o\.?c\.?)\D{0,16}?(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)/i))) out.clip=num(m);
+  else if((m=t.match(/clips?\D{0,28}?(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)\s*(?:o\.?c\.?|on\s*cent(?:re|er)s?|apart)/i))) out.clip=num(m);
   if((m=t.match(/(?:stock|standard|supplied|available)\s*(?:in\s*)?lengths?\D{0,24}?(\d+(?:\.\d+)?)\s*(?:'|ft|feet)/i))) out.stock=num(m)*12;
   else if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(?:stock|lengths?)/i))) out.stock=num(m)*12;
   if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:W|watts?)\b(?!\s*(?:\/|per))/i))) out.watts=num(m);
   if(/class\s*2/i.test(t)) out.c2=true;
+  /* not a number, but it decides whether a new item is a cuttable tape or a
+     made-to-length fixture, and getting that wrong makes the cut list nonsense */
+  if(/\b(?:neon|encapsulated|encapsulation|flexible\s+fixture)\b/i.test(t)) out.form='fixture';
   return out;
 }
 /* the fields a given kind of item cares about */
@@ -7921,17 +7933,175 @@ async function readSpecsInto(kind,o,after){
       +'Check each number against the sheet before applying — this reads text, it does not understand it.'});
   if(!conf) return;
   snap('Cutsheet specs');
-  hits.forEach(([k])=>{ o[k]=k==='c2'?!!conf[k]:(+conf[k]||0); });
-  if(found.maxLen>0) o.feed=found.maxLen;      /* the same limit under its old name */
-  if(found.lmByCct) o.lmByCct=found.lmByCct;
-  if(found.ccts&&kind==='fix') o.ccts=found.ccts;
-  if(found.feeds&&kind==='fix') o.feeds=found.feeds;
-  if(found.rev) o.sheetRev=found.rev;
-  o.verified=true; o.checked=new Date().toISOString();
+  /* every number here was shown beside what it replaces and confirmed, so this
+     path overwrites; the bulk reader defaults to filling gaps only */
+  writeSpecs(kind,o,found,conf,true);
   renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
   if(after) after();
   toast('Applied '+hits.length+' value'+(hits.length===1?'':'s')+' from the cutsheet');
 }
+/* One place that puts parsed numbers onto a library item, so the single reader
+   and the bulk reader cannot drift apart. vals, when given, are numbers a person
+   has just confirmed and may have edited; otherwise the parse is used as-is.
+   Returns the fields it actually wrote. */
+function writeSpecs(kind,o,found,vals,overwrite){
+  const wrote=[];
+  const has=k=>o[k]!=null&&o[k]!==''&&o[k]!==0&&o[k]!==false;
+  (SPEC_FIELDS[kind]||[]).forEach(([k])=>{
+    const v=(vals&&vals[k]!=null)?vals[k]:found[k];
+    if(v==null||v===''||(k==='c2'&&!v)) return;
+    if(has(k)&&!overwrite) return;
+    o[k]=k==='c2'?!!v:(+v||0);
+    wrote.push(k);
+  });
+  if(found.maxLen>0&&(overwrite||!o.feed)) o.feed=found.maxLen;   /* the same limit under its old name */
+  if(kind==='fix'){
+    if(found.ccts&&(overwrite||!(o.ccts&&o.ccts.length))){ o.ccts=found.ccts.slice(); wrote.push('ccts'); }
+    if(found.feeds&&(overwrite||!(o.feeds&&o.feeds.length))){ o.feeds=found.feeds.slice(); wrote.push('feeds'); }
+    if(found.lmByCct&&(overwrite||!o.lmByCct)){ o.lmByCct=Object.assign({},found.lmByCct); wrote.push('lmByCct'); }
+  }
+  if(found.rev) o.sheetRev=found.rev;
+  if(wrote.length){ o.verified=true; o.checked=new Date().toISOString(); }
+  return wrote;
+}
+/* ---- reading a stack of cutsheets at once ----
+   The single-item reader is one PDF for one product, which is fine for one
+   product and hopeless for a manufacturer's whole downloads page. This takes
+   every PDF you pick, reads each one here in the browser, works out which
+   library item it belongs to from its file name, and shows one list to confirm
+   before anything changes. Matching on a file name is a guess, so the guess is
+   always shown against the file it came from and can be unticked. */
+const LIB_CATS=[['fix','LED product'],['ch','channel'],['psu','power supply']];
+const LIB_PFX={fix:'F_',ch:'C_',psu:'P_'};
+/* "QTL_SW24_1_5.pdf" and "SW24/1.5 · static white" both reduce to sw2415 */
+const normStem=s2=>String(s2||'').replace(/\.pdf$/i,'').replace(/^qtl[_\-\s]*/i,'')
+  .toLowerCase().replace(/[^a-z0-9]+/g,'');
+/* every string that could name this item in a file name */
+function itemStems(o){
+  const out=[];
+  const push=v=>{ const n=normStem(v); if(n.length>=3&&!out.includes(n)) out.push(n); };
+  push(String(o.id||'').replace(/^[FCP]_/,''));
+  push(String(o.name||'').split('\u00b7')[0]);   /* "SW24/1.5 · static white" → "SW24/1.5" */
+  push(o.name);
+  if(o.code&&o.code.stem) push(o.code.stem);
+  const u=sheetOf(o);                            /* ".../extrusions-thin/" → extrusionsthin */
+  if(u){ const m=/([^\/]+)\/?$/.exec(String(u).replace(/\.pdf$/i,'')); if(m) push(m[1]); }
+  return out;
+}
+/* the best library item for a file name. Longer agreement wins, so SW24/1.5 is
+   not beaten by SW24 — a two-character overlap would match half the catalogue. */
+function matchLibItem(fname){
+  const f=normStem(fname);
+  if(f.length<3) return null;
+  let best=null;
+  LIB_CATS.forEach(([kind])=>{
+    (P[kind]||[]).forEach(o=>{
+      itemStems(o).forEach(st=>{
+        let score=0;
+        if(st===f) score=100+st.length;
+        else if(f.indexOf(st)>=0) score=50+st.length;
+        else if(st.indexOf(f)>=0) score=40+f.length;
+        if(score&&(!best||score>best.score)) best={kind,item:o,score};
+      });
+    });
+  });
+  return best;
+}
+/* what a sheet with no matching item looks like it is */
+function guessKind(found){
+  if(found.wft>0||found.lm>0||found.ccts||found.lmByCct) return 'fix';
+  if(found.stock>0||found.clip>0) return 'ch';
+  if(found.watts>0) return 'psu';
+  return '';
+}
+/* the parse in one line, so a wrong match is obvious before it is applied */
+function foundSummary(kind,found){
+  const bits=(SPEC_FIELDS[kind]||[])
+    .filter(([k])=>found[k]!=null&&found[k]!==''&&!(k==='c2'&&!found.c2))
+    .map(([k,l])=>l.replace(/\s*\(in\)$/,'').replace(/, and run per feed/,'')
+      +' '+(k==='c2'?'yes':found[k]));
+  if(found.ccts) bits.push(found.ccts.length+' CCTs');
+  if(found.feeds) bits.push(found.feeds.length+' connectors');
+  if(found.lmByCct) bits.push('lumens table');
+  if(found.rev) bits.push('Rev-'+found.rev);
+  return bits.join(' · ')||'nothing recognised';
+}
+/* a file name is not a product name, but it is a better start than "New item" */
+const nameFromFile=n=>String(n||'').replace(/\.pdf$/i,'').replace(/^qtl[_\-\s]*/i,'')
+  .replace(/[_\-]+/g,' ').replace(/\s+/g,' ').trim()||'Unnamed product';
+async function bulkSpecs(files){
+  files=Array.from(files||[]);
+  if(!files.length) return;
+  if(!PDF_OK){ toast('The PDF engine did not load, so cutsheets cannot be read'); return; }
+  const r0=await dlg({title:'Read '+files.length+' cutsheet'+(files.length===1?'':'s'),fields:[
+    {k:'mode',type:'select',label:'Sheets that match nothing in the library',opts:[
+      {v:'add',t:'Add them as new library items'},
+      {v:'skip',t:'Skip them — only update products already here'}],val:'add'},
+    {k:'over',type:'check',cap:'Let the sheet overwrite figures already set',val:false}
+  ],ok:'Read them',
+    note:'Each PDF is read in this browser and matched to a product by its file name — nothing is uploaded. '
+      +'Left unticked, the sheets only fill in what is unset, so figures you have already checked stand.'});
+  if(!r0) return;
+  toast('Reading '+files.length+' sheet'+(files.length===1?'':'s')+'\u2026');
+  const rows=[],bad=[];
+  for(const f of files){
+    let found=null;
+    try{ found=readSpecs(await pdfText(f,6)); }
+    catch(e){ bad.push(f.name+' \u2014 could not be read'); continue; }
+    if(!Object.keys(found).some(k=>k!=='rev'&&k!=='form')){
+      bad.push(f.name+' \u2014 no specs recognised in its text'); continue; }
+    const m=matchLibItem(f.name);
+    if(m){ rows.push({f,found,kind:m.kind,item:m.item}); continue; }
+    const k=guessKind(found);
+    if(!k){ bad.push(f.name+' \u2014 nothing in it says what kind of product it is'); continue; }
+    if(r0.mode!=='add'){ bad.push(f.name+' \u2014 no product matches that file name'); continue; }
+    rows.push({f,found,kind:k,item:null});
+  }
+  const why=n=>bad.slice(0,n).join('  \u00b7  ')+(bad.length>n?'  \u00b7  and '+(bad.length-n)+' more':'');
+  if(!rows.length){
+    await dlg({title:'Nothing could be used',fields:[],ok:'Close',
+      note:(bad.length?why(12)+'.  ':'')
+        +'These are read from the PDF\u2019s text layer. A sheet whose figures are part of a picture, '
+        +'or a scan, has no text to read \u2014 use Read specs on the item and paste the block instead.'});
+    return;
+  }
+  const conf=await dlg({title:'Found in '+rows.length+' sheet'+(rows.length===1?'':'s'),
+    fields:rows.map((r,i)=>({k:'r'+i,type:'check',val:true,
+      cap:r.f.name+'  \u2192  '+(r.item?r.item.name:'new '+(LIB_CATS.find(c=>c[0]===r.kind)||[,'item'])[1]),
+      hint:foundSummary(r.kind,r.found)})),
+    ok:'Apply',
+    note:'Untick anything matched to the wrong product. This reads text, it does not understand it \u2014 '
+      +'check the figures against the sheet before you issue from them.'
+      +(bad.length?'  Not used: '+why(6)+'.':'')});
+  if(!conf) return;
+  snap('Read cutsheets');
+  let nUp=0,nNew=0,nF=0;
+  rows.forEach((r,i)=>{
+    if(!conf['r'+i]) return;
+    let o=r.item;
+    if(!o){
+      o={id:uid(LIB_PFX[r.kind]),name:nameFromFile(r.f.name),verified:false,
+        note:'Read from '+r.f.name};
+      if(r.kind==='fix') Object.assign(o,{kind:r.found.form==='fixture'?'fixture':'tape',
+        volts:24,wft:0,cut:0,feed:0,lm:0});
+      if(r.kind==='ch') Object.assign(o,{stock:0,clip:0});
+      if(r.kind==='psu') Object.assign(o,{volts:24,watts:0,c2:false});
+      P[r.kind].push(o); nNew++;
+    }else nUp++;
+    nF+=writeSpecs(r.kind,o,r.found,null,!!r0.over).length;
+    o.readFrom=r.f.name;
+  });
+  if(!nUp&&!nNew){ toast('Nothing applied'); return; }
+  renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast(nF+' figure'+(nF===1?'':'s')+' from '+(nUp+nNew)+' sheet'+(nUp+nNew===1?'':'s')
+    +(nNew?' \u2014 '+nNew+' new product'+(nNew===1?'':'s'):'')
+    +(nUp?' \u2014 '+nUp+' updated':''));
+}
+$('#btnLibBulk').onclick=()=>$('#specInput').click();
+$('#specInput').onchange=async e=>{
+  const fs=Array.from(e.target.files||[]); e.target.value='';
+  await bulkSpecs(fs);
+};
 /* the cutsheet row shared by all three editors */
 function sheetFields(o){
   return [
@@ -10770,6 +10940,8 @@ function manualSections(){
       ['Connectors','A run is ordered with a connector at each end. The product carries the codes it can be had with — which differ from one product to the next — and a treatment picks one for the feed end and one for the far end. A closed end is only offered as the outgoing one, because it cannot feed anything. Leave an end unset and the calculator says the order line is incomplete rather than choosing for you.'],
       ['check','Confirms a cutsheet link still resolves, and dates it. A response a browser is not allowed to read is reported as exactly that, not as good.'],
       ['read specs','Paste the cutsheet text or hand it the PDF: volts, watts and lumens per foot, the cut point, the maximum length and stock lengths are pulled out for you to confirm.'],
+      ['Read cutsheet PDFs','The same reader for a whole downloads folder at once. Pick every PDF, and each is read here in the browser \u2014 nothing is uploaded \u2014 matched to a product by its file name, and listed with what was found in it beside the product it landed on, so a wrong match is unticked before it is applied. Sheets matching nothing can be added as new items, with the kind taken from what the sheet says: watts or lumens per foot make an LED product, a stock length a channel, a wattage a supply. By default the figures only fill in what is unset, so numbers you have already checked stand; there is a tick to let the sheets win instead. Reading a sheet marks that item verified and records the revision it came from.'],
+      ['What it cannot read','This is the PDF\u2019s text layer, not OCR. A sheet whose figures are drawn as part of a picture, or a scan, has nothing to read \u2014 it is reported as unrecognised rather than guessed at, and Read specs on the item takes pasted text instead.'],
       ['Library files','Keep your company\u2019s products in one file and load it into every job, merging or replacing.'],
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
@@ -11261,6 +11433,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   annPath,annPathSeg,segArcOf,segArcPts,hasBulge,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
+  writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
   orderCode,cctCode,codeFmtOf,wireColours:WIRE_COLS,wireTypes:WIRE_TYPES,
   dimOptions:DIMS,dimLabel,dimsOf,driverLoad,whipData,revImpact,segHitsRect,rectsToPdf,
