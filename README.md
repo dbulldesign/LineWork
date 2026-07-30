@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.34.0**
+**Version 1.35.0**
 
 ## What it does
 
@@ -125,6 +125,19 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**Defaults by type.** A run's type says most of what it is, so the product, build,
+colour temperature, both connectors, wire colour and type, dimming, channel,
+supply and rounding are remembered against it. Name a new run's type and it
+arrives filled in — which is most of an order code already done. A saved default
+never overwrites a decision already made: applied by hand it fills only the
+blanks, and replacing an existing choice takes an explicit tick.
+
+**Editing several runs.** Tick runs in the list and set any field on all of them
+at once. Every field starts at *leave alone*, so nothing moves unless it is
+chosen, and the option lists are built from the picked runs' own products so
+nothing impossible is offered. Approved runs are skipped and counted rather than
+quietly unlocked.
 
 **Revision impact.** What moved is half the answer; which runs are in it is the
 other half. After a compare, every run whose markup crosses a changed area is

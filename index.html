@@ -604,6 +604,12 @@ body.haspen #penFlag{display:inline}
     </div></div>
     <div class="sec"><h3>Runs &amp; treatments <span class="c" id="cTreat">0</span></h3>
       <div class="body" style="display:flex;gap:6px"><button class="btn" id="btnAddTreat" style="flex:1">Add treatment</button><button class="btn" id="btnFromSel" title="Build from selected dimension">From selection</button></div>
+      <div class="body" id="tselBar" style="display:none;gap:6px;flex-wrap:wrap;padding-top:0">
+        <span class="hint" id="tselN" style="flex:1 1 100%"></span>
+        <button class="btn sm" id="btnTselEdit">Edit them together</button>
+        <button class="btn sm" id="btnTselAll">Select all shown</button>
+        <button class="btn sm" id="btnTselNone">Clear</button>
+      </div>
     </div>
     <div id="treatList"></div>
     <div class="empty" id="treatEmpty">A treatment is one lighting condition — a cove, a reveal, a toe-kick, a display shelf. Measure it on the drawing, then set its fixture, channel, and supply here.</div>
@@ -742,7 +748,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.34.0';
+const APP_VER='1.35.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1402,6 +1408,14 @@ function applyProject(d){
   if(P.base&&!Array.isArray(P.base.treat)) delete P.base;
   if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
+  /* remembered choices per run type: keys are types, values are field subsets */
+  if(!P.tdef||typeof P.tdef!=='object'||Array.isArray(P.tdef)) P.tdef={};
+  Object.keys(P.tdef).forEach(k=>{
+    const d=P.tdef[k];
+    if(!d||typeof d!=='object'||Array.isArray(d)||k!==tdefKey(k)){ delete P.tdef[k]; return; }
+    Object.keys(d).forEach(f=>{ if(!TDEF_KEYS.includes(f)) delete d[f]; });
+    if(!Object.keys(d).length) delete P.tdef[k];
+  });
   P.fix.forEach(f=>{
     f.maxLen=Math.max(0,+f.maxLen||0);
     /* the longest run and the run per feed are one limit; older files may carry
@@ -4973,12 +4987,57 @@ function calc(t){
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
+/* ---- defaults by type ----
+   A run's type says most of what it is: in a given office a cove is always the
+   same product, build, colour temperature, connectors and dimming. Those choices
+   are remembered against the type, so naming a new run's type fills it in. They
+   are only ever applied to a run nobody has edited yet — a saved default never
+   overwrites a decision already made. */
+const TDEF_KEYS=['fixId','chId','psuId','cct','variant','feedIn','feedOut','wire','wtype','dim','round','clip'];
+const tdefKey=type=>String(type||'').trim().toUpperCase();
+const tdefFor=type=>{ const k=tdefKey(type); return (k&&P.tdef&&P.tdef[k])||null; };
+function saveTdef(t){
+  const k=tdefKey(t.type);
+  if(!k){ toast('Give the run a type first — the default is remembered against it'); return false; }
+  P.tdef=P.tdef||{};
+  const d={};
+  TDEF_KEYS.forEach(f=>{ const v=t[f]; if(v!==''&&v!=null&&!(f==='cct'&&!v)) d[f]=v; });
+  P.tdef[k]=d;
+  markDirty();
+  toast(Object.keys(d).length+' choices remembered for '+k);
+  return true;
+}
+function clearTdef(type){
+  const k=tdefKey(type);
+  if(P.tdef&&P.tdef[k]){ delete P.tdef[k]; markDirty(); toast('Default for '+k+' forgotten'); return true; }
+  return false;
+}
+/* returns how many fields it filled in */
+function applyTdef(t,force){
+  const d=tdefFor(t.type);
+  if(!d) return 0;
+  let n=0;
+  TDEF_KEYS.forEach(f=>{
+    if(!(f in d)) return;
+    if(!force){
+      const cur=t[f];
+      /* only what is still blank — a zero CCT means "not chosen", not 0K */
+      const blank=cur===''||cur==null||(f==='cct'&&!cur);
+      if(!blank) return;
+    }
+    if(t[f]!==d[f]){ t[f]=d[f]; n++; }
+  });
+  return n;
+}
 function newTreat(annId){
   snap();
   const t={id:uid('t_'),tag:'L-'+pad(P.seq++),type:'',zone:'',name:'New treatment',room:'',docId:V.docId,page:V.page,
     annId:annId||null,manual:0,qty:1,feedOv:0,cutLock:0,fixId:P.fix[0].id,chId:P.ch[0].id,psuId:P.psu[1]?P.psu[1].id:P.psu[0].id,
-    round:'',clip:'',shop:'',detail:'',cct:0,feed:'',notes:''};
-  P.treat.push(t); markDirty(); return t;
+    round:'',clip:'',shop:'',detail:'',cct:0,variant:'',feedIn:'',feedOut:'',wire:'',wtype:'',dim:'',notes:''};
+  P.treat.push(t);
+  /* until something on it is edited, naming its type may fill it in */
+  V.fresh=V.fresh||new Set(); V.fresh.add(t.id);
+  markDirty(); return t;
 }
 function treatFromAnn(a){
   const t=newTreat(a.id); a.treat=t.id;
@@ -4991,6 +5050,93 @@ function openTreat(id,focus){
   const el=$('.card[data-id="'+id+'"]'); if(el){ el.scrollIntoView({block:'nearest'}); if(focus){ const i=el.querySelector('[data-t="name"]'); if(i){i.focus();i.select();} } }
 }
 
+/* ---- editing several runs at once ----
+   There are a dozen choices on a run now and a job has dozens of runs, so the
+   same product, build, connectors and dimming get set over and over. Every field
+   here defaults to leaving what is there alone: nothing is changed unless it is
+   chosen. */
+const TSEL=()=>{ V.tsel=V.tsel||new Set(); return V.tsel; };
+const tselList=()=>P.treat.filter(t=>TSEL().has(t.id));
+function syncTselBar(){
+  const bar=$('#tselBar'); if(!bar) return;
+  const n=tselList().length;
+  bar.style.display=n?'flex':'none';
+  const l=$('#tselN'); if(l) l.textContent=n+' run'+(n===1?'':'s')+' picked';
+}
+const KEEP='\u2014 leave alone \u2014';
+async function editMany(){
+  const list=tselList();
+  if(list.length<2){ toast('Pick at least two runs first'); return; }
+  const keep=[{v:'',t:KEEP}];
+  const fixOpts=keep.concat(P.fix.map(f=>({v:f.id,t:f.name})));
+  const chOpts=keep.concat(P.ch.map(c=>({v:c.id,t:c.name})));
+  const psOpts=keep.concat(P.psu.map(p=>({v:p.id,t:p.name})));
+  /* the union of what the picked runs' products offer, so nothing impossible is
+     offered — and if they disagree, the field says so instead of silently
+     narrowing */
+  const prods=[...new Set(list.map(t=>t.fixId))].map(id=>P.fix.find(f=>f.id===id)).filter(Boolean);
+  const uni=(get)=>[...new Set(prods.flatMap(f=>get(f)||[]))];
+  const cctU=uni(f=>f.ccts).sort((a,b)=>a-b);
+  const varU=uni(f=>varList(f).map(v=>v.c));
+  const feedU=uni(f=>f.feeds);
+  const mixed=prods.length>1?' (picked runs use '+prods.length+' products)':'';
+  const r=await dlg({title:'Edit '+list.length+' runs',fields:[
+    {k:'r1',type:'row'},
+    {k:'type',label:'Type',val:'',row:'r1',ph:KEEP},
+    {k:'zone',label:'Zone #',val:'',row:'r1',ph:KEEP},
+    {k:'fixId',type:'select',label:'LED product',opts:fixOpts,val:''},
+    {k:'r2',type:'row'},
+    {k:'cct',type:'select',label:'Colour temperature'+mixed,row:'r2',
+      opts:keep.concat((cctU.length?cctU:CCT_ALL).map(k=>({v:k,t:k+'K'}))),val:''},
+    {k:'variant',type:'select',label:'Build / location'+mixed,row:'r2',
+      opts:keep.concat(varU.map(c=>({v:c,t:c}))),val:''},
+    {k:'r3',type:'row'},
+    {k:'feedIn',type:'select',label:'Connector in',row:'r3',
+      opts:keep.concat(feedU.filter(feedIsFeed).map(v=>({v,t:feedLabel(v)}))),val:''},
+    {k:'feedOut',type:'select',label:'Connector out',row:'r3',
+      opts:keep.concat(feedU.map(v=>({v,t:feedLabel(v)}))),val:''},
+    {k:'r4',type:'row'},
+    {k:'wire',type:'select',label:'Wire colour',row:'r4',
+      opts:keep.concat(WIRE_COLS.map(x=>({v:x.v,t:x.t}))),val:''},
+    {k:'wtype',type:'select',label:'Wire type',row:'r4',
+      opts:keep.concat(WIRE_TYPES.map(x=>({v:x.v,t:x.t}))),val:''},
+    {k:'r5',type:'row'},
+    {k:'chId',type:'select',label:'Channel / mounting',opts:chOpts,val:'',row:'r5'},
+    {k:'psuId',type:'select',label:'Power supply',opts:psOpts,val:'',row:'r5'},
+    {k:'r6',type:'row'},
+    {k:'dim',type:'select',label:'Dimming',row:'r6',
+      opts:keep.concat(DIMS.map(d=>({v:d.v,t:d.t}))),val:''},
+    {k:'round',type:'select',label:'Cut rounding',row:'r6',
+      opts:keep.concat([{v:'down',t:'Round down'},{v:'near',t:'Nearest'},{v:'up',t:'Round up'}]),val:''},
+    {k:'r7',type:'row'},
+    {k:'shop',type:'select',label:'Millwork / shop drawing',row:'r7',
+      opts:keep.concat(P.docs.map(d=>({v:d.id,t:d.name}))),val:''},
+    {k:'detail',label:'Detail reference',val:'',row:'r7',ph:KEEP},
+    {k:'clip',label:'Clip spacing',val:'',ph:KEEP},
+    {k:'unlock',type:'check',cap:'Unlock and unapprove the approved ones so these changes take',val:false}
+  ],ok:'Apply to '+list.length,
+    note:list.map(t=>tagOf(t)).join(', ')+'. Anything left as “leave alone” is not touched.'});
+  if(!r) return;
+  const sets=Object.keys(r).filter(k=>k!=='unlock'&&!/^r\d$/.test(k)&&String(r[k]||'').trim()!=='');
+  if(!sets.length&&!r.unlock){ toast('Nothing chosen, so nothing changed'); return; }
+  snap('Edit '+list.length+' runs');
+  let locked=0;
+  list.forEach(t=>{
+    if(t.approved){
+      if(r.unlock) unapproveTreat(t); else { locked++; return; }
+    }
+    sets.forEach(k=>{
+      const v=String(r[k]).trim();
+      if(k==='cct') t.cct=+v||0;
+      else if(k==='type'||k==='zone'||k==='detail') t[k]=v.toUpperCase();
+      else t[k]=v;
+    });
+    if(V.fresh) V.fresh.delete(t.id);
+  });
+  renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty();
+  toast(sets.length+' field'+(sets.length===1?'':'s')+' set on '+(list.length-locked)+' run'
+    +((list.length-locked)===1?'':'s')+(locked?' — '+locked+' left alone, still approved':''));
+}
 function treatMatch(t,q){
   if(!q) return true;
   const r=calc(t), d=P.docs.find(x=>x.id===t.docId);
@@ -5021,6 +5167,7 @@ function renderTreatments(){
   const ts=$('#treatSort'); if(ts){ ts.innerHTML=sortSelect('treat'); wireSortSelects(ts); }
   $('#cTreat').textContent=q?shown.length+'/'+P.treat.length:P.treat.length;
   $('#treatEmpty').style.display=P.treat.length?'none':'';
+  if(V.tsel) [...V.tsel].forEach(id=>{ if(!P.treat.some(t=>t.id===id)) V.tsel.delete(id); });
   const fh=$('#treatFindHint');
   if(fh){ fh.style.display=q?'':'none';
     fh.textContent=q?(shown.length?'Showing '+shown.length+' of '+P.treat.length+' treatments':'Nothing matches "'+q+'"'):''; }
@@ -5032,7 +5179,9 @@ function renderTreatments(){
     const psOpts=P.psu.map(p=>'<option value="'+p.id+'"'+(p.id===t.psuId?' selected':'')+'>'+esc(p.name)+'</option>').join('');
     const shopOpts='<option value="">— none —</option>'+P.docs.map(d=>'<option value="'+d.id+'"'+(d.id===t.shop?' selected':'')+'>'+esc(d.name)+'</option>').join('');
     el.innerHTML=
-      '<div class="hd"><span class="tag">'+esc(tagOf(t))+'</span>'
+      '<div class="hd"><input type="checkbox" class="tsel" data-tsel="'+t.id+'"'
+        +(((V.tsel&&V.tsel.has(t.id))?' checked':''))+' title="Pick for editing together" style="width:auto;flex:0 0 auto">'
+      +'<span class="tag">'+esc(tagOf(t))+'</span>'
       +'<span class="nm">'+(t.approved?'\ud83d\udd12 ':'')
         +((t.rev&&t.rev.n)?'<span class="tag" style="border-color:var(--flag);color:var(--flag)">REV '
           +esc(t.rev.n)+'</span> ':'')
@@ -5102,6 +5251,9 @@ function renderTreatments(){
         +(t.annId?'<button class="btn sm" data-a="loc">Show on drawing</button><button class="btn sm" data-a="unlink">Unlink dimension</button>'
                  :'<button class="btn sm" data-a="link">Link selected dimension</button>')
         +'<button class="btn sm" data-a="dup">Duplicate</button>'
+        +'<button class="btn sm" data-a="tdef" title="Remember this run\u2019s product, build, connectors, wire, dimming and rounding for every '+esc(tdefKey(t.type)||'TYPE')+' run">'
+          +(tdefFor(t.type)?'Update':'Save')+' '+esc(tdefKey(t.type)||'TYPE')+' default</button>'
+        +(tdefFor(t.type)?'<button class="btn sm" data-a="tapply">Apply it here</button>':'')
         +'<button class="btn sm" data-a="across">Copy to sheets…</button>'
         +'<button class="btn sm" data-a="del" style="color:var(--flag);margin-left:auto">Delete</button>'
       +'</div></div>';
@@ -5146,6 +5298,19 @@ function renderTreatments(){
           t[k]=up;
         }
         else t[k]=inp.value;
+        /* the type is what defaults hang off, so name it and a run nobody has
+           touched yet is filled in; anything else counts as touching it */
+        let filled=0;
+        if(k==='type'){ if(V.fresh&&V.fresh.has(t.id)) filled=applyTdef(t); }
+        else if(V.fresh) V.fresh.delete(t.id);
+        if(filled){
+          renderTreatments(); renderBom(); drawOverlay(); stats(); markDirty();
+          openTreat(t.id);
+          const inp2=$('.card[data-id="'+t.id+'"] [data-t="type"]');
+          if(inp2){ inp2.focus(); try{ inp2.setSelectionRange(inp2.value.length,inp2.value.length); }catch(_){} }
+          toast(filled+' field'+(filled===1?'':'s')+' filled from the '+tdefKey(t.type)+' default');
+          return;
+        }
         const rr=calc(t);
         el.querySelector('.nm').textContent=t.name||'Untitled';
         el.querySelector('.tag').textContent=tagOf(t);
@@ -5157,11 +5322,29 @@ function renderTreatments(){
       };
       if(inp.tagName==='SELECT') inp.onchange=inp.oninput;
     });
+    const cb=el.querySelector('[data-tsel]');
+    if(cb) cb.onclick=e=>{
+      e.stopPropagation();                       /* the header also opens the card */
+      if(cb.checked) TSEL().add(t.id); else TSEL().delete(t.id);
+      syncTselBar();
+    };
     $$('[data-a]',el).forEach(b=>b.onclick=async()=>{
       const a=b.dataset.a;
       if(a==='del'){ snap(); if(t.annId){const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat;}
         P.ann.forEach(x=>{ if(x.type==='driver'&&Array.isArray(x.serves)) x.serves=x.serves.filter(id=>id!==t.id); });
         P.treat=P.treat.filter(x=>x.id!==t.id); renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); stats(); markDirty(); }
+      if(a==='tdef'){ snap('Type default'); if(saveTdef(t)) renderTreatments(); return; }
+      if(a==='tapply'){
+        const r2=await dlg({title:'Apply the '+tdefKey(t.type)+' default',fields:[
+          {k:'force',type:'check',cap:'Overwrite choices already made on this run',val:false}
+        ],ok:'Apply',note:'Without that box only fields still blank are filled in.'});
+        if(!r2) return;
+        snap('Apply '+tdefKey(t.type)+' default');
+        const n=applyTdef(t,!!r2.force);
+        renderTreatments(); renderBom(); drawOverlay(); stats(); markDirty(); openTreat(t.id);
+        toast(n?n+' field'+(n===1?'':'s')+' set from the default':'Nothing to change');
+        return;
+      }
       if(a==='dup'){ snap(); const c2=clone(t); c2.id=uid('t_'); c2.tag='L-'+pad(P.seq++); c2.zone=''; c2.annId=null; c2.manual=lenOf(t);
         unapproveTreat(c2);              /* a copy has not been approved */ P.treat.push(c2); renderTreatments(); renderBom(); stats(); markDirty(); openTreat(c2.id); }
       if(a==='ap'){
@@ -5201,6 +5384,7 @@ function renderTreatments(){
     });
     h.appendChild(el);
   });
+  syncTselBar();
   stats();
 }
 /* Repeating floors: copy a treatment — and the markup it measures — onto other
@@ -7496,6 +7680,13 @@ $('#codeMode').innerHTML=CODE_MODES.map(m=>'<option value="'+m.v+'">'+m.t+'</opt
 $('#codeMode').onchange=e=>{ P.code=e.target.value; renderCodeKey(); drawOverlay(); renderAnnList(); markDirty(); };
 $('#treatFind').oninput=()=>renderTreatments();
 $('#treatFind').onsearch=()=>renderTreatments();
+$('#btnTselEdit').onclick=editMany;
+$('#btnTselAll').onclick=()=>{
+  const q=(($('#treatFind')||{}).value||'').trim();
+  P.treat.filter(t=>treatMatch(t,q)).forEach(t=>TSEL().add(t.id));
+  renderTreatments();
+};
+$('#btnTselNone').onclick=()=>{ TSEL().clear(); renderTreatments(); };
 $('#btnAddTreat').onclick=()=>{ const t=newTreat(null);
   if($('#treatFind').value){ $('#treatFind').value=''; }   /* never hide the one just added */
   renderTreatments(); renderBom(); openTreat(t.id,true); };
@@ -7813,6 +8004,8 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Defaults by type','A run\u2019s type says most of what it is, so the product, build, colour temperature, connectors, wire, dimming, channel, supply and rounding are remembered against it. Name a new run\u2019s type and it arrives filled in \u2014 which is most of an order code done. A saved default never overwrites a decision already made: applied by hand it fills only the blanks, and replacing a choice takes an explicit tick.'],
+      ['Editing several runs','Tick the runs in the list and set any field on all of them at once. Every field starts at leave alone, so nothing moves unless it is chosen, and the option lists come off the picked runs\u2019 own products so nothing impossible is offered. Approved runs are skipped and counted rather than quietly unlocked.'],
       ['Revision impact','What moved is half the answer; which runs are in it is the other half. After a compare, every run whose markup crosses a changed area is listed \u2014 tested segment against rectangle, so an L-shaped cove is not blamed for a change in a corner it never enters. Flag them for a re-measure and, where they were approved, withdraw the approval in the same step. The flag shows as a REV badge on the run, warns in the Calculated panel, is searchable, and travels into the cut list and the report. Approving a run clears it, because approving is the re-measure the flag asked for.'],
       ['Busy sheets','Hide markups by kind, colour them automatically by TYPE or Zone, sort every list and table, and filter treatments.'],
     ]}]},
@@ -8185,7 +8378,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   probeInsets,checkForUpdate,syncVerTag,update:UPDATE,
   keys:KEYS,touchGestures:TOUCH,manualSections,manualHtml,manualPrintHtml,keyTableHtml,
   openManual,closeManual,printManual,
-  approveTreat,unapproveTreat,apDrift,
+  approveTreat,unapproveTreat,editMany,tdefFor,saveTdef,clearTdef,applyTdef,tdefKeys:TDEF_KEYS,
+  tsel:()=>V.tsel||new Set(),apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
