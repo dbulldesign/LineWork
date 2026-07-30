@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.25.0**
+**Version 1.26.0**
 
 ## What it does
 
@@ -117,8 +117,15 @@ The library is seeded with **QTL** products — the static white and high-effica
 linear strips, the Q-CAP encapsulated flexible fixtures, the aluminium extrusions
 and the DC power supplies — each carrying a link to its own page on qtl.lighting.
 
-A product transcribed from its actual spec sheet carries everything the sheet
-publishes: the cut point, watts per foot, **lumens per foot at every CCT**, CRI,
+A product is described in seven terms, in this order: **name, voltage, watts per
+foot, the colour temperatures it is offered in** (a multi-select), **minimum cut
+increment, maximum length**, and **the feed options** it can be ordered with (BW
+bare wire, BRL barrel, CLS closed end, CON6, CON24 — also a multi-select). A
+treatment then picks one colour temperature and one feed from what that product
+actually offers, and the light output follows the CCT.
+
+A product transcribed from its actual spec sheet also carries everything else the
+sheet publishes: the cut point, watts per foot, **lumens per foot at every CCT**, CRI,
 the longest single run, the IP variants with their own maxima and outputs, and the
 sheet's revision date. A treatment then picks its colour temperature from that
 table and the light output follows. SW24/1.5 is the worked example.
