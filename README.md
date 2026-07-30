@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.60.0**
+**Version 1.61.0**
 
 ## What it does
 
@@ -193,6 +193,35 @@ drawing says "no text layer" rather than inventing a number.
 Drawings are kept in this browser (IndexedDB), so reopening a job needs no
 re-import. The project file is still the portable copy — it never carries the
 PDFs — and the store can be turned off, sized and cleared in Settings.
+
+## Workspaces
+
+How the window is arranged, under one name. **Settings › View** carries the rows —
+Workspace, Appearance, Tools, Takeoff panel, Density — and **◫** in the titleblock
+or `⌘⇧W` opens the manager.
+
+Three palettes, each with a light and a dark:
+
+- **Bench** — the warm drafting palette this app has always had
+- **Paper** — the sheet is white, so the app is too; one ink accent
+- **Slate** — neutral, so the amber is the only warm thing on screen
+
+And two layout switches: tools **across the top** or standing up as a **60 px rail**
+down the side, and the takeoff **beside the sheet** or as a **full-width drawer**
+under it, where a run table can be read across. The drawer folds to its tab bar.
+
+The arrangement travels **in the project**, so a job reopens the way it was left.
+Named workspaces live **beside** the projects, being an office preference rather than
+job data, and export as a `.linework-view.json` — which holds only how the window is
+arranged, never sheets, markups or runs, so applying one can never change a takeoff.
+
+Light and dark stay owned by the app: the Appearance rows drive the same `☀︎` button,
+so the glyph, the body class and the setting cannot disagree.
+
+The palettes live in `ui/linework-ui.css` and only re-point the variables the main
+stylesheet already uses; `ui/linework-ui.js` sets the attributes that choose between
+them and defines no colour of its own. Both are additive — with them absent the app
+is exactly what it was.
 
 ## How the sheet is drawn
 

@@ -2,10 +2,12 @@
    Cache-first for the app's own files so an installed copy opens with no
    network; anything else falls through to the network untouched.
    Bump CACHE when the shell changes so old copies are evicted. */
-const CACHE = 'linework-v1.60.0';
+const CACHE = 'linework-v1.61.0';
 const SHELL = [
   './',
   './index.html',
+  './ui/linework-ui.css',
+  './ui/linework-ui.js',
   './vendor/pdf.min.js',
   './vendor/pdf.worker.min.js',
   './manifest.webmanifest',

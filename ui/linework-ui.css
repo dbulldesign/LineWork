@@ -1,0 +1,233 @@
+/* ============================================================
+   LineWork UI — palettes, layouts and density
+   Drop-in. Load AFTER the <style> block in index.html:
+       <link rel="stylesheet" href="ui/linework-ui.css">
+
+   Nothing here applies until linework-ui.js sets the attributes on <body>,
+   and the defaults it writes are Bench + the theme you already had — so the
+   file can sit in the repo doing nothing until you switch a workspace on.
+
+   Every block below only re-points the variables index.html already uses, so
+   no existing rule has to be touched or duplicated.
+   ============================================================ */
+
+/* ---------- Bench — the palette LineWork has today ---------- */
+body[data-ws="bench"][data-mode="dark"]{
+  --bg:#141210; --s1:#1C1916; --s2:#241F1A; --s3:#2E2822; --s4:#3A322A;
+  --line:#3B342C; --line2:#4C4238;
+  --txt:#EFE8DB; --dim:#A79B8B; --faint:#6E6357;
+  --amber:#F2A93B; --amber2:#7A5518;
+  --measure:#5AB6DE; --link:#C77BD6; --flag:#E4694F; --ok:#8FC46A;
+  --paper:#fbfaf7; --ovl:#171512;
+}
+body[data-ws="bench"][data-mode="light"]{
+  --bg:#EDEAE3; --s1:#F7F5F0; --s2:#EFEBE3; --s3:#E3DED4; --s4:#D6CFC2;
+  --line:#CFC7B8; --line2:#B4AA97;
+  --txt:#211D18; --dim:#5C5246; --faint:#857B6B;
+  --amber:#8A5D0C; --amber2:#D9B36A;
+  --measure:#1D6E92; --link:#8A3E9B; --flag:#A83318; --ok:#3B7420;
+  --paper:#ffffff; --ovl:#FFFFFF;
+}
+
+/* ---------- Paper — the sheet is white, so the app is too ---------- */
+body[data-ws="paper"][data-mode="light"]{
+  --bg:#E6E2D8; --s1:#FFFFFF; --s2:#F3EEE4; --s3:#E9E2D5; --s4:#DED5C4;
+  --line:#E2DCD1; --line2:#D8D1C5;
+  --txt:#1A1815; --dim:#5C5246; --faint:#8C857C;
+  --amber:#A85B12; --amber2:#E0C9A8;
+  --measure:#1D6E92; --link:#8A3E9B; --flag:#A83318; --ok:#3B7420;
+  --paper:#ffffff; --ovl:#FFFFFF;
+}
+body[data-ws="paper"][data-mode="dark"]{
+  --bg:#151412; --s1:#201F1C; --s2:#2A2825; --s3:#35322E; --s4:#423F3A;
+  --line:#34322E; --line2:#423F3A;
+  --txt:#EDEAE3; --dim:#A8A29A; --faint:#837D75;
+  --amber:#E0913A; --amber2:#6E4A16;
+  --measure:#6BB6D8; --link:#C08AD0; --flag:#E4694F; --ok:#8FC46A;
+  --paper:#fbfaf7; --ovl:#1A1917;
+}
+
+/* ---------- Slate — neutral, so the amber is the only warm thing ---------- */
+body[data-ws="slate"][data-mode="light"]{
+  --bg:#E4E7EA; --s1:#FFFFFF; --s2:#F1F3F5; --s3:#E7EAED; --s4:#DBE0E4;
+  --line:#E1E5E8; --line2:#CFD5DA;
+  --txt:#14171A; --dim:#4C555C; --faint:#79838B;
+  --amber:#9A6410; --amber2:#D9BE8A;
+  --measure:#1D6E92; --link:#7B3E9B; --flag:#A83318; --ok:#3B7420;
+  --paper:#ffffff; --ovl:#FFFFFF;
+}
+body[data-ws="slate"][data-mode="dark"]{
+  --bg:#0B0C0D; --s1:#17191B; --s2:#1D2023; --s3:#24282B; --s4:#32373C;
+  --line:#282C30; --line2:#32373C;
+  --txt:#E8EAEC; --dim:#9AA0A6; --faint:#7C8288;
+  --amber:#F2A93B; --amber2:#7A5518;
+  --measure:#5AB6DE; --link:#C77BD6; --flag:#E4694F; --ok:#8FC46A;
+  --paper:#fbfaf7; --ovl:#15181A;
+}
+
+/* the desk the sheet sits on, per mode — index.html only had the one rule */
+body[data-mode="light"] #viewport{ background:var(--s4) }
+body[data-mode="dark"]  #viewport{ background:#0E0D0B }
+body[data-ws="slate"][data-mode="dark"] #viewport{ background:#0B0C0D }
+/* .light is still set by applyTheme(); these blocks out-specify it, but the
+   tool-on rule reads foreground colour and has to follow the mode, not the class */
+body[data-mode="light"] .tool.on{ color:#fff }
+body[data-ws="bench"][data-mode="light"] .tool.on{ color:#fff }
+
+/* ============================================================
+   Tools down the side instead of across the top
+   body[data-tools="rail"] — main becomes two columns and the strip stands up.
+   ============================================================ */
+body[data-tools="rail"] main{
+  display:grid;
+  grid-template-columns:auto minmax(0,1fr);
+  grid-template-rows:auto minmax(0,1fr);
+}
+body[data-tools="rail"] .tools{
+  grid-column:1; grid-row:1 / -1;
+  flex-direction:column; align-items:center;
+  width:60px; padding:10px 0; gap:4px;
+  border-bottom:0; border-right:1px solid var(--line2);
+  overflow-x:hidden; overflow-y:auto;
+}
+body[data-tools="rail"] #toolbtns{
+  flex-direction:column; align-items:center;
+  flex:0 0 auto; min-width:0; overflow:visible;
+}
+body[data-tools="rail"] .tools .sep{ width:26px; height:1px; margin:6px 0 }
+body[data-tools="rail"] .inkbar{ flex-direction:column }
+/* the zoom, fit and page controls float over the sheet, as they already do on a
+   tablet — a vertical strip is the wrong shape for them */
+body[data-tools="rail"] .viewbar{
+  position:absolute; top:10px; right:10px; z-index:6;
+  background:var(--s1); border:1px solid var(--line2); border-radius:6px;
+  padding:4px 6px; box-shadow:0 8px 24px rgba(0,0,0,.35);
+}
+body[data-tools="rail"] #inkW,
+body[data-tools="rail"] #scalePreset,
+body[data-tools="rail"] #btnScales,
+body[data-tools="rail"] #btnFinger,
+body[data-tools="rail"] #btnScroll,
+body[data-tools="rail"] #btnSnap{ display:none }
+body[data-tools="rail"] #calNag{ grid-column:2; grid-row:1 }
+body[data-tools="rail"] #viewport{ grid-column:2; grid-row:2 }
+body[data-tools="rail"] #drawbar,
+body[data-tools="rail"] #inspector{ z-index:7 }
+
+/* ============================================================
+   The takeoff as a drawer under the sheet
+   body[data-takeoff="drawer"] — the right rail spans the width, where a run
+   table can actually be read across.
+   ============================================================ */
+body[data-takeoff="drawer"] .sheet{
+  grid-template-columns:260px minmax(0,1fr);
+  grid-template-rows:auto minmax(0,1fr) var(--tk-h,320px) auto;
+}
+body[data-takeoff="drawer"] aside.left{ grid-column:1; grid-row:2 }
+body[data-takeoff="drawer"] main{ grid-column:2; grid-row:2 }
+body[data-takeoff="drawer"] aside.right{
+  grid-column:1 / -1; grid-row:3;
+  border-left:0; border-top:1px solid var(--line2);
+}
+body[data-takeoff="drawer"] aside.right .tabs{ position:sticky; top:0 }
+body[data-takeoff="drawer"] footer{ grid-row:4 }
+/* wide tables stop being two words per line once they have the width */
+body[data-takeoff="drawer"] .tw td,
+body[data-takeoff="drawer"] .tw th{ white-space:nowrap }
+body[data-takeoff="drawer"] .grid2{ grid-template-columns:repeat(4,minmax(0,1fr)) }
+body[data-takeoff="drawer"] .grid3{ grid-template-columns:repeat(6,minmax(0,1fr)) }
+/* hidden and swapped still work: the drawer is a row, so left/right collapse */
+body[data-takeoff="drawer"].hideL .sheet{ grid-template-columns:0 minmax(0,1fr) }
+body[data-takeoff="drawer"].hideR aside.right{ display:none }
+body[data-takeoff="drawer"].hideR .sheet{
+  grid-template-rows:auto minmax(0,1fr) 0 auto;
+}
+body[data-takeoff="drawer"].swap aside.left{ grid-column:1; border-right:1px solid var(--line2); border-left:0 }
+body[data-takeoff="drawer"].swap aside.right{ grid-column:1 / -1 }
+/* the drawer folded to its bar */
+body[data-takeoff="drawer"][data-tk="shut"] .sheet{
+  grid-template-rows:auto minmax(0,1fr) 42px auto;
+}
+body[data-takeoff="drawer"][data-tk="shut"] aside.right>*:not(.tabs){ display:none }
+
+/* ============================================================
+   Density — a takeoff is read for eight hours, so give the rows air
+   ============================================================ */
+body[data-density="roomy"] .item{ padding:11px 14px }
+body[data-density="roomy"] .item .t{ font-size:12.5px }
+body[data-density="roomy"] .sec>h3{ padding:12px 14px 11px; letter-spacing:.16em }
+body[data-density="roomy"] .sec .body{ padding:12px 14px 14px }
+body[data-density="roomy"] .card .hd{ padding:11px 14px }
+body[data-density="roomy"] .card .bd{ padding:14px 14px 18px }
+body[data-density="roomy"] .kv{ padding:6px 11px }
+body[data-density="roomy"] td{ padding:8px 10px }
+body[data-density="roomy"] th{ padding:8px 10px }
+body[data-density="roomy"] .tab{ padding:11px 6px }
+body[data-density="roomy"] .btn{ padding:7px 12px }
+body[data-density="roomy"] .btn.sm{ padding:5px 9px }
+body[data-density="roomy"] .cell{ padding:9px 16px }
+body[data-density="roomy"] .dlg .bd{ padding:18px }
+body[data-density="roomy"] .setrow{ padding:11px 0 }
+body[data-density="compact"] .item{ padding:5px 10px }
+body[data-density="compact"] .sec>h3{ padding:7px 10px 6px }
+body[data-density="compact"] .kv{ padding:3px 8px }
+body[data-density="compact"] td,
+body[data-density="compact"] th{ padding:4px 7px }
+
+/* ============================================================
+   Polish — softer edges and quieter chrome, on the same markup
+   ============================================================ */
+body[data-ws] .btn{ border-radius:5px }
+body[data-ws] .btn.sm{ border-radius:4px }
+body[data-ws] .tool{ border-radius:5px }
+body[data-ws] input[type=text],
+body[data-ws] input[type=number],
+body[data-ws] input[type=search],
+body[data-ws] select,
+body[data-ws] textarea{ border-radius:5px }
+body[data-ws] .dlg,
+body[data-ws] .setwrap{ border-radius:8px }
+body[data-ws] .pill{ border-radius:3px }
+/* the selected row reads as a state, not as a box */
+body[data-ws] .item.on{ background:var(--s2) }
+body[data-ws] .item.on:before{ width:2px; background:var(--amber) }
+/* a tab strip of six is a lot of upper case; give it room and drop the shout */
+body[data-ws] .tab{ letter-spacing:.1em; font-size:10px }
+body[data-ws] .tab.on{ background:var(--s1) }
+/* the run card's group rules were doing the work of a heading — let them */
+body[data-ws] .card .grp span{ letter-spacing:.12em }
+body[data-ws] .out{ border-radius:6px; overflow:hidden }
+body[data-ws] .out h4{ letter-spacing:.14em }
+/* the issues strip and every warning read at the same weight */
+body[data-ws] .note{ line-height:1.55 }
+
+/* ---------- the workspace dialog, in the app's own vocabulary ---------- */
+.lwws-grp{ padding:12px 16px 4px }
+.lwws-grp h4{
+  margin:0 0 6px; font-size:10px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--faint);
+}
+.lwws-list{ display:flex; flex-direction:column; gap:6px; padding:0 16px 12px }
+.lwws-row{
+  display:flex; align-items:center; gap:10px;
+  border:1px solid var(--line); border-radius:6px;
+  padding:10px 12px; background:var(--s2);
+}
+.lwws-row b{ display:block; font-size:12.5px; font-weight:600; color:var(--txt) }
+.lwws-row span{
+  display:block; font-family:var(--mono); font-size:11px;
+  color:var(--faint); margin-top:2px;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.lwws-row .lwws-name{ flex:1; min-width:0 }
+.lwws-none{
+  border:1px dashed var(--line2); border-radius:6px; margin:0 16px 12px;
+  padding:16px 14px; text-align:center; font-size:12px;
+  color:var(--faint); line-height:1.6;
+}
+.lwws-seg{ display:flex; gap:5px; flex-wrap:wrap }
+
+@media(pointer:coarse){
+  body[data-tools="rail"] .tools{ width:68px }
+  .lwws-row{ padding:12px }
+}
