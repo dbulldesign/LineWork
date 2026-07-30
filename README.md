@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.50.0**
+**Version 1.51.0**
 
 ## What it does
 
@@ -250,11 +250,34 @@ at once:
   checked stands; one tick lets the sheets win instead
 - the whole reading is **one undo**
 
-What comes out: volts, watts and lumens per foot, the cut point, the maximum length
-(which is also the run per feed), CRI, the colour temperatures offered, the
-connector options, a lumens-per-CCT table, stock length and clip spacing, rated
-watts and Class 2 — plus the sheet's own revision, so a newer one can be spotted
-later. Reading a sheet marks that item checked and records which file it came from.
+What comes out: volts, watts and lumens per foot, the cut point, the maximum and
+minimum lengths it is made in, CRI, the colour temperatures offered, the connector
+options, a lumens-per-CCT table, reel lengths, stock length and clip spacing,
+made-to-length limits, rated watts, Class 2 and the dimming protocols — plus the
+sheet's own revision, so a newer one can be spotted later. Reading a sheet marks
+that item checked and records which file it came from.
+
+**What kind of product a sheet is about is settled before any number is read**,
+because these sheets cross-reference each other. An extrusion sheet prints a
+compatibility matrix listing the watts per foot of every strip that fits it, and a
+strip sheet lists the extrusions it fits. Read without that gate, LALO comes out as
+a 5 W/ft LED product. The title block decides, and only then are that kind's fields
+looked for. In the same spirit: the 10 in `QZ-PRO-PH/0-10V` is not an output
+voltage, the 120" maximum on a bare-wire lead is not the strip's maximum length,
+and "PWM output" is not a dimming input — that is how a driver drives the LED, not
+how it is told what to do.
+
+**One sheet is often several products.** A supply covering 30W, 60W, 96W, 192W and
+288W is five supplies; a flexible fixture offered in 1.0, 2.0 and 4.0 W/ft is
+three. Taking the first would quietly order the smallest, so a sheet new to the
+library becomes one item per output, each named for its own wattage.
+
+**Made to length.** Two ways an extrusion is bought: bar stock you cut from, which
+leaves off-cuts to nest, or ordered at the length you want in its own increment up
+to the longest piece it is made in. For the second there is nothing to nest and no
+waste to report, and the last piece is rounded up to the increment instead of being
+carried as an off-cut. A **minimum** length works the other way: a piece below what
+a fixture is made in is called out as not orderable rather than quietly rounded.
 
 This is the PDF's **text layer, not OCR**. A sheet whose figures are drawn as part
 of a picture, or a scan, has nothing to read: it is reported by name as
