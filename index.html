@@ -909,7 +909,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.62.0';
+const APP_VER='1.63.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -12012,6 +12012,9 @@ const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt',
   'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblSize','snap',
   'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','buyBy','keepPdf',
   'whipAwg','vdMax','circuits',
+  /* the workspace is a preference like any other: an office standard should carry
+     how the window is arranged and, where someone made one, their own palette */
+  'ui',
   'hideTool','pals','toolMode'];
 function presetText(withLib){
   const set={};
@@ -12034,6 +12037,8 @@ function applyPreset(d,withLib){
   /* run it through the same checks a project file gets, so a hand-edited preset
      cannot put nonsense into the settings */
   applyProject(JSON.parse(projFileText()));
+  /* a workspace in the file has to reach the body, not just P */
+  if(window.LWUI) try{ window.LWUI.apply(); }catch(e){}
   /* the toolbar and the palettes are settings too, so they redraw here rather
      than in each caller */
   renderToolbar(); renderPals();
@@ -12746,6 +12751,8 @@ function manualSections(){
     {rows:[
       ['Checking the scale','A stated scale is only right if the PDF is at its plotted size, and the only way to know is to measure something you can read. Check the scale against a dimension traces a line and compares: it reports what that line measures at the current scale against what you say it is, as a percentage, and offers to correct it. Under half a percent it says it checks out. An error over about ten percent usually means the sheet was printed to fit a smaller page, in which case every sheet in the set is out by the same amount \u2014 and it says so. Nothing changes unless you ask for it.'],
       ['Bending','A flexible product only takes a curve down to a radius, and the drawing already carries the geometry: an arc markup has a radius, and a bulged polyline segment is an arc whose radius follows from its chord and its bulge. Each curve on a run is checked against the radius on the product\u2019s own sheet, and the run card lists them tightest first with a cross against any that are too tight. Where a sheet states no radius the curves are reported as uncheckable rather than passed. Hard corners are treated separately and only on a made-to-length fixture: on cuttable tape a corner is no problem because you cut and rejoin, but a fixture has nothing to cut, so a corner has to be a bend \u2014 which also makes the traced length shorter than the real one. Round the corners to the radius and both are right.'],
+      ['Your own colours','Beside the three palettes is Custom: start from whichever is on screen and change what you like, one variable at a time. Editing writes straight to the app, so what you see while you drag is the thing itself rather than a swatch \u2014 and Cancel puts back exactly what was there. Light and dark keep separate sets, so a palette made in the dark does not follow you into the light. It travels in the project like the rest of the arrangement, and in a profile, which is what gets handed round the office. A hand-edited file cannot put anything but a colour into a colour: a value that is not a hex, a variable the app does not have, a mode that does not exist \u2014 all dropped rather than written.'],
+      ['Profiles','A profile is the office standard as one file: the settings, the rates, the tool visibility and palettes, and now the workspace too \u2014 including a custom palette. Save it from Settings \u203a Files, hand it over, and loading it puts the arrangement on screen rather than only into the project.'],
       ['Workspaces','How the window is arranged, under one name. Settings \u203a View has the rows \u2014 Workspace, Appearance, Tools, Takeoff panel, Density \u2014 and \u25eb in the titleblock or \u2318\u21e7W opens the manager, where an arrangement can be saved, exported as a .linework-view.json, or loaded from one someone sent. Three palettes, each with a light and a dark: Bench is the warm drafting palette this app has always had, Paper is a white sheet with one ink accent, Slate is neutral so the amber is the only warm thing on screen. Two layout switches: tools across the top or standing up as a rail down the side, and the takeoff beside the sheet or as a full-width drawer under it where a run table can be read across. The arrangement travels in the project, so a job reopens the way it was left; named workspaces are kept beside the projects, being an office preference rather than job data. A workspace file holds only how the window is arranged \u2014 never sheets, markups or runs \u2014 so applying one can never change a takeoff.'],
       ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. A bare "1/4" is refused rather than guessed at, because as a ratio it means 1:4 and on a drawing it means 1/4" = 1’-0" — twelve times apart. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
       ['Deleting a sheet','The ✕ on a sheet in the list. It counts what goes with it first — markups, runs measured off it, links pointing at it, its scale — and asks twice. Runs measured off it are kept by default with their measured length written in as a typed figure: the takeoff is what was priced, and losing a drawing is not a reason to change it. Untick that and they go too. The PDF is dropped from this browser as well, so undo brings the markups and runs back but the drawing needs re-importing.'],

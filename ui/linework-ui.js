@@ -32,8 +32,35 @@
   var FAMS  = [
     {v:'bench', t:'Bench',  d:'The warm drafting palette LineWork has today.'},
     {v:'paper', t:'Paper',  d:'The sheet is white, so the app is too. One ink accent.'},
-    {v:'slate', t:'Slate',  d:'Neutral grey, so the amber is the only warm thing on screen.'}
+    {v:'slate', t:'Slate',  d:'Neutral grey, so the amber is the only warm thing on screen.'},
+    {v:'custom',t:'Custom', d:'Your own colours, started from any of the three above.'}
   ];
+  /* The variables a palette is made of, in the order they are worth editing: the
+     window, then the surfaces on it, then the lines, then the text, then the accent,
+     then the colours that mean something — those last four are what a markup is
+     drawn in, so they are the ones to leave alone unless you know why. */
+  var VARS = [
+    ['bg',     'Window',            'behind everything'],
+    ['s1',     'Panel',             'rails, cards, the titleblock'],
+    ['s2',     'Raised',            'a row that is picked, a dialog'],
+    ['s3',     'Sunken',            'inputs, table headings, bars'],
+    ['s4',     'Edge',              'the desk the sheet sits on'],
+    ['line',   'Hairline',          'the quiet divider'],
+    ['line2',  'Border',            'the one you are meant to see'],
+    ['txt',    'Text',              ''],
+    ['dim',    'Text, quieter',     'labels and secondary figures'],
+    ['faint',  'Text, quietest',    'hints and units'],
+    ['amber',  'Accent',            'this is the thing — buttons, the live figure'],
+    ['amber2', 'Accent, muted',     'the same thing at rest'],
+    ['measure','Measurement',       'dimensions on the sheet'],
+    ['link',   'Link',              'links to shop drawings'],
+    ['flag',   'Problem',           'anything wrong'],
+    ['ok',     'Good',              'approved, within limits'],
+    ['paper',  'Sheet',             'the drawing itself'],
+    ['ovl',    'Overlay',           'behind a floating panel']
+  ];
+  var VARNAMES = VARS.map(function(v){ return v[0]; });
+  var HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
   var PRESETS = {
     bench: {ws:'bench', tools:'top',  takeoff:'drawer', density:'roomy'},
     paper: {ws:'paper', tools:'top',  takeoff:'side',   density:'roomy'},
@@ -63,12 +90,53 @@
     u = u || {};
     var ok = function(v, list, dflt){ return list.indexOf(v) >= 0 ? v : dflt; };
     return {
-      ws:      ok(u.ws,      ['bench','paper','slate'],  LWDEF.ws),
+      ws:      ok(u.ws,      ['bench','paper','slate','custom'], LWDEF.ws),
+      colors:  cleanColors(u.colors),
       tools:   ok(u.tools,   ['top','rail'],             LWDEF.tools),
       takeoff: ok(u.takeoff, ['side','drawer'],          LWDEF.takeoff),
       density: ok(u.density, ['roomy','compact','normal'], LWDEF.density),
       tk:      ok(u.tk,      ['open','shut'],            LWDEF.tk)
     };
+  }
+
+  /* A hand-edited file must not be able to put anything but a colour into a colour,
+     so every value is checked and anything else is dropped — the same rule the rest
+     of the file follows for the arrangement. */
+  function cleanColors(c){
+    if(!c || typeof c !== 'object') return null;
+    var out = null;
+    ['light','dark'].forEach(function(m){
+      var src = c[m];
+      if(!src || typeof src !== 'object') return;
+      var set = null;
+      VARNAMES.forEach(function(k){
+        var v = src[k];
+        if(typeof v === 'string' && HEX.test(v.trim())){
+          (set = set || {})[k] = v.trim();
+        }
+      });
+      if(set) (out = out || {})[m] = set;
+    });
+    return out;
+  }
+  /* what the current palette computes to, so a custom one starts from something
+     real rather than from nothing */
+  function readPalette(){
+    var cs = getComputedStyle(document.body), out = {};
+    VARNAMES.forEach(function(k){
+      var v = (cs.getPropertyValue('--' + k) || '').trim();
+      out[k] = HEX.test(v) ? v : '#000000';
+    });
+    return out;
+  }
+  function paintColors(u, m){
+    var st = document.body.style;
+    VARNAMES.forEach(function(k){ st.removeProperty('--' + k); });
+    if(u.ws !== 'custom') return;
+    var set = u.colors && u.colors[m];
+    if(!set) return;
+    /* inline beats any stylesheet, so a custom palette needs nothing in the CSS */
+    VARNAMES.forEach(function(k){ if(set[k]) st.setProperty('--' + k, set[k]); });
   }
 
   function apply(){
@@ -80,6 +148,7 @@
     b.dataset.tk      = u.takeoff === 'drawer' ? u.tk : 'open';
     if(u.density === 'normal') delete b.dataset.density;
     else b.dataset.density = u.density;
+    paintColors(u, b.dataset.mode);
     syncWsBtn();
   }
 
@@ -111,6 +180,14 @@
   }
   function summary(v){
     v = clean(v);
+    if(v.ws === 'custom'){
+      var sides = v.colors ? Object.keys(v.colors).sort() : [];
+      return ['Custom' + (sides.length ? ' (' + sides.join(' and ') + ')' : ' (nothing set yet)'),
+        v.mode || 'dark',
+        v.tools === 'rail' ? 'side rail of tools' : 'top tool strip',
+        v.takeoff === 'drawer' ? 'takeoff in a drawer' : 'takeoff beside the sheet',
+        v.density].join(' · ');
+    }
     return [
       (FAMS.filter(function(f){ return f.v === v.ws; })[0] || {}).t || v.ws,
       v.mode || 'dark',
@@ -231,6 +308,26 @@
     grp.appendChild(row('Takeoff panel', 'A column beside the sheet, or a full-width drawer under it where a run table can be read across.',
       seg([{v:'side',t:'Side rail'},{v:'drawer',t:'Bottom drawer'}], u.takeoff, function(v){ set({takeoff:v}); })));
 
+    var cols = document.createElement('div');
+    cols.className = 'lwws-seg';
+    var edit = document.createElement('button');
+    edit.className = 'btn sm' + (u.ws === 'custom' ? ' pri' : '');
+    edit.textContent = u.ws === 'custom' ? 'Edit your colours…' : 'Make your own…';
+    edit.onclick = openColours;
+    cols.appendChild(edit);
+    if(u.ws === 'custom'){
+      var back = document.createElement('button');
+      back.className = 'btn sm';
+      back.textContent = 'Back to Bench';
+      back.onclick = function(){ set({ws:'bench'}); toast('Back to the palette LineWork ships with'); };
+      cols.appendChild(back);
+    }
+    grp.appendChild(row('Colours',
+      u.ws === 'custom'
+        ? 'Your own palette, one set for light and one for dark. It travels with the project and exports in a profile.'
+        : 'Start from the palette on screen and change what you like. Light and dark keep their own colours.',
+      cols));
+
     grp.appendChild(row('Density', 'Roomier gives every row more air; compact fits more on screen.',
       seg([{v:'compact',t:'Compact'},{v:'normal',t:'Normal'},{v:'roomy',t:'Roomy'}], u.density, function(v){ set({density:v}); })));
 
@@ -248,6 +345,124 @@
     if(!body) return;
     var old = $('.lwws-setgrp', body);
     if(old){ old.remove(); injectSettings(); }
+  }
+
+  /* ---------- the colour editor ----------
+     Eighteen variables and a live preview. Editing writes straight to the body, so
+     what you see while you drag is the app itself rather than a swatch — and Cancel
+     puts back exactly what was there, because a palette you cannot back out of is
+     one nobody will try. */
+  var COL = null, colBefore = null, colWork = null;
+  function paletteOf(fam){
+    /* the three palettes live in the stylesheet; borrow the body for a moment to
+       read one rather than duplicating its values here */
+    var keepWs = document.body.dataset.ws;
+    VARNAMES.forEach(function(k){ document.body.style.removeProperty('--' + k); });
+    document.body.dataset.ws = fam;
+    var got = readPalette();
+    document.body.dataset.ws = keepWs;
+    return got;
+  }
+  function liveColours(){
+    var st = document.body.style;
+    VARNAMES.forEach(function(k){ if(colWork[k]) st.setProperty('--' + k, colWork[k]); });
+  }
+  function openColours(){
+    var u = clean(ui()), m = mode();
+    if(!colBefore) colBefore = {ws:u.ws, colors:u.colors ? JSON.parse(JSON.stringify(u.colors)) : null};
+    if(!colWork) colWork = (u.ws === 'custom' && u.colors && u.colors[m])
+      ? Object.assign({}, u.colors[m]) : readPalette();
+
+    if(!COL){
+      COL = document.createElement('div');
+      COL.className = 'scrim';
+      COL.style.zIndex = 81;
+      COL.innerHTML =
+        '<div class="dlg" style="width:min(640px,100%)">' +
+          '<h3>Colours</h3>' +
+          '<div class="bd" id="lwcolBd" style="padding:0;max-height:min(60vh,540px);overflow:auto"></div>' +
+          '<div class="ft">' +
+            '<button class="btn" id="lwcolX">Cancel</button>' +
+            '<button class="btn pri" id="lwcolOK">Use these colours</button>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(COL);
+      COL.addEventListener('click', function(e){ if(e.target === COL) cancelColours(); });
+      $('#lwcolX', COL).onclick = cancelColours;
+      $('#lwcolOK', COL).onclick = function(){
+        var u2 = clean(ui());
+        var cols = u2.colors ? JSON.parse(JSON.stringify(u2.colors)) : {};
+        cols[mode()] = colWork;
+        COL.classList.remove('show');
+        colBefore = null; colWork = null;
+        set({ws:'custom', colors:cols});
+        toast('Custom palette saved with this project — export a profile to share it');
+      };
+    }
+    drawColours(m);
+    COL.classList.add('show');
+    liveColours();
+  }
+  function drawColours(m){
+    var bd = $('#lwcolBd', COL);
+    bd.innerHTML = '';
+    var head = document.createElement('div');
+    head.className = 'hint';
+    head.style.cssText = 'padding:12px 16px 6px';
+    head.textContent = 'Editing the ' + m + ' side of your palette — the other side keeps its own colours, '
+      + 'so light and dark stay separate. Changes show as you make them.';
+    bd.appendChild(head);
+
+    var from = document.createElement('div');
+    from.className = 'lwws-seg';
+    from.style.cssText = 'padding:0 16px 10px';
+    ['bench','paper','slate'].forEach(function(f){
+      var b = document.createElement('button');
+      b.className = 'btn sm';
+      b.textContent = 'Start from ' + (FAMS.filter(function(x){ return x.v === f; })[0] || {}).t;
+      b.onclick = function(){ colWork = paletteOf(f); liveColours(); drawColours(m); };
+      from.appendChild(b);
+    });
+    bd.appendChild(from);
+
+    var wrap = document.createElement('div');
+    wrap.className = 'lwws-list';
+    VARS.forEach(function(v){
+      var k = v[0];
+      var r = document.createElement('div');
+      r.className = 'lwws-row';
+      var nm = document.createElement('div');
+      nm.className = 'lwws-name';
+      nm.innerHTML = '<b></b><span></span>';
+      $('b', nm).textContent = v[1];
+      $('span', nm).textContent = '--' + k + (v[2] ? ' · ' + v[2] : '');
+      var col = document.createElement('input');
+      col.type = 'color';
+      col.value = (colWork[k] && colWork[k].length === 7) ? colWork[k] : '#000000';
+      col.style.cssText = 'width:46px;height:28px;padding:0;border-radius:4px;flex:0 0 auto';
+      var hex = document.createElement('input');
+      hex.type = 'text';
+      hex.value = colWork[k] || '';
+      hex.setAttribute('aria-label', v[1] + ' hex');
+      hex.style.cssText = 'width:96px;flex:0 0 auto;font-family:var(--mono)';
+      col.oninput = function(){ colWork[k] = col.value; hex.value = col.value; liveColours(); };
+      hex.oninput = function(){
+        var v2 = hex.value.trim();
+        if(!HEX.test(v2)) return;
+        colWork[k] = v2;
+        if(v2.length === 7) col.value = v2;
+        liveColours();
+      };
+      r.appendChild(nm); r.appendChild(col); r.appendChild(hex);
+      wrap.appendChild(r);
+    });
+    bd.appendChild(wrap);
+  }
+  function cancelColours(){
+    if(COL) COL.classList.remove('show');
+    var b = colBefore;
+    colBefore = null; colWork = null;
+    if(b){ set({ws:b.ws, colors:b.colors}, true); redrawSettings(); }
   }
 
   /* ---------- the workspace manager ---------- */
@@ -449,7 +664,8 @@
       }
     });
 
-    window.LWUI = {apply:apply, set:set, get:currentView, saved:saved, open:openManager};
+    window.LWUI = {apply:apply, set:set, get:currentView, saved:saved, open:openManager,
+      colours:openColours, vars:VARNAMES, palette:paletteOf};
   }
 
   if(document.readyState === 'loading') addEventListener('DOMContentLoaded', start);

@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.62.0**
+**Version 1.63.0**
 
 ## What it does
 
@@ -241,6 +241,27 @@ arranged, never sheets, markups or runs, so applying one can never change a take
 
 Light and dark stay owned by the app: the Appearance rows drive the same `☀︎` button,
 so the glyph, the body class and the setting cannot disagree.
+
+### Your own colours
+
+Beside the three palettes is **Custom**: start from whichever is on screen and change
+what you like, one variable at a time — the window, the surfaces, the lines, the
+text, the accent, and the four colours that mean something (measurement, link,
+problem, good). Editing **writes straight to the app**, so what you see while you drag
+is the thing itself rather than a swatch, and **Cancel puts back exactly what was
+there**.
+
+Light and dark keep **separate sets**, so a palette made in the dark does not follow
+you into the light.
+
+A **profile** is the office standard as one file — settings, rates, tool visibility
+and palettes, and now the workspace too, custom colours included. Save it from
+Settings › Files, hand it over, and loading it puts the arrangement on screen rather
+than only into the project.
+
+A hand-edited file cannot put anything but a colour into a colour: a value that is
+not a hex, a variable the app does not have, a mode that does not exist — all dropped
+rather than written.
 
 The palettes live in `ui/linework-ui.css` and only re-point the variables the main
 stylesheet already uses; `ui/linework-ui.js` sets the attributes that choose between
