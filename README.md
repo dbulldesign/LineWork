@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.43.0**
+**Version 1.44.0**
 
 ## What it does
 
@@ -196,11 +196,33 @@ clutter, not capability. *Select* and *Calibrate* are core and cannot be hidden 
 and a project file that claims otherwise is corrected on load. **Show every tool**
 puts them all back.
 
-**Pinned palettes** are floating sets of the tools a particular job needs — the
-Tool Chest idea. Pin one, put any tools on it, drag it by its bar to wherever suits
-the drawing. Where it sits and what is on it live in the project, so it comes back
-with the job. Unpinning keeps it so it can be pinned back. A tool lights up on the
-toolbar and on every palette at once.
+**Palettes** are floating sets of the tools a particular job needs — the Tool Chest
+idea. Pin one, put any tools on it, drag it by its bar to wherever suits the
+drawing. A tool lights up on the toolbar and on every palette at once.
+
+Each palette has the three states a panel has anywhere:
+
+- **Pinned** (◉, amber border) — stays open.
+- **Unpinned** (○) — folds back to its bar the moment you take a tool off it, so it
+  stops covering the drawing. The bar keeps a count of what is on it; the triangle
+  opens it again.
+- **Hidden** (×) — off screen but kept. Settings › Tools shows it back.
+
+**Managing one in place.** The **⋯** button picks which tools are on it.
+Right-click a tool on a palette — long-press on a tablet — to take just that one
+off. Nothing about the tool itself changes: a palette is only a shortcut to it, and
+the tool stays on the toolbar and on its key.
+
+**Recent tools** is a palette that fills itself with the last eight tools you
+reached for, so the second and third use of anything is one press. Nothing to
+choose on it, and it can be cleared. Only one palette can be the recent one.
+
+**After placing a markup**, Settings › Tools decides whether the tool stays
+selected for the next one or goes back to Select — Bluebeam's drawing and
+properties modes. The tools that ask "keep placing?" start from that answer.
+
+Where every palette sits, what is on it, and which tools are off the toolbar all
+travel in a **preset**, so an office standard is one file — the profile idea.
 
 However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those

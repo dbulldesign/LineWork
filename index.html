@@ -353,8 +353,12 @@ input.up{text-transform:uppercase}
   border-bottom:1px solid var(--line2);cursor:grab;touch-action:none}
 .palhd span{flex:1;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
-.palhd .x{background:none;border:0;color:var(--faint);font-size:14px;line-height:1;cursor:pointer;padding:0 2px}
+.palhd .x{background:none;border:0;color:var(--faint);font-size:12px;line-height:1;cursor:pointer;
+  padding:2px 3px;flex:0 0 auto}
 .palhd .x:hover{color:var(--ink)}
+.palhd .x.on{color:var(--amber)}
+.pal.shut .palhd{cursor:grab;border-bottom:0}
+.pal.pinned{border-color:var(--amber)}
 .palbody{display:flex;flex-wrap:wrap;gap:2px;padding:4px;max-width:196px}
 #cmdScrim{align-items:flex-start;justify-content:center}
 #cmdScrim .cmdbox{width:min(620px,94vw);margin-top:12vh;background:var(--s2);border:1px solid var(--line2);
@@ -805,7 +809,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.43.0';
+const APP_VER='1.44.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1510,7 +1514,13 @@ function applyProject(d){
   P.pals=P.pals.filter(p=>p&&typeof p==='object').map(p=>({
     id:String(p.id||uid('pal_')),name:String(p.name||'Tools'),
     tools:Array.isArray(p.tools)?p.tools.filter(k=>TOOLS.some(x=>x.k===k)):[],
-    x:clamp(+p.x||24,0,4000),y:clamp(+p.y||120,0,4000),open:p.open!==false}));
+    x:clamp(+p.x||24,0,4000),y:clamp(+p.y||120,0,4000),open:p.open!==false,
+    pinned:!!p.pinned,collapsed:!!p.collapsed,recent:!!p.recent}));
+  /* only one palette can be the recent one, or they would fight over the list */
+  let sawRecent=false;
+  P.pals.forEach(p=>{ if(p.recent){ if(sawRecent) p.recent=false; sawRecent=true; } });
+  P.recent=Array.isArray(P.recent)?P.recent.filter(k=>TOOLS.some(x=>x.k===k)).slice(0,RECENT_MAX):[];
+  if(P.toolMode!=='stay'&&P.toolMode!=='once') P.toolMode='stay';
   if(!P.mute||typeof P.mute!=='object'||Array.isArray(P.mute)) P.mute={};
   Object.keys(P.mute).forEach(c=>{ if(!P.mute[c]||!WARN_KINDS.some(k=>k.c===c)) delete P.mute[c]; });
   if(!P.tdef||typeof P.tdef!=='object'||Array.isArray(P.tdef)) P.tdef={};
@@ -4079,11 +4089,6 @@ const isPolyDraft=d=>!!d&&(d.type==='line'||d.type==='cal'||d.type==='area'||d.t
    takes it off the toolbar: its key still works and it still appears in the
    palette picker, because hiding is about clutter, not capability. */
 const TOOLS=[
-  {k:'arrow',g:'Annotate',key:'',t:"Arrow — drag from tail to head",svg:'<svg viewBox="0 0 24 24"><path d="M4 20L20 4"/><path d="M13 4h7v7"/></svg>'},
-  {k:'hl',g:'Annotate',key:'',t:"Highlight — drag a band across the sheet",svg:'<svg viewBox="0 0 24 24"><path d="M4 15l7-7 5 5-7 7H4z"/><path d="M14 6l4 4"/><path d="M3 21h18"/></svg>'},
-  {k:'ell',g:'Measure',key:'O',t:"Ellipse — a round cove, measured round its edge",svg:'<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></svg>'},
-  {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
-  {k:'rad',g:'Measure',key:'U',t:"Radius — three points on a curve gives R, D and the arc",svg:'<svg viewBox="0 0 24 24"><path d="M3 18a12 12 0 0118 0"/><path d="M12 6.2V18"/><circle cx="12" cy="18" r="1.6"/></svg>'},
   {k:'pan',g:'Select',key:'V',t:"Select / pan",svg:'<svg viewBox="0 0 24 24"><path d="M4 3l6.5 16 2-6.5L19 10.5z"/></svg>',core:1},
   {k:'cal',g:'Select',key:'C',t:"Calibrate scale",svg:'<svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/></svg>',core:1},
   {k:'line',g:'Measure',key:'L',t:"Dimension / linear run",svg:'<svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg>'},
@@ -4091,6 +4096,9 @@ const TOOLS=[
   {k:'poly',g:'Measure',key:'G',t:"Poly length \u2014 click each corner, per-segment lengths",svg:'<svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg>'},
   {k:'area',g:'Measure',key:'R',t:"Region \u2014 trace a room for its area, perimeter and cove run",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg>'},
   {k:'count',g:'Measure',key:'M',t:"Count \u2014 stamp and tally a symbol",svg:'<svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg>'},
+  {k:'ell',g:'Measure',key:'O',t:"Ellipse — a round cove, measured round its edge",svg:'<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></svg>'},
+  {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
+  {k:'rad',g:'Measure',key:'U',t:"Radius — three points on a curve gives R, D and the arc",svg:'<svg viewBox="0 0 24 24"><path d="M3 18a12 12 0 0118 0"/><path d="M12 6.2V18"/><circle cx="12" cy="18" r="1.6"/></svg>'},
   {k:'cloud',g:'Review',key:'Q',t:"Revision cloud with a delta",svg:'<svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg>'},
   {k:'photo',g:'Review',key:'H',t:"Pin a site photo",svg:'<svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 012-2h2l1.5-2h7L17 6h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="12.5" r="3.4"/></svg>'},
   {k:'feed',g:'Lighting',key:'F',t:"Place a feed point on a run",svg:'<svg viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M12 17V8"/><circle cx="12" cy="6" r="2.6"/><path d="M8 12h8"/></svg>'},
@@ -4099,6 +4107,8 @@ const TOOLS=[
   {k:'driver',g:'Lighting',key:'D',t:"Place a power supply / driver",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="1"/><path d="M7 8V5M17 8V5M6 12.5h4M14 12.5h4"/></svg>'},
   {k:'box',g:'Annotate',key:'B',t:"Area box",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg>'},
   {k:'ink',g:'Annotate',key:'P',t:"Pencil ink \u2014 freehand notes & sketching",svg:'<svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg>'},
+  {k:'arrow',g:'Annotate',key:'',t:"Arrow — drag from tail to head",svg:'<svg viewBox="0 0 24 24"><path d="M4 20L20 4"/><path d="M13 4h7v7"/></svg>'},
+  {k:'hl',g:'Annotate',key:'',t:"Highlight — drag a band across the sheet",svg:'<svg viewBox="0 0 24 24"><path d="M4 15l7-7 5 5-7 7H4z"/><path d="M14 6l4 4"/><path d="M3 21h18"/></svg>'},
   {k:'erase',g:'Annotate',key:'E',t:"Erase markups",svg:'<svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg>'},
   {k:'text',g:'Annotate',key:'T',t:"Text \u2014 plain note straight on the sheet",svg:'<svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></svg>'},
   {k:'tbox',g:'Annotate',key:'X',t:"Text box \u2014 drag a box, text wraps inside",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M7 9h10M7 12h10M7 15h6"/></svg>'},
@@ -4131,7 +4141,25 @@ const toolBtn=d=>'<button class="tool'+(V.tool===d.k?' on':'')+'" data-tool="'+d
 function wireTools(host){
   $$('[data-tool]',host).forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
 }
+/* Recent tools, the way the Tool Chest keeps them: the last few you reached for,
+   so the second and third use of a tool is one press wherever you are. */
+const RECENT_MAX=8;
+function noteRecent(k){
+  const d=toolDef(k);
+  if(!d||d.k==='pan') return;                       /* select is not a choice worth recording */
+  P.recent=(P.recent||[]).filter(x=>x!==k);
+  P.recent.unshift(k);
+  if(P.recent.length>RECENT_MAX) P.recent.length=RECENT_MAX;
+}
 function setTool(t){
+  const was=V.tool;
+  if(t!==was) noteRecent(t);
+  /* a palette that is not pinned folds back to its bar once it has been used, so
+     it stops covering the drawing */
+  if(t!==was&&(P.pals||[]).some(p=>p.open!==false&&!p.pinned&&!p.collapsed&&(p.tools||[]).includes(t))){
+    (P.pals||[]).forEach(p=>{ if(p.open!==false&&!p.pinned&&(p.tools||[]).includes(t)) p.collapsed=true; });
+    setTimeout(()=>{ renderPals(); markDirty(); },0);
+  }
   V.tool=t;
   /* the same tool can be on the toolbar and on any number of palettes */
   $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
@@ -4163,23 +4191,69 @@ function setTool(t){
    A floating set of the tools a particular job needs, kept where it was put. The
    toolbar is one long row; a palette is the handful you are actually using, next
    to the drawing. They live in the project, so they come back with the job. */
+/* A palette is pinned or not, and open or hidden — the three states a panel has
+   anywhere else. Pinned means it stays as it is; unpinned means it folds back to
+   its bar once a tool has been taken off it, so it stops covering the drawing. */
+const palTools=p=>toolOrder().filter(d=>(p.tools||[]).includes(d.k));
 function palBox(p){
-  return '<div class="pal" data-pal="'+p.id+'" style="left:'+(+p.x||24)+'px;top:'+(+p.y||120)+'px">'
-    +'<div class="palhd"><span>'+esc(p.name||'Tools')+'</span>'
-      +'<button class="x" data-palclose="'+p.id+'" title="Unpin">×</button></div>'
-    +'<div class="palbody">'
-      +toolOrder().filter(d=>(p.tools||[]).includes(d.k)).map(toolBtn).join('')
-      +((p.tools||[]).length?'':'<span class="hint" style="padding:6px">No tools on it yet</span>')
-    +'</div></div>';
+  const shut=!!p.collapsed;
+  return '<div class="pal'+(shut?' shut':'')+(p.pinned?' pinned':'')+'" data-pal="'+p.id+'"'
+    +' style="left:'+(+p.x||24)+'px;top:'+(+p.y||120)+'px">'
+    +'<div class="palhd">'
+      +'<button class="x" data-palfold="'+p.id+'" title="'+(shut?'Open it':'Fold it to the bar')+'">'
+        +(shut?'\u25b8':'\u25be')+'</button>'
+      +'<span>'+esc(p.name||'Tools')+(shut&&palTools(p).length?'  ('+palTools(p).length+')':'')+'</span>'
+      +'<button class="x'+(p.pinned?' on':'')+'" data-palpin="'+p.id+'" title="'
+        +(p.pinned?'Pinned — it stays open':'Not pinned — it folds up after you use a tool')+'">'
+        +(p.pinned?'\u25c9':'\u25cb')+'</button>'
+      +'<button class="x" data-palmore="'+p.id+'" title="Which tools are on it">\u22ef</button>'
+      +'<button class="x" data-palclose="'+p.id+'" title="Hide it">\u00d7</button>'
+    +'</div>'
+    +(shut?'':'<div class="palbody">'
+      +palTools(p).map(toolBtn).join('')
+      +(palTools(p).length?'':'<span class="hint" style="padding:6px">Nothing on it — press \u22ef</span>')
+    +'</div>')+'</div>';
 }
 function renderPals(){
   const host=$('#pals'); if(!host) return;
+  /* the recent palette carries whatever was used last, so its tools are not stored */
+  (P.pals||[]).forEach(p=>{ if(p.recent) p.tools=(P.recent||[]).slice(0,RECENT_MAX); });
   const list=(P.pals||[]).filter(p=>p&&p.open!==false);
   host.innerHTML=list.map(palBox).join('');
   wireTools(host);
+  const byId=id=>(P.pals||[]).find(x=>x.id===id);
   $$('[data-palclose]',host).forEach(b=>b.onclick=()=>{
-    const p=(P.pals||[]).find(x=>x.id===b.dataset.palclose);
-    if(p){ p.open=false; renderPals(); markDirty(); toast('Unpinned — Settings › Tools puts it back'); }
+    const p=byId(b.dataset.palclose);
+    if(p){ p.open=false; renderPals(); markDirty(); toast('Hidden — Settings › Tools shows it again'); }
+  });
+  $$('[data-palfold]',host).forEach(b=>b.onclick=()=>{
+    const p=byId(b.dataset.palfold);
+    if(p){ p.collapsed=!p.collapsed; renderPals(); markDirty(); }
+  });
+  $$('[data-palpin]',host).forEach(b=>b.onclick=()=>{
+    const p=byId(b.dataset.palpin);
+    if(!p) return;
+    p.pinned=!p.pinned;
+    if(p.pinned) p.collapsed=false;
+    renderPals(); markDirty();
+    toast(p.pinned?'Pinned — it stays open':'Unpinned — it folds up after you use a tool');
+  });
+  $$('[data-palmore]',host).forEach(b=>b.onclick=()=>editPal(byId(b.dataset.palmore)));
+  /* right-click or long-press a tool on a palette to take it off that palette */
+  $$('.palbody [data-tool]',host).forEach(b=>{
+    const p=byId(b.closest('.pal').dataset.pal);
+    const off=e=>{
+      e.preventDefault();
+      if(!p) return;
+      p.tools=(p.tools||[]).filter(k=>k!==b.dataset.tool);
+      renderPals(); markDirty();
+      toast((toolDef(b.dataset.tool)||{t:'That tool'}).t.split(/[\u2014\u00b7]/)[0].trim()
+        +' is off \u201c'+(p.name||'Tools')+'\u201d');
+    };
+    b.oncontextmenu=off;
+    let lp=null;
+    b.onpointerdown=e=>{ if(e.pointerType==='mouse') return; lp=setTimeout(()=>{ lp=null; off(e); },520); };
+    b.onpointerup=b.onpointerleave=()=>{ if(lp){ clearTimeout(lp); lp=null; } };
   });
   /* drag a palette by its bar; where it sits is part of the job */
   $$('.palhd',host).forEach(hd=>hd.onpointerdown=e=>{
@@ -4200,20 +4274,33 @@ function renderPals(){
 }
 async function editPal(p){
   const isNew=!p;
-  const r=await dlg({title:isNew?'Pin a tool palette':'Edit “'+(p.name||'Tools')+'”',fields:[
+  if(p&&p.recent){
+    const r0=await dlg({title:'Recent tools',fields:[
+      {k:'pin',type:'check',cap:'Keep it open (pinned)',val:!!p.pinned},
+      {k:'clear',type:'check',cap:'Forget what is on it',val:false}
+    ],ok:'Apply',note:'This palette fills itself with the tools you have just used, so there is nothing to choose.'});
+    if(!r0) return;
+    p.pinned=!!r0.pin; if(p.pinned) p.collapsed=false;
+    if(r0.clear) P.recent=[];
+    renderPals(); markDirty(); return;
+  }
+  const r=await dlg({title:isNew?'Pin a tool palette':'Tools on “'+(p.name||'Tools')+'”',fields:[
     {k:'name',label:'Name',val:p?p.name:'My tools',ph:'My tools'},
     {k:'tools',type:'multi',label:'Tools on it',
       opts:toolOrder().map(d=>({v:d.k,t:d.g+' · '+d.t})),val:p?(p.tools||[]).slice():['line','poly','arc','area']},
+    {k:'pin',type:'check',cap:'Keep it open (pinned)',val:p?!!p.pinned:true},
     ...(isNew?[]:[{k:'del',type:'check',cap:'Delete this palette',val:false}])
   ],ok:isNew?'Pin it':'Apply',
     note:'A palette floats over the drawing where you leave it, and comes back with the job. Tools hidden from the toolbar can still go on one.'});
   if(!r) return;
   if(r.del&&p){ P.pals=(P.pals||[]).filter(x=>x.id!==p.id); renderPals(); markDirty(); toast('Palette deleted'); return; }
   const tools=(r.tools||[]).filter(k=>toolDef(k));
-  if(p){ p.name=String(r.name||'Tools'); p.tools=tools; p.open=true; }
+  if(p){ p.name=String(r.name||'Tools'); p.tools=tools; p.open=true;
+    p.pinned=!!r.pin; if(p.pinned) p.collapsed=false; }
   else{
     P.pals=P.pals||[];
-    P.pals.push({id:uid('pal_'),name:String(r.name||'Tools'),tools,x:24,y:120,open:true});
+    P.pals.push({id:uid('pal_'),name:String(r.name||'Tools'),tools,x:24,y:120,open:true,
+      pinned:r.pin!==false,collapsed:false});
   }
   renderPals(); markDirty();
   toast(tools.length+' tool'+(tools.length===1?'':'s')+' on “'+String(r.name||'Tools')+'”');
@@ -5290,7 +5377,7 @@ async function placeDriver(p){
   const r=await dlg({title:'Place a driver',fields:[
     {k:'name',label:'Mark',val:driverName(),ph:'PS-1'},
     {k:'psu',type:'select',label:'Supply',opts:P.psu.map(x=>({v:x.id,t:x.name})),val:V.drvPsu||commonPsu()},
-    {k:'keep',type:'check',cap:'Keep placing drivers',val:true}
+    {k:'keep',type:'check',cap:'Keep placing drivers',val:P.toolMode!=='once'}
   ],ok:'Place',note:'Assign the runs it feeds in the inspector — load and the longest home run are then checked for you.'});
   if(!r){ setTool('pan'); return; }
   V.drvPsu=r.psu;
@@ -5394,7 +5481,7 @@ async function placePoint(kind,p){
   const r=await dlg({title:kind==='feed'?'Place a feed point':'Place a splice',fields:[
     {k:'t',type:'select',label:'On which run',opts:list.map(t=>({v:t.id,t:tagOf(t)+(t.name?' · '+t.name:'')})),
       val:near.t.id},
-    {k:'keep',type:'check',cap:'Keep placing',val:true}
+    {k:'keep',type:'check',cap:'Keep placing',val:P.toolMode!=='once'}
   ],ok:'Place',
     note:kind==='feed'
       ? 'Placed feed points replace the calculated count, and each one measures its own home run back to its driver.'
@@ -9169,7 +9256,8 @@ $('#btnCsvZone').onclick=()=>{
    optionally the product library with them — as one file to start from. */
 const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt','labFeed','labEa',
   'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblSize','snap',
-  'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','keepPdf'];
+  'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','keepPdf',
+  'hideTool','pals','toolMode'];
 function presetText(withLib){
   const set={};
   PRESET_KEYS.forEach(k=>{ if(P[k]!==undefined) set[k]=clone(P[k]); });
@@ -9191,6 +9279,9 @@ function applyPreset(d,withLib){
   /* run it through the same checks a project file gets, so a hand-edited preset
      cannot put nonsense into the settings */
   applyProject(JSON.parse(projFileText()));
+  /* the toolbar and the palettes are settings too, so they redraw here rather
+     than in each caller */
+  renderToolbar(); renderPals();
   return {n,lib};
 }
 async function savePreset(){
@@ -9220,7 +9311,7 @@ async function openPreset(file){
   let res;
   try{ res=applyPreset(d,!!(r.lib&&hasLib)); }
   catch(e){ toast(e.message); return; }
-  boot(true); renderSettings&&0; markDirty();
+  boot(true); markDirty();
   toast(res.n+' setting'+(res.n===1?'':'s')+' applied'+(res.lib?' and '+res.lib+' products loaded':''));
 }
 /* ---- product library as its own file, so a company standard is shared ---- */
@@ -9826,6 +9917,10 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Palettes: pinned, folded, hidden','A palette has three states, like any panel. <b>Pinned</b> stays open. <b>Unpinned</b> folds back to its bar the moment you take a tool off it, so it stops covering the drawing \u2014 press the triangle to open it again. <b>Hidden</b> is off screen but kept, and Settings \u203a Tools shows it back. Drag it by its bar; where it sits is part of the job.'],
+      ['Managing a palette in place','The \u22ef button on a palette picks which tools are on it. Right-click a tool on a palette \u2014 or long-press it on a tablet \u2014 to take just that one off. Nothing about the tool itself changes; a palette is only a shortcut to it.'],
+      ['Recent tools','A palette that fills itself with the last eight tools you reached for, so the second and third use of anything is one press. There is nothing to choose on it, and it can be cleared.'],
+      ['After placing a markup','Settings \u203a Tools decides whether a tool stays selected for the next one or goes back to Select \u2014 Bluebeam\u2019s drawing and properties modes. The tools that ask \u201ckeep placing?\u201d start from that answer.'],
       ['Ellipse (O)','A round cove. Drag it out \u2014 \u21e7 keeps it a circle \u2014 and it measures the way round its edge, with the radius or both axes and the area alongside. It can carry a treatment like any other measurement, so a circular cove orders properly.'],
       ['Angle (Y)','Click the corner, then a point down each leg. It reads the angle, what the run turns through, both leg lengths, and the mitre to cut on each side \u2014 half the angle.'],
       ['Radius (U)','Three points anywhere along a curve on the drawing and it fits the circle through them: radius, diameter, the arc between the outer two, the included angle and the chord. Read a radius off a plan this way, then type it into a run\u2019s segment to match.'],
@@ -9995,7 +10090,11 @@ function settingsHtml(){
     });
     h+='</div><div class="setgrp"><h4>Pinned palettes</h4>'
       +'<div class="setrow"><div class="lab"><b>Floating sets of tools</b><span>A palette sits over the drawing where you leave it and comes back with the job. Drag it by its bar.</span></div>'
-      +'<div class="ctl"><button class="btn sm pri" data-set="palNew">Pin a palette…</button></div></div>';
+      +'<div class="ctl"><button class="btn sm pri" data-set="palNew">Pin a palette…</button>'
+      +'<button class="btn sm" data-set="palRecent">'
+      +((P.pals||[]).some(p=>p.recent)?'Show recent tools':'Add a recent-tools palette')+'</button></div></div>'
+      +setRow('After placing a markup','Keep the tool for the next one, or go back to Select.',
+        setSel('toolMode',[{v:'stay',t:'Keep the tool'},{v:'once',t:'Back to Select'}],P.toolMode||'stay'));
     (P.pals||[]).forEach(p=>{
       h+='<div class="setrow"><div class="lab"><b>'+esc(p.name||'Tools')+'</b><span>'
         +((p.tools||[]).length?(p.tools||[]).map(k=>{const d=toolDef(k);return d?d.t.split(/[—·]/)[0].trim():k;}).join(', '):'nothing on it')
@@ -10079,6 +10178,15 @@ function renderSettings(){
     if(k==='toolsAll') el.onclick=()=>{ P.hideTool={}; renderToolbar(); renderSettings(); markDirty();
       toast('Every tool is on the toolbar'); };
     if(k==='palNew') el.onclick=async()=>{ await editPal(null); renderSettings(); };
+    if(k==='palRecent') el.onclick=()=>{
+      P.pals=P.pals||[];
+      let p=P.pals.find(x=>x.recent);
+      if(!p){ p={id:uid('pal_'),name:'Recent tools',tools:[],x:24,y:120,open:true,pinned:true,
+        collapsed:false,recent:true}; P.pals.push(p); }
+      p.open=true; p.collapsed=false;
+      renderPals(); renderSettings(); markDirty();
+      toast('Recent tools fills itself with whatever you have just used');
+    };
     if(k==='palEdit') el.onclick=async()=>{
       await editPal((P.pals||[]).find(p=>p.id===el.dataset.pal)); renderSettings(); };
     if(k==='palShow') el.onclick=()=>{
@@ -10106,6 +10214,7 @@ function applySetting(el){
     case 'code': P.code=val; renderCodeKey(); drawOverlay(); renderAnnList(); break;
     case 'units': P.units=val; $('#unitBtn').textContent=P.units.toUpperCase();
       syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderLib(); renderBom(); stats(); break;
+    case 'toolMode': P.toolMode=val==='once'?'once':'stay'; break;
     case 'snap': P.snap=val; syncSnapBtn(); if(val&&!SNAP.grid) buildSnap(); break;
     case 'round': P.round=val; P.treat.forEach(t=>{ if(!t.round) t.roundDefault=val; });
       renderTreatments(); renderBom(); stats(); break;
@@ -10273,6 +10382,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   segToArc,setBulge,shiftBulge,bulgeOf,bulgeGeom,bulgeFromDeg,bulgeFromRadius,bowSign,delPointFrom,
   bowGrip,hitBow,bowFromPoint,roundCorners,roundOne,finishDraft,
   tools:TOOLS,toolGroups:TOOL_GROUPS,toolOrder,toolDef,toolShown,renderToolbar,renderPals,editPal,
+  palTools,noteRecent,recentMax:RECENT_MAX,
   ellOf,ellPts,angOf,radOf,tapThree,
   annPath,annPathSeg,segArcOf,segArcPts,hasBulge,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
