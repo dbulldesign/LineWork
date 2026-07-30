@@ -320,6 +320,13 @@ input.up{text-transform:uppercase}
   text-transform:none;letter-spacing:0;white-space:nowrap;cursor:pointer}
 .multi input{width:auto;min-height:0}
 @media(pointer:coarse){.multi label{padding:5px 0}.multi{gap:6px 16px}}
+#lockBar{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 8px);
+  z-index:70;display:none;align-items:center;gap:10px;padding:8px 10px 8px 14px;border-radius:10px;
+  background:var(--s2);border:1px solid var(--amber);color:var(--ink);
+  box-shadow:0 8px 30px rgba(0,0,0,.5);max-width:min(92vw,640px);font-size:12.5px;line-height:1.35}
+#lockBar.show{display:flex}
+#lockBar span{flex:1}
+#lockBar .btn{flex:0 0 auto}
 .toast{position:fixed;left:50%;bottom:44px;transform:translate(-50%,14px);background:var(--s3);border:1px solid var(--line2);border-left:2px solid var(--amber);padding:9px 15px;font-size:12px;opacity:0;transition:.22s;pointer-events:none;z-index:80;border-radius:2px}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
@@ -662,13 +669,15 @@ body.haspen #penFlag{display:inline}
     </div></div>
     <div class="sec"><h3>Project file</h3><div class="body">
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <input type="file" id="projInput" accept=".json,application/json" hidden>
+        <input type="file" id="projInput" accept=".json,.zip,application/json,application/zip" hidden>
         <button class="btn pri" id="btnJson">Save project file</button>
+        <button class="btn" id="btnBundle">Save with drawings</button>
         <button class="btn" id="btnOpenProj">Open project file</button>
         <button class="btn" id="btnAutoFile" style="display:none">Auto-save to a file…</button>
       </div>
-      <div class="hint" style="margin-top:6px">Saves the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> file (⌘S / Ctrl-S). Drawings are not included: open the file, re-import the same PDFs, and every markup reattaches.</div>
-      <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current.</div>
+      <div class="hint" style="margin-top:6px"><b>Save project file</b> writes the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> (⌘S / Ctrl-S). Small, but the drawings are not in it: open it elsewhere and you re-import the same PDFs for the markups to reattach.</div>
+      <div class="hint" style="margin-top:4px"><b>Save with drawings</b> writes a <b>.linework.zip</b> with the PDFs inside, byte for byte. That one file is the whole job — put it in iCloud Drive, Dropbox or OneDrive and open it on another machine with the drawings already there. It is an ordinary zip, so the sheets can be pulled out by hand too. Expect it to be as big as the drawings are.</div>
+      <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current — a <b>.json</b> after every change, a <b>.linework.zip</b> every 15 seconds and whenever you leave the tab, since it is rewritten whole.</div>
     </div></div>
   </div>
   <div class="pane" id="pCuts">
@@ -699,6 +708,7 @@ body.haspen #penFlag{display:inline}
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div class="toast" id="toast"></div>
+<div id="lockBar"><span></span><button class="btn" id="btnTakeOver">Take over</button></div>
 <div class="scrim" id="manScrim"><div class="setwrap manwrap">
   <div class="sethd">
     <b>Manual</b>
@@ -729,7 +739,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.29.0';
+const APP_VER='1.30.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1021,6 +1031,66 @@ let saveT=null, saved=false;
 let FH=null;                       // linked file handle, when the browser has the API
 let autoFile=true;                 // write through to that file on every autosave
 const canLinkFile=()=>typeof window.showSaveFilePicker==='function';
+/* a linked .zip is the bundle — the whole job, drawings included */
+const linkedBundle=()=>!!(FH&&/\.zip$/i.test(FH.name||''));
+/* ---- one tab at a time ----
+   Two tabs open on the same job both auto-save to the same browser store, and
+   the last write wins with nothing said. So one tab holds the pen: any other
+   stops writing and says so, with a button to take it over. Presence is asked
+   for over a BroadcastChannel, so a plain reload — which kills a tab without
+   releasing anything — hands the pen straight back. */
+const LOCK='linework.lock.v1', LOCK_STALE=12000;
+const TAB=Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
+let holdLock=true;                 /* optimistic: never behave worse than not having this */
+let lockBC=null;
+const lockRead=()=>{ try{ return JSON.parse(localStorage.getItem(LOCK)||'null'); }catch(e){ return null; } };
+const lockWrite=()=>{ try{ localStorage.setItem(LOCK,JSON.stringify({tab:TAB,at:Date.now()})); }catch(e){} };
+function lockBarSync(){
+  const b=$('#lockBar'); if(!b) return;
+  b.classList.toggle('show',!holdLock);
+  b.querySelector('span').textContent=
+    'This job is open in another tab. Auto-save is paused here so that copy is not overwritten.';
+}
+function lockLose(){
+  if(!holdLock) return;
+  holdLock=false; lockBarSync();
+  const el=$('#stSave');
+  if(el){ el.textContent='Auto-save paused'; el.title='Another tab holds this job'; }
+}
+function lockTake(){
+  holdLock=true; lockWrite(); lockBarSync();
+  if(lockBC) try{ lockBC.postMessage({a:'took',tab:TAB}); }catch(e){}
+  toast('Auto-saving here now — the other tab has stopped');
+  saveProject();
+}
+function lockStart(){
+  try{ if(typeof BroadcastChannel==='function') lockBC=new BroadcastChannel(LOCK); }catch(e){}
+  if(lockBC) lockBC.onmessage=e=>{
+    const m=e.data||{};
+    if(m.a==='who'&&holdLock){ try{ lockBC.postMessage({a:'mine',tab:TAB}); }catch(_){} }
+    else if(m.a==='mine'&&m.tab!==TAB) lockLose();
+    else if(m.a==='took'&&m.tab!==TAB) lockLose();
+  };
+  /* ask who is here; a live answer within a moment means we are the second tab */
+  if(lockBC) try{ lockBC.postMessage({a:'who',tab:TAB}); }catch(e){}
+  else{
+    /* no channel: fall back to a heartbeat that goes stale when a tab dies */
+    const r=lockRead();
+    if(r&&r.tab!==TAB&&Date.now()-(+r.at||0)<LOCK_STALE) lockLose();
+  }
+  if(holdLock) lockWrite();
+  setInterval(()=>{ if(holdLock) lockWrite(); },4000);
+  window.addEventListener('storage',e=>{
+    if(e.key!==LOCK||lockBC) return;
+    const r=lockRead();
+    if(r&&r.tab!==TAB) lockLose();
+  });
+  /* leaving releases it, so a reload does not lock the job against itself */
+  const go=()=>{ try{ const r=lockRead(); if(r&&r.tab===TAB) localStorage.removeItem(LOCK); }catch(e){}
+    if(lockBC) try{ lockBC.postMessage({a:'bye',tab:TAB}); }catch(e){} };
+  window.addEventListener('pagehide',go);
+  lockBarSync();
+}
 function markDirty(){ saved=false; $('#stSave').textContent='Unsaved'; clearTimeout(saveT); saveT=setTimeout(saveProject,1200); }
 function stampSaved(where){
   saved=true;
@@ -1030,15 +1100,27 @@ function stampSaved(where){
   el.title='Auto-saved to '+where;
 }
 /* write the project through to the linked file; drops the link if access is gone */
-async function writeFH(text){
+let bundleAt=0;                    // when the linked bundle was last rewritten
+const BUNDLE_EVERY=15000;          // and how often that is worth doing
+async function writeFH(text,force){
   if(!FH) return false;
   try{
     if(FH.queryPermission){
       const st=await FH.queryPermission({mode:'readwrite'});
       if(st!=='granted') throw new Error('permission');
     }
+    /* a bundle is the whole job including the drawings — rewriting it on every
+       keystroke would be megabytes a second, so it goes at a slower cadence and
+       always when the tab is leaving */
+    let body=text;
+    if(linkedBundle()){
+      const now=Date.now();
+      if(!force&&now-bundleAt<BUNDLE_EVERY) return false;
+      bundleAt=now;
+      body=(await bundleBlob()).blob;
+    }
     const w=await FH.createWritable();
-    await w.write(text); await w.close();
+    await w.write(body); await w.close();
     return true;
   }catch(e){
     FH=null; syncFileBtn();
@@ -1046,10 +1128,16 @@ async function writeFH(text){
     return false;
   }
 }
-async function saveProject(){
+async function saveProject(force){
+  /* the other tab owns the stored copy — writing would silently replace its work */
+  if(!holdLock){
+    const el=$('#stSave');
+    if(el){ el.textContent='Auto-save paused'; el.title='Another tab holds this job — take over to save here'; }
+    return;
+  }
   const body=JSON.stringify(P);
   let where=null;
-  if(FH&&autoFile&&await writeFH(projFileText())) where=FH.name;
+  if(FH&&autoFile&&await writeFH(projFileText(),force)) where=FH.name;
   try{ if(window.storage){ await window.storage.set(KEY,body,false); stampSaved(where||'this session'); return; } }catch(e){}
   try{ localStorage.setItem(KEY,body); stampSaved(where||'this browser'); return; }catch(e){}
   if(where){ stampSaved(where); return; }
@@ -1057,7 +1145,7 @@ async function saveProject(){
   el.textContent='Not auto-saved'; el.title='Auto-save unavailable here — use Save project file';
 }
 /* flush immediately when the tab is backgrounded — iPadOS discards pages freely */
-function flushSave(){ if(saved) return; clearTimeout(saveT); saveProject(); }
+function flushSave(){ if(saved&&!linkedBundle()) return; clearTimeout(saveT); saveProject(true); }
 document.addEventListener('visibilitychange',()=>{ if(document.hidden) flushSave(); });
 window.addEventListener('pagehide',flushSave);
 window.addEventListener('beforeunload',e=>{
@@ -6375,7 +6463,7 @@ const CRC_T=(()=>{ const t=new Uint32Array(256);
 function crc32(u8){ let c=0xFFFFFFFF;
   for(let i=0;i<u8.length;i++) c=CRC_T[(c^u8[i])&0xFF]^(c>>>8);
   return (c^0xFFFFFFFF)>>>0; }
-function zipStore(files){
+function zipStore(files,mime){
   const enc=new TextEncoder(), chunks=[], dir=[];
   let off=0;
   const now=new Date();
@@ -6401,7 +6489,36 @@ function zipStore(files){
   });
   const end=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(dir.length),...u16(dir.length),
     ...u32(cdLen),...u32(off),...u16(0)]);
-  return new Blob([...chunks,...cd,end],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+  return new Blob([...chunks,...cd,end],
+    {type:mime||'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'});
+}
+/* Reading a stored zip back. Only method 0 is written by zipStore and only
+   method 0 is accepted here — a deflated entry is reported rather than guessed
+   at, because there is no inflater in this file. */
+function zipRead(buf){
+  const u8=new Uint8Array(buf), dv=new DataView(u8.buffer,u8.byteOffset,u8.byteLength);
+  const dec=new TextDecoder();
+  /* the end-of-central-directory record is last, after a comment of unknown length */
+  let end=-1;
+  for(let i=u8.length-22;i>=0&&i>u8.length-70000;i--) if(dv.getUint32(i,true)===0x06054b50){ end=i; break; }
+  if(end<0) throw new Error('not a zip archive');
+  const n=dv.getUint16(end+10,true);
+  let p=dv.getUint32(end+16,true);
+  const out={};
+  for(let i=0;i<n;i++){
+    if(dv.getUint32(p,true)!==0x02014b50) throw new Error('zip directory is damaged');
+    const method=dv.getUint16(p+10,true), size=dv.getUint32(p+24,true);
+    const nl=dv.getUint16(p+28,true), el=dv.getUint16(p+30,true), cl=dv.getUint16(p+32,true);
+    const name=dec.decode(u8.subarray(p+46,p+46+nl));
+    const lo=dv.getUint32(p+42,true);
+    if(dv.getUint32(lo,true)!==0x04034b50) throw new Error('zip entry is damaged');
+    const lnl=dv.getUint16(lo+26,true), lel=dv.getUint16(lo+28,true);
+    const at=lo+30+lnl+lel;
+    if(method!==0) throw new Error(name+' is compressed — this reader only handles stored entries');
+    out[name]=u8.slice(at,at+size);
+    p+=46+nl+el+cl;
+  }
+  return out;
 }
 const xe=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]));
 function colName(i){ let s=''; i++; while(i>0){ const m=(i-1)%26; s=String.fromCharCode(65+m)+s; i=(i-m-1)/26; } return s; }
@@ -6662,6 +6779,42 @@ $('#btnTitles').onclick=()=>scanTitleblocks(false);
    drawings after opening and every markup reattaches by name + size. */
 const slug=s=>String(s||'project').replace(/\W+/g,'-').replace(/^-+|-+$/g,'').toLowerCase()||'project';
 const projFileName=()=>slug(P.name)+'.linework.json';
+const bundleName=()=>slug(P.name)+'.linework.zip';
+/* ---- one file with the drawings in it ----
+   A stored zip holding the project JSON and every sheet's PDF exactly as it was
+   imported. Nothing is compressed: PDFs already are, and a stored archive opens
+   in any zip tool, so the file doubles as something you can hand over. */
+const BUNDLE_JSON='project.json';
+const BUNDLE_NOTE=[
+ 'This is a LineWork project.',
+ '',
+ 'project.json  the whole takeoff — sheets, scale, markups, treatments, libraries',
+ 'sheets/       the drawings, byte for byte as they were imported',
+ '',
+ 'Open it with LineWork: Project file \u203a Open project file. It is an ordinary',
+ 'zip, so the PDFs can also just be pulled out of sheets/ by hand.'].join('\n');
+async function bundleBlob(){
+  const files=[{name:BUNDLE_JSON,data:projFileText()},{name:'README.txt',data:BUNDLE_NOTE}];
+  const missing=[];
+  for(const d of P.docs){
+    let buf=null;
+    try{ const rec=await pdfLoad(d.id); if(rec&&rec.buf) buf=rec.buf; }catch(e){}
+    if(!buf){ missing.push(d.name||d.id); continue; }
+    files.push({name:'sheets/'+d.id+'.pdf',data:new Uint8Array(buf)});
+  }
+  return {blob:zipStore(files,'application/zip'),missing,
+    sheets:files.length-2};
+}
+/* the drawings in a bundle are put back into this browser's store, so the job
+   behaves exactly as if the PDFs had been imported here */
+async function openBundle(file){
+  const map=zipRead(await file.arrayBuffer());
+  const json=map[BUNDLE_JSON];
+  if(!json) throw new Error(file.name+' has no project.json in it');
+  const d=JSON.parse(new TextDecoder().decode(json));
+  const pdfs=Object.keys(map).filter(k=>/^sheets\/.+\.pdf$/.test(k));
+  return {data:d,pdfs:pdfs.map(k=>({id:k.slice(7,-4),buf:map[k]}))};
+}
 function projFileText(){ return JSON.stringify(Object.assign(
   {app:'linework',ver:FILE_VER,appVer:APP_VER,savedAt:new Date().toISOString()},P),null,1); }
 /* Save links the project to a real file when the browser supports it, so
@@ -6691,6 +6844,38 @@ async function saveProjectFile(){
   try{ download(name,projFileText(),'application/json'); toast('Saved '+name); saveProject(); }
   catch(e){ toast('Download blocked — use Copy JSON instead'); }
 }
+/* Save everything as one file. Big — the drawings are most of it — so the size
+   is reported rather than sprung on you. */
+async function saveBundleFile(){
+  if(!P.docs.length){ toast('No drawings to bundle — use Save project file'); return; }
+  if(P.keepPdf===false){
+    toast('“Keep drawings in this browser” is off in Settings, so there is nothing to bundle');
+    return;
+  }
+  toast('Packing the drawings…');
+  let b;
+  try{ b=await bundleBlob(); }
+  catch(e){ toast('Could not build the file — '+e.message); return; }
+  const mb=(b.blob.size/1048576).toFixed(1);
+  if(b.missing.length)
+    toast(b.missing.length+' drawing'+(b.missing.length===1?' is':'s are')+' not in this browser: '
+      +b.missing.slice(0,3).join(', ')+(b.missing.length>3?'…':''));
+  const name=bundleName();
+  if(canLinkFile()){
+    try{
+      const h=await window.showSaveFilePicker({suggestedName:name,
+        types:[{description:'Linework project with drawings',accept:{'application/zip':['.zip']}}]});
+      const w=await h.createWritable(); await w.write(b.blob); await w.close();
+      FH=h; syncFileBtn(); stampSaved(h.name);
+      toast('Saved '+h.name+' — '+mb+' MB, '+b.sheets+' drawing'+(b.sheets===1?'':'s')+' inside');
+      return;
+    }catch(e){ if(e&&e.name==='AbortError') return; }
+  }
+  try{
+    downloadBlob(name,b.blob);
+    toast('Saved '+name+' — '+mb+' MB, '+b.sheets+' drawing'+(b.sheets===1?'':'s')+' inside');
+  }catch(e){ toast('Download blocked — save the project file instead'); }
+}
 function syncFileBtn(){
   const b=$('#btnAutoFile');
   if(!b) return;
@@ -6699,15 +6884,28 @@ function syncFileBtn(){
   b.textContent=FH? (autoFile?'Auto-save: '+FH.name:'Auto-save off') : 'Auto-save to a file…';
   b.title=FH? 'Writing to '+FH.name+' after every change' : 'Pick a file to keep auto-saving into';
 }
+/* a bundle starts with the local file header of its first entry */
+async function isBundle(file){
+  try{
+    const head=new Uint8Array(await file.slice(0,4).arrayBuffer());
+    return head[0]===0x50&&head[1]===0x4B&&head[2]===0x03&&head[3]===0x04;
+  }catch(e){ return false; }
+}
 async function openProjectFile(file){
-  let d;
-  try{ d=JSON.parse(await file.text()); }
-  catch(e){ toast('Could not read '+file.name+' — not valid JSON'); return; }
+  let d,packed=null;
+  if(await isBundle(file)){
+    try{ const b=await openBundle(file); d=b.data; packed=b.pdfs; }
+    catch(e){ toast('Could not read '+file.name+' — '+e.message); return; }
+  }else{
+    try{ d=JSON.parse(await file.text()); }
+    catch(e){ toast('Could not read '+file.name+' — not valid JSON'); return; }
+  }
   if(P.treat.length||P.ann.length){
     const n=(d&&Array.isArray(d.treat)?d.treat.length:0);
     const r=await dlg({title:'Open project file',fields:[
       {k:'go',type:'check',cap:'Replace the takeoff open right now',val:false}
-    ],ok:'Open',note:file.name+(n?' holds '+n+' treatment'+(n===1?'':'s')+'. ':' ')
+    ],ok:'Open',note:file.name+(n?' holds '+n+' treatment'+(n===1?'':'s')
+      +(packed?' and '+packed.length+' drawing'+(packed.length===1?'':'s'):'')+'. ':' ')
       +'The current project has '+P.treat.length+' treatment'+(P.treat.length===1?'':'s')+' and '
       +P.ann.length+' markup'+(P.ann.length===1?'':'s')+', which will be discarded. Save it first if you need it.'});
     if(!r||!r.go) return;
@@ -6721,6 +6919,18 @@ async function openProjectFile(file){
   showInspector(null); closeCtx();
   stage.style.display='none'; $('#blank').style.display='';
   boot(); setTool('pan'); saveProject();
+  /* a bundle carries its drawings — put them in this browser's store first, so
+     they restore exactly as an import would have left them */
+  let put=0;
+  if(packed&&packed.length&&P.keepPdf!==false){
+    for(const p of packed){
+      if(!P.docs.some(x=>x.id===p.id)) continue;      /* a sheet the JSON dropped */
+      const doc=P.docs.find(x=>x.id===p.id);
+      try{ await pdfSave(p.id,p.buf.buffer.slice(p.buf.byteOffset,p.buf.byteOffset+p.buf.byteLength),
+             {name:doc.name||p.id,size:p.buf.byteLength}); put++; }
+      catch(e){ /* out of room: restoreDrawings simply will not find it */ }
+    }
+  }
   /* the same drawings may already be in this browser from a previous session */
   const back=await restoreDrawings();
   if(back){
@@ -6729,8 +6939,11 @@ async function openProjectFile(file){
     if(first) await openDoc(first.id,1,true);
   }
   pdfPrune();
-  toast('Opened '+file.name+(back?' — '+back+' drawing'+(back===1?'':'s')+' restored'
-    :(P.docs.length?' — re-import the drawings to see markups':'')));
+  toast('Opened '+file.name+(back?' — '+back+' drawing'+(back===1?'':'s')
+      +(put?' from the file':' restored')
+    :(P.docs.length?(packed&&packed.length&&P.keepPdf===false
+        ? ' — drawings are in it, but "keep drawings" is off in Settings'
+        : ' — re-import the drawings to see markups'):'')));
 }
 $('#btnPdf').onclick=exportSheetPdf;
 $('#btnCsvPieces').onclick=()=>{
@@ -6844,6 +7057,8 @@ $('#libInput').onchange=async e=>{
 };
 
 $('#btnJson').onclick=$('#btnSave').onclick=saveProjectFile;
+$('#btnBundle').onclick=saveBundleFile;
+$('#btnTakeOver').onclick=lockTake;
 $('#btnAutoFile').onclick=()=>{
   if(!FH) return saveProjectFile();          /* nothing linked yet — pick a file */
   autoFile=!autoFile; syncFileBtn();
@@ -7594,11 +7809,14 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   openSettings,closeSettings,applySetting,applyPanels,setPanel,offsOf,offFor,setDrawScale,
   buildSnap,snapAt,snapInfo:()=>({n:SNAP.n,key:SNAP.key,truncated:SNAP.truncated,on:P.snap!==false}),
   snapSample:(k)=>{ const out=[]; if(SNAP.grid) for(const b of SNAP.grid.values()) for(const q of b){ out.push(q.slice()); if(out.length>=(k||10)) return out; } return out; },
+  lock:{held:()=>holdLock,lose:lockLose,take:lockTake,tab:()=>TAB,key:LOCK},
+  bundle:{blob:bundleBlob,read:zipRead,name:bundleName},
   render(){boot()}};
 (async()=>{
   probeInsets();
   addEventListener('orientationchange',()=>setTimeout(probeInsets,250));
   await loadProject(); loadHist(); boot(); setTool('pan');
+  lockStart();
   setTimeout(checkForUpdate,4000);
   if(!PDF_OK){ toast('The PDF engine did not load — check vendor/pdf.min.js'); return; }
   /* drawings kept in this browser come back on their own */

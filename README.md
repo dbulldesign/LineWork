@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.29.0**
+**Version 1.30.0**
 
 ## What it does
 
@@ -206,11 +206,27 @@ writes the whole takeoff — sheets, calibration, markups, treatments, and produ
 libraries — to a single `.linework.json` file. In Chrome and Edge that file stays
 linked, and auto-save keeps writing to it.
 
-The PDFs themselves are never stored *in the project file* — that keeps it small
-and portable. They are kept separately in this browser, so reopening a job on the
-same machine needs no re-import; on another machine, open the project file,
-re-import the same drawings, and every dimension, note and link reattaches by
-filename and size.
+The PDFs are not in that file — that keeps it small. They are kept separately in
+this browser, so reopening a job on the same machine needs no re-import; on
+another machine, open the project file, re-import the same drawings, and every
+dimension, note and link reattaches by filename and size.
+
+**Save with drawings** writes one file that holds everything: a `.linework.zip`
+containing the project and every sheet's PDF byte for byte. Open it anywhere and
+the job comes back with its drawings already there — nothing to re-import. Put it
+in iCloud Drive, Dropbox or OneDrive and that single file *is* the job, on every
+machine you use. It is a plain stored zip, so the sheets can also be pulled out
+of `sheets/` by hand, and a `README.txt` inside says what the file is. Expect it
+to be about as big as the drawings are.
+
+In Chrome and Edge a `.linework.zip` can stay linked like the JSON does, but
+because the whole archive is rewritten each time, auto-save writes it every 15
+seconds rather than after every change — and always when you leave the tab.
+
+**One tab at a time.** Two tabs open on the same job would both auto-save to the
+same browser storage, last write winning with nothing said. So one tab holds the
+pen; any other says *This job is open in another tab*, stops writing, and offers
+**Take over**. Closing or reloading a tab hands the pen straight back.
 
 ## The manual
 
