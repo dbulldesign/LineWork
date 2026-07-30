@@ -395,6 +395,23 @@ input.up{text-transform:uppercase}
 .prog .pfill{height:100%;width:0;background:var(--amber);transition:width .15s}
 .prog .pft{display:flex;justify-content:space-between;align-items:center;margin-top:10px;gap:10px}
 .prog .pct{font-size:11px;color:var(--dim)}
+/* Type to find a product. A grouped list is still a list, and a library holding a
+   manufacturer's whole catalogue is too long to scroll. */
+.combo{position:relative}
+.combo>input{width:100%}
+.cbmenu{position:absolute;left:0;right:0;top:100%;z-index:60;background:var(--s2);
+  border:1px solid var(--line2);border-radius:2px;max-height:264px;overflow:auto;display:none;
+  box-shadow:0 10px 28px rgba(0,0,0,.45)}
+.cbmenu.show{display:block}
+.cbg{padding:5px 9px;font-size:10px;letter-spacing:.08em;text-transform:uppercase;
+  color:var(--dim);background:var(--s3);position:sticky;top:0}
+.cbo{padding:7px 9px;font-size:12px;cursor:pointer;border-top:1px solid var(--line);color:var(--txt)}
+.cbo:first-child{border-top:0}
+.cbo.on,.cbo:hover{background:var(--s3)}
+.cbo .why{display:block;color:var(--faint);font-size:11px;margin-top:2px}
+.cbo.cur{border-left:2px solid var(--amber)}
+.cbnone{padding:10px 9px;font-size:11px;color:var(--dim)}
+@media(pointer:coarse){ .cbo{padding:11px 10px} .cbmenu{max-height:52vh} }
 
 .mobtog{display:inline-flex}
 /* ---------- narrow screens: tablets, and a laptop with both rails wanted ----------
@@ -856,7 +873,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.54.0';
+const APP_VER='1.55.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1726,6 +1743,96 @@ function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('sh
    the whole thing it exists to prevent. */
 const PROG={on:false,stop:false};
 const frame=()=>new Promise(r=>requestAnimationFrame(()=>r()));
+/* ---- type to find a product ----
+   Enhances a <select> rather than replacing it: the select stays in the DOM with
+   its value and its wiring, and the box on top only sets it and fires input. Every
+   handler downstream — the run card, batch edit, applying a saved spec — carries on
+   as if nothing changed, and if this never runs the select still works.
+
+   Matching is the same as the library search, so a wattage, a colour temperature, a
+   connector code or a part number all find a product, not only its name. */
+const comboMatch=(o,q)=>{ const h=libHay(o); return q.split(/\s+/).every(w=>h.includes(w)); };
+function wireCombo(root,key,list,state,label){
+  const sel=root.querySelector('[data-t="'+key+'"]');
+  if(!sel||sel.disabled||sel.dataset.combo) return;
+  sel.dataset.combo='1';
+  const cur=()=>list.find(o=>o.id===sel.value)||null;
+  const box=document.createElement('div'); box.className='combo';
+  const inp=document.createElement('input');
+  inp.type='text'; inp.setAttribute('role','combobox'); inp.setAttribute('autocomplete','off');
+  inp.setAttribute('aria-expanded','false');
+  inp.placeholder='Type to find '+(label||'a product')+'\u2026';
+  const menu=document.createElement('div'); menu.className='cbmenu';
+  box.appendChild(inp); box.appendChild(menu);
+  sel.style.display='none';
+  sel.parentNode.insertBefore(box,sel.nextSibling);
+  const show=()=>{ const c=cur(); inp.value=c?c.name:''; };
+  show();
+  let open=false, rows=[], at=-1;
+  const build=()=>{
+    const q=inp.value.trim().toLowerCase();
+    const typed=!!q&&(!cur()||q!==cur().name.toLowerCase());
+    const g={yes:[],unknown:[],no:[]};
+    list.forEach(o=>{
+      if(typed&&!comboMatch(o,q)) return;
+      const st=state(o)||{k:'unknown'};
+      /* Browsing respects the "only what fits" setting; typing does not, because a
+         product asked for by name must be findable. It is still put last and said
+         to be unlisted. */
+      if(st.k==='no'&&!typed&&o.id!==sel.value&&P.onlyFit!==false) return;
+      g[st.k==='any'?'yes':st.k].push({o,st});
+    });
+    const stated=g.yes.some(x=>x.st.k==='yes')||g.no.length;
+    rows=[];
+    let html='';
+    const sect=(k,lab)=>{
+      if(!g[k].length) return;
+      if(stated) html+='<div class="cbg">'+esc(lab)+'</div>';
+      g[k].forEach(({o,st})=>{
+        html+='<div class="cbo'+(o.id===sel.value?' cur':'')+'" data-i="'+rows.length+'">'
+          +esc(o.name)+(st.k==='no'?'<span class="why">'+esc(st.why||'not listed as fitting')+'</span>':'')
+          +'</div>';
+        rows.push(o.id);
+      });
+    };
+    sect('yes','Fits this product'); sect('unknown','Not stated on either cutsheet');
+    sect('no','Not listed as fitting');
+    if(!rows.length) html='<div class="cbnone">Nothing in the library matches that.</div>';
+    menu.innerHTML=html;
+    at=rows.indexOf(sel.value);
+    mark();
+  };
+  const mark=()=>{ $$('.cbo',menu).forEach((el,i)=>el.classList.toggle('on',i===at)); };
+  const openIt=()=>{ open=true; build(); menu.classList.add('show'); inp.setAttribute('aria-expanded','true');
+    const on=menu.querySelector('.cbo.on'); if(on) on.scrollIntoView({block:'nearest'}); };
+  const closeIt=()=>{ open=false; menu.classList.remove('show'); inp.setAttribute('aria-expanded','false'); show(); };
+  const pick=id=>{
+    if(!id) return closeIt();
+    open=false; menu.classList.remove('show');
+    if(id===sel.value){ show(); return; }
+    sel.value=id;
+    sel.dispatchEvent(new Event('input',{bubbles:true}));
+  };
+  inp.onfocus=()=>{ inp.select(); openIt(); };
+  inp.onclick=()=>{ if(!open) openIt(); };
+  inp.oninput=()=>{ if(!open){ open=true; menu.classList.add('show'); } build(); };
+  inp.onkeydown=e=>{
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault(); if(!open) return openIt();
+      if(!rows.length) return;
+      at=(at+(e.key==='ArrowDown'?1:-1)+rows.length)%rows.length;
+      mark(); const on=menu.querySelector('.cbo.on'); if(on) on.scrollIntoView({block:'nearest'});
+    }
+    else if(e.key==='Enter'){ e.preventDefault(); if(open&&rows.length) pick(rows[at<0?0:at]); }
+    else if(e.key==='Escape'){ if(open){ e.preventDefault(); e.stopPropagation(); closeIt(); } }
+    else if(e.key==='Tab'&&open) closeIt();
+  };
+  menu.onmousedown=e=>{
+    const row=e.target.closest('.cbo'); if(!row) return;
+    e.preventDefault(); pick(rows[+row.dataset.i]);
+  };
+  inp.onblur=()=>setTimeout(()=>{ if(open) closeIt(); },120);
+}
 function progOpen(title,total){
   PROG.on=true; PROG.stop=false; PROG.total=total||0;
   $('#progT').textContent=title;
@@ -7620,13 +7727,17 @@ function renderTreatments(){
       return grp('yes','Fits this product')+grp('unknown','Not stated on either cutsheet')
         +grp('no','Not listed as fitting');
     };
-    const fixOpts=fitOpts(P.fix,t.fixId,f2=>{
+    /* one state function per list, shared by the grouped <select> and the box you
+       can type into, so the two can never disagree */
+    const stFix=f2=>{
       const a2=fitCh(f2,r.c), b2=fitPsu(f2,r.ps);
       if(a2.k==='no'||b2.k==='no') return {k:'no',why:(a2.k==='no'?a2.why:b2.why)};
       return (a2.k==='yes'||b2.k==='yes')?{k:'yes'}:{k:'unknown'};
-    });
-    const chOpts=fitOpts(P.ch,t.chId,c2=>fitCh(r.f,c2));
-    const psOpts=fitOpts(P.psu,t.psuId,p2=>fitPsu(r.f,p2));
+    };
+    const stCh=c2=>fitCh(r.f,c2), stPs=p2=>fitPsu(r.f,p2);
+    const fixOpts=fitOpts(P.fix,t.fixId,stFix);
+    const chOpts=fitOpts(P.ch,t.chId,stCh);
+    const psOpts=fitOpts(P.psu,t.psuId,stPs);
     const hidden=(P.onlyFit!==false)?(
       P.fix.filter(x=>x.id!==t.fixId&&(fitCh(x,r.c).k==='no'||fitPsu(x,r.ps).k==='no')).length
       +P.ch.filter(x=>x.id!==t.chId&&fitCh(r.f,x).k==='no').length
@@ -7755,6 +7866,10 @@ function renderTreatments(){
     });
     /* an approved treatment is read-only until it is unapproved */
     if(t.approved) $$('[data-t]',el).forEach(inp=>{ inp.disabled=true; inp.tabIndex=-1; });
+    /* after the disable pass, so an approved run keeps its plain read-only selects */
+    wireCombo(el,'fixId',P.fix,stFix,'an LED product');
+    wireCombo(el,'chId',P.ch,stCh,'a channel');
+    wireCombo(el,'psuId',P.psu,stPs,'a supply');
     $$('[data-t]',el).forEach(inp=>{
       inp.oninput=()=>{
         const k=inp.dataset.t;
@@ -11651,6 +11766,7 @@ function manualSections(){
       ['What fits what','Every sheet carries a compatibility block \u2014 a strip lists the extrusions it is made to sit in, an extrusion lists the strip families that fit it, a driver lists the LEDs it runs \u2014 and reading a sheet takes those lists too. On a run, the three lists then narrow each other: the products are grouped into what fits, what no sheet mentions either way, and what is listed as not fitting. Only the first two are offered, with a count of what is hidden and a button to show everything. Nothing is ever hidden that is already chosen, because a saved job must not change under a compatibility list that arrived afterwards. Where neither sheet states anything the run says the pairing could not be checked, rather than treating silence as a refusal \u2014 an incomplete list must not make a real product unreachable.'],
       ['Voltage','Not a compatibility list but electricity: a 24V supply on a 12V product is reported outright, and such a supply is never offered as fitting.'],
       ['Changing the product','The build codes, colour temperatures, connectors and wire options belong to the product, so a choice the new one is not offered with is dropped and named rather than silently swapped for something else.'],
+      ['Typing to find one','The product, channel and supply boxes on a run are typed into, not scrolled: the same matching as the library search, so a wattage, a colour temperature, a connector code or a part number finds a product and not only its name. Arrow keys move, Enter picks, Escape leaves it alone. Browsing shows what fits; typing searches everything, because a product asked for by name has to be findable \u2014 it is just put last and said to be unlisted. An approved run keeps its plain read-only boxes.'],
       ['Search','One box over the whole library, matching more than the name: wattage, colour temperature, connector codes, the order-code sample, the cutsheet revision, and whether something is still unverified. Each heading then reads "showing of total".'],
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
@@ -12144,7 +12260,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
-  fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,
+  fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboMatch,
 
   defaultLib,libKey:LIBKEY,blank:BLANK,progOpen,progStep,progClose,prog:PROG,
 

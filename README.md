@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend â€
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.54.0**
+**Version 1.55.0**
 
 ## What it does
 
@@ -228,6 +228,19 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Typing to find a product
+
+The LED product, channel and supply boxes on a run are **typed into, not scrolled**.
+A library with a manufacturer's catalogue in it is too long to browse, so the same
+matching as the library search applies: a wattage, a colour temperature, a connector
+code or a part number finds a product, not only its name. Arrow keys move, Enter
+picks, Escape leaves the run alone.
+
+**Browsing shows what fits; typing searches everything.** A product asked for by
+name has to be findable, so one the cutsheets do not list still appears â€” put last,
+under a heading saying so, with the reason attached. An approved run keeps its plain
+read-only boxes.
 
 ## What fits what
 
