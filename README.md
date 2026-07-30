@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.27.0**
+**Version 1.28.0**
 
 ## What it does
 
@@ -119,12 +119,22 @@ and the DC power supplies — each carrying a link to its own page on qtl.lighti
 
 A product is described in seven terms, in this order: **name, voltage, watts per
 foot, the colour temperatures it is offered in** (a multi-select), **minimum cut
-increment, maximum length**, and **the feed options** it can be ordered with (BW
-bare wire, BRL barrel, CLS closed end, CON6, CON24 — also a multi-select). The
-longest single run a product is made in is also the most one feed will carry, so
-that is **one figure, not two** — feed points are worked out from it. A
-treatment then picks one colour temperature and one feed from what that product
-actually offers, and the light output follows the CCT.
+increment, maximum length**, and **the connector options** it can be ordered with
+(BW bare wire, BRL barrel, CLS closed end, CON6, CON24 — also a multi-select).
+The longest single run a product is made in is also the most one feed will carry,
+so that is **one figure, not two** — feed points are worked out from it. A
+treatment then picks one colour temperature, and a connector for **each end**,
+from what that product actually offers; the light output follows the CCT.
+
+A run is ordered with a connector at both ends — that is what the two connector
+positions in a QTL order code are — so the treatment has **Connector in** and
+**Connector out**. Which codes are available differs from product to product, so
+they come off that product's own list, and a product with no list on file shows no
+dropdowns rather than offering codes it may not be made with. A **closed end**
+is only offered as the outgoing one, because it cannot feed anything. Both start
+*not specified*: leave one blank and the calculator says the order line is
+incomplete instead of choosing an end for you. Both ends travel into the cut-list
+CSV and the workbook, alongside the colour temperature.
 
 A product transcribed from its actual spec sheet also carries everything else the
 sheet publishes: the cut point, watts per foot, **lumens per foot at every CCT**, CRI,
