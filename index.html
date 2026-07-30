@@ -739,7 +739,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.31.0';
+const APP_VER='1.32.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1037,19 +1037,39 @@ const DEF_CH=[
   note:'Not a real product — replace it with the QTL profile you are using'},
  {id:'C_NONE',name:'No channel — direct mount',stock:0,clip:19.69,sheet:'',verified:true,note:'Adhesive + clip'}
 ];
+/* ---- dimming ----
+   A run is specified to dim a particular way and a supply either does that or it
+   does not. The protocols a supply handles therefore live on the supply; where a
+   catalogue page does not state them the list is left unset and the calculator
+   says the compatibility cannot be checked, rather than assuming it is fine. */
+const DIMS=[
+  {v:'phase',t:'Phase / forward-phase (triac)'},
+  {v:'elv',t:'ELV / reverse-phase'},
+  {v:'0-10',t:'0-10V'},
+  {v:'dali',t:'DALI'},
+  {v:'dmx',t:'DMX / RDM'},
+  {v:'pwm',t:'PWM'},
+  {v:'none',t:'Not dimmed'},
+];
+const dimLabel=v=>(DIMS.find(x=>x.v===v)||{t:v}).t;
+const dimsOf=p=>{ const l=p&&p.dims; return Array.isArray(l)?l.filter(v=>DIMS.some(x=>x.v===v)):null; };
 const DEF_PSU=[
  /* QTL DC power supplies, with the wattages their catalogue pages state */
  {id:'P_QZLP30',name:'QZLP · 30W · 24VDC · Class 2',volts:24,watts:30,c2:true,
   sheet:QTL+'led-power-supplies-qzlp/',verified:false,note:'30–60W low-profile driver'},
  {id:'P_QZLP60',name:'QZLP · 60W · 24VDC · Class 2',volts:24,watts:60,c2:true,
   sheet:QTL+'led-power-supplies-qzlp/',verified:false,note:''},
+ /* the protocols below are the ones written into the model numbers themselves —
+    PH is phase, /0-10V is 0-10V. Where a model number says nothing, dims is left
+    unset rather than assumed. */
  {id:'P_QZSTICK96',name:'QZ-STICK-PH/0-10V · 96W · Class 2',volts:24,watts:96,c2:true,
+  dims:['phase','0-10'],
   sheet:QTL+'power-supplies-qz-stick-ph0-10v/',verified:false,note:'0-10V dimming'},
- {id:'P_QOM80',name:'QOM-PH · 80W · 24VDC',volts:24,watts:80,c2:false,
+ {id:'P_QOM80',name:'QOM-PH · 80W · 24VDC',volts:24,watts:80,c2:false,dims:['phase'],
   sheet:QTL+'led-power-supplies-qom-ph/',verified:false,note:'Class 2 status not stated — check the cutsheet'},
- {id:'P_QOM160',name:'QOM-PH · 160W · 24VDC',volts:24,watts:160,c2:false,
+ {id:'P_QOM160',name:'QOM-PH · 160W · 24VDC',volts:24,watts:160,c2:false,dims:['phase'],
   sheet:QTL+'led-power-supplies-qom-ph/',verified:false,note:''},
- {id:'P_IQ80',name:'iQ-PH-QD1 · 80W · 24VDC',volts:24,watts:80,c2:false,
+ {id:'P_IQ80',name:'iQ-PH-QD1 · 80W · 24VDC',volts:24,watts:80,c2:false,dims:['phase'],
   sheet:QTL+'led-power-supplies-iq-ph-qd1/',verified:false,note:''},
  {id:'P_QSET96',name:'Q-SET · 96W · Class 2 · pool & spa',volts:24,watts:96,c2:true,
   sheet:QTL+'q-set-pool-spa-dc-led-power-supplies/',verified:false,note:'Wet location'},
@@ -1292,6 +1312,9 @@ function applyProject(d){
   if(!Array.isArray(P.fix)||!P.fix.length) P.fix=clone(DEF_FIX);
   if(!Array.isArray(P.ch)||!P.ch.length) P.ch=clone(DEF_CH);
   if(!Array.isArray(P.psu)||!P.psu.length) P.psu=clone(DEF_PSU);
+  /* an unset dimming list means "not on file", so a junk one must not survive as
+     an empty list that would read as "handles nothing" */
+  P.psu.forEach(p=>{ if(p.dims!=null){ const l=dimsOf(p); if(l&&l.length) p.dims=l; else delete p.dims; } });
   /* fields added after v1.4 — backfill so older projects calculate the same way */
   P.fix.forEach(f=>{ if(!f.kind) f.kind=/neon/i.test(f.name||'')?'neon':/fixture/i.test(f.name||'')?'fixture':'tape'; });
   P.treat.forEach(t=>{
@@ -1303,6 +1326,7 @@ function applyProject(d){
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
     t.cct=+t.cct>0?Math.round(+t.cct):0;
     t.variant=String(t.variant||'').toUpperCase();
+    t.dim=DIMS.some(x=>x.v===t.dim)?t.dim:'';
     t.wire=WIRE_COLS.some(x=>x.v===t.wire)?t.wire:'';
     t.wtype=WIRE_TYPES.some(x=>x.v===t.wtype)?t.wtype:'';
     /* older files carried a single feed choice; it was the incoming one */
@@ -4109,11 +4133,12 @@ function driverLoad(a){
   const lf=clamp((+P.load||80)/100,.4,1);
   const cap=ps.watts>0?ps.watts*lf:0;
   const k=inPerPt()||0;
-  let watts=0, home=0; const links=[], missing=[];
+  let watts=0, home=0; const links=[], missing=[], dims=new Set();
   serves.forEach(id=>{
     const t=P.treat.find(x=>x.id===id);
     if(!t){ missing.push(id); return; }
     watts+=calc(t).tot.watts;
+    if(t.dim&&t.dim!=='none') dims.add(t.dim);
     const an=t.annId&&P.ann.find(x=>x.id===t.annId);
     if(an&&an.doc===a.doc&&an.page===a.page){
       const near=nearestPtOn(an,a.pts[0]);
@@ -4126,9 +4151,17 @@ function driverLoad(a){
   if(cap>0&&watts>cap) w.push('Over capacity: '+watts.toFixed(0)+' W on a '+ps.watts+' W supply at a '
     +Math.round(P.load)+'% ceiling ('+cap.toFixed(0)+' W usable).');
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this driver carries '+watts.toFixed(0)+' W.');
+  /* one driver dims one way — two protocols on it is a wiring error, not a note */
+  const want=[...dims], can=dimsOf(ps);
+  if(want.length>1) w.push('Runs on this driver ask for '+want.map(dimLabel).join(' and ')
+    +' — one driver dims one way. Split them.');
+  else if(want.length===1&&can&&can.length&&!can.includes(want[0]))
+    w.push(ps.name+' does not dim on '+dimLabel(want[0])+' — it handles '+can.map(dimLabel).join(' and ')+'.');
+  else if(want.length===1&&!(can&&can.length)&&ps.watts>0)
+    w.push('No dimming protocols on file for '+ps.name+', so '+dimLabel(want[0])+' cannot be checked.');
   if(home>maxHome) w.push('Longest home run is '+fmtRun(home)+' — over the '+fmtRun(maxHome)+' limit set in Settings.');
   if(links.length<serves.length-missing.length) w.push('Some assigned runs are on another sheet, so their home run is not measured.');
-  return {ps,cap,watts,links,home,maxHome,serves:serves.length,warn:w,
+  return {ps,cap,watts,links,home,maxHome,serves:serves.length,warn:w,dims:[...dims],
     pct:cap>0?watts/cap:0,over:cap>0&&watts>cap};
 }
 const driverLabel=(a,d)=>(d.ps.watts>0?d.watts.toFixed(0)+' / '+Math.round(d.cap)+' W':d.watts.toFixed(0)+' W')
@@ -4802,6 +4835,10 @@ function calc(t){
   const feedList=feedsFor(f,'out').length?feedsFor(f,'out'):null;
   const feedBad=!!(feedList&&((feedIn&&!feedList.includes(feedIn))||(feedOut&&!feedList.includes(feedOut))));
   const feedInBad=!!(feedIn&&!feedIsFeed(feedIn));
+  /* dimming: the run is specified one way and the supply either does it or not */
+  const dim=String(t.dim||''), psDims=dimsOf(ps);
+  const dimKnown=!!(psDims&&psDims.length);
+  const dimBad=!!(dim&&dim!=='none'&&dimKnown&&!psDims.includes(dim));
   /* the order code, as far as the choices made so far allow */
   const wire=String(t.wire||''), wtype=String(t.wtype||'');
   const codeParts={build:vr?vr.c:'',cct:cctCode(f,cct),in:feedIn,out:feedOut,wire,type:wtype};
@@ -4859,6 +4896,11 @@ function calc(t){
   if(fixed&&mode==='down'&&gap>0.06) w.push('Fixtures cannot be cut down — rounding down leaves this run short. Use Round up.');
   if(feedSet&&feeds<autoFeeds) w.push('Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(maxRun)+' per feed.');
   if(!feedSet&&feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(maxRun)+' per feed. A centre feed usually solves it.');
+  if(dimBad) w.push(ps.name+' does not dim on '+dimLabel(dim)+' — it handles '
+    +psDims.map(dimLabel).join(' and ')+'.');
+  if(dim&&dim!=='none'&&!dimKnown&&ps.watts>0)
+    w.push('No dimming protocols on file for '+ps.name+', so '+dimLabel(dim)
+      +' cannot be checked against it. Read its cutsheet.');
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
   if(stock===0&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No stock length set for '+c.name+' — read its cutsheet to nest off-cuts.');
   if(L>0&&!clipKnown&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No clip spacing for '+c.name+' — clips are not being counted.');
@@ -4873,6 +4915,7 @@ function calc(t){
   return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,maxRun,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,cct,lmFt,cctBad,
     fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
+    dim,psDims,dimKnown,dimBad,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
@@ -4981,7 +5024,15 @@ function renderTreatments(){
         +'<div class="f"><label>Channel / mounting</label><select data-t="chId">'+chOpts+'</select></div>'
         +'<div class="f"><label>Clip spacing</label><input type="text" data-t="clip" value="'+(t.clip||'')+'" placeholder="'+esc(fmtLen(r.c.clip))+'"></div>'
       +'</div>'
-      +'<div class="f" style="margin-top:8px"><label>Power supply</label><select data-t="psuId">'+psOpts+'</select></div>'
+      +'<div class="grid2" style="margin-top:8px">'
+        +'<div class="f"><label>Power supply</label><select data-t="psuId">'+psOpts+'</select></div>'
+        +'<div class="f"><label>Dimming</label><select data-t="dim">'
+          +'<option value=""'+(t.dim?'':' selected')+'>\u2014 not specified \u2014</option>'
+          +DIMS.map(d=>'<option value="'+d.v+'"'+(t.dim===d.v?' selected':'')+'>'+esc(d.t)
+            +(r.dimKnown&&d.v!=='none'?(r.psDims.includes(d.v)?'':' \u2014 not on this supply'):'')
+            +'</option>').join('')
+        +'</select></div>'
+      +'</div>'
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Millwork / shop drawing</label><select data-t="shop">'+shopOpts+'</select></div>'
         +'<div class="f"><label>Detail reference</label><input type="text" class="up" data-t="detail" value="'+esc(t.detail||'')+'" placeholder="3/A-501"></div>'
@@ -5026,6 +5077,7 @@ function renderTreatments(){
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
         else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
         else if(k==='variant') t.variant=inp.value;
+        else if(k==='dim') t.dim=inp.value;
         else if(k==='wire') t.wire=inp.value;
         else if(k==='wtype') t.wtype=inp.value;
         else if(k==='feedIn') t.feedIn=inp.value;
@@ -5188,6 +5240,8 @@ function outHtml(r,t){
     ['Feed points',(r.feedKnown||r.feedSet)?(r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto')
         +(r.maxRun>0?'  ·  '+fmtRun(r.maxRun)+' per feed':''))
       :'unknown — no maximum length on file',false],
+    ['Dimming',r.dim?(dimLabel(r.dim)+(r.dim==='none'?'':(r.dimBad?'  \u00b7  not on this supply'
+        :(r.dimKnown?'  \u00b7  supply does it':'  \u00b7  supply not on file')))):'\u2014',false],
     ['Order code',r.codeFmt?r.code:'no format on file',!!(r.codeFmt&&!r.codeMiss.length)],
     ['Build',r.vars.length?(r.vr?varLabel(r.vr)+(+r.vr.maxLen>0?'  ·  up to '+fmtRun(+r.vr.maxLen):''):'not specified — base figures'):'—',false],
     ['Fed by',(r.feedIn||r.feedOut)
@@ -5534,6 +5588,7 @@ function renderLib(){
   const S=$('#psuList'); S.innerHTML=''; $('#cPsu').textContent=P.psu.length;
   order(P.psu).forEach(p=>S.appendChild(libRow(p.name,
     p.volts+'V · '+p.watts+' W'+(p.c2?' · Class 2':'')
+    +' · '+(dimsOf(p)&&dimsOf(p).length?'dims '+dimsOf(p).map(dimLabel).join(', '):'dimming not on file')
     +(rateOf(p)?' · <b style="color:var(--amber)">'+esc(money(p.cost))+' ea</b>':'')+usedBy('psuId',p.id),
     ()=>editPsu(p),()=>delLib('psuId',p,'power supply',P.psu,x=>{P.psu=x}),p,'psu')));
 }
@@ -5614,11 +5669,16 @@ async function editPsu(p){
     {k:'volts',type:'num',label:'Volts',val:p.volts,row:'r1'},
     {k:'watts',type:'num',label:'Rated watts',val:p.watts,row:'r1'},
     {k:'cost',type:'num',label:'Rate each',val:p.cost||0,step:0.01},
+    {k:'dims',type:'multi',label:'Dimming protocols',opts:DIMS.filter(d=>d.v!=='none'),
+      val:(dimsOf(p)||[]).slice(),
+      hint:'What this supply actually dims on, off its cutsheet. Leave every box clear and the calculator says compatibility cannot be checked, rather than assuming it is fine.'},
     {k:'c2',type:'check',cap:'Class 2 output (96 W ceiling)',val:p.c2}
   ].concat(sheetFields(p))});
   if(!r) return;
   Object.assign(p,{name:r.name||'Unnamed',volts:+r.volts||24,watts:+r.watts||0,
     cost:Math.max(0,+r.cost||0),c2:!!r.c2,sheet:String(r.sheet||'').trim(),verified:!!r.verified});
+  const dl=(r.dims||[]).filter(v=>DIMS.some(x=>x.v===v));
+  if(dl.length) p.dims=dl; else delete p.dims;
   if(isNew) P.psu.push(p);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -6320,13 +6380,13 @@ async function exportBox(name,text){
 }
 $('#btnCsvCut').onclick=()=>{
   const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Build','IP','CCT (K)',
-    'Connector in','Connector out','Wire colour','Wire type','Order code','Channel','Runs',
+    'Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
     'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually','Approved','Approved at',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
-      r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,
+      r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,
       r.c.name+' (cut to length)',r.qty,
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
@@ -6686,13 +6746,13 @@ function xlsx(sheets){
 function workbookSheets(){
   const S=[];
   S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind',
-    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Channel',
+    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Channel',
     'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
     'Channel ft','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']].concat(
     P.treat.map(t=>{ const r=calc(t);
       return [tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',
         t.detail||'',r.f.name,r.kind,r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',
-        r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
+        r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
         +(r.cut/12).toFixed(3),+r.cut.toFixed(2),r.inc>0?+(r.inc/12).toFixed(4):'any',r.inc>0?r.units:'',
         +r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',+(r.tot.chLen/12).toFixed(3),r.tot.pieces,
         r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes||'']; }))});
@@ -7537,6 +7597,7 @@ function manualSections(){
   {id:'library',t:'The product library',blocks:[
     {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
     {rows:[
+      ['Dimming','A run is specified to dim a particular way and a supply either does that or it does not, so the protocols live on the supply and the run names the one it needs. A mismatch is flagged on the treatment and on the driver. Where a catalogue page does not state the protocols the list is left unset and the calculator says compatibility cannot be checked, rather than assuming it is fine. A driver carrying runs that want two different protocols is flagged too \u2014 one driver dims one way.'],
       ['Order codes','A part number is a fixed run of positions, and each product carries the format its own cutsheet prints — so a product without one gets no code rather than a guessed one. The positions are filled from the choices already made: build, colour temperature, both connectors, wire colour and type, and the piece\u2019s own cut length. Every physical piece therefore gets its own orderable code, on the Pieces tab and in both exports. A position that is not filled in comes out as ? and is named, so an incomplete code reads as incomplete instead of plausible. Rules the sheet states are enforced: CL2P only with bare-wire leads, and a barrel takes N/A for wire colour.'],
       ['Builds','Where a product comes in dry, damp and wet-location builds, the run picks one — and the wet build is a different product for takeoff: it runs shorter and it is dimmer, so it overrides the maximum length and the lumens. Leave it unspecified and the base figures are used, with the calculator saying so.'],
       ['Connectors','A run is ordered with a connector at each end. The product carries the codes it can be had with — which differ from one product to the next — and a treatment picks one for the feed end and one for the far end. A closed end is only offered as the outgoing one, because it cannot feed anything. Leave an end unset and the calculator says the order line is incomplete rather than choosing for you.'],
@@ -7916,6 +7977,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
   orderCode,cctCode,codeFmtOf,wireColours:WIRE_COLS,wireTypes:WIRE_TYPES,
+  dimOptions:DIMS,dimLabel,dimsOf,driverLoad,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   reportHtml,openReport,reportCss,

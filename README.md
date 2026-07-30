@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.31.0**
+**Version 1.32.0**
 
 ## What it does
 
@@ -125,6 +125,16 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**Dimming.** A run is specified to dim a particular way and a supply either does
+that or it does not, so the protocols live on the supply and the run names the one
+it needs. Ask a phase-only driver for DALI and it says so, naming what it does do.
+The protocols on the seeded supplies are only the ones written into the model
+numbers themselves — `PH` is phase, `/0-10V` is 0-10V; where a model number says
+nothing the list is left unset and the calculator reports that compatibility
+*cannot be checked*, which is not the same as reporting it fine. A driver carrying
+runs that want two different protocols is flagged as well — one driver dims one
+way.
 
 **Order codes.** A part number is a fixed run of positions, and each product
 carries the format its own cutsheet prints — so a product without one gets no
