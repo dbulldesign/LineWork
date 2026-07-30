@@ -555,7 +555,7 @@ body.haspen #penFlag{display:inline}
   <div class="cell opt" style="min-width:190px"><label>Project</label><input class="val" id="projName" value="Untitled Project"></div>
   <div class="cell opt" style="min-width:110px"><label>Job no.</label><input class="val" id="projNo" placeholder="—"></div>
   <div class="cell" style="min-width:150px"><label>Sheet</label><div class="val" id="tbSheet">—</div></div>
-  <div class="cell" style="min-width:130px"><label>Scale</label><div class="val" id="tbScale" style="color:var(--amber)">not set</div></div>
+  <div class="cell" style="min-width:130px"><label>Scale</label><div class="val" id="tbScale" style="color:var(--amber);cursor:pointer" title="Click to set the scale">not set</div></div>
   <div class="cell" style="min-width:88px"><label>Units</label><button class="btn sm ghost" id="unitBtn" style="padding:1px 6px">IMPERIAL</button></div>
   <div class="grow"></div>
   <div class="acts">
@@ -635,7 +635,8 @@ body.haspen #penFlag{display:inline}
   <div id="calNag" style="display:none">
     <b>Set the scale first.</b> Pick a standard scale, or trace a dimension you trust with the ruler
     <span class="k">C</span> — every length depends on it.
-    <button class="btn sm pri" id="calNagGo">Calibrate now</button>
+    <button class="btn sm pri" id="calNagPick">Pick a scale</button>
+    <button class="btn sm" id="calNagGo">Trace a dimension</button>
   </div>
   <div id="viewport" class="pan">
     <div id="stage" style="display:none"><canvas id="pdfBase"></canvas><canvas id="pdfCanvas"></canvas><canvas id="pdfCanvas2"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
@@ -873,7 +874,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.56.0';
+const APP_VER='1.57.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1009,13 +1010,66 @@ function parseLen(str){
 const unitHint=()=>P.units==='metric' ? 'mm, or 1.85m' : "e.g. 20.5 ft, 246\", or 20'-6\"";
 
 /* ---- scale presets: ratio = real length / paper length ---- */
+/* Real inches per paper inch: at 1/4" = 1'-0" one paper inch is four feet, so 48.
+   inPerPt divides by 72, which is what makes this the whole of the scale. */
 const SCALES=[
   ['1/32" = 1\'-0"',384],['1/16" = 1\'-0"',192],['3/32" = 1\'-0"',128],['1/8" = 1\'-0"',96],
   ['3/16" = 1\'-0"',64],['1/4" = 1\'-0"',48],['3/8" = 1\'-0"',32],['1/2" = 1\'-0"',24],
   ['3/4" = 1\'-0"',16],['1" = 1\'-0"',12],['1 1/2" = 1\'-0"',8],['3" = 1\'-0"',4],['Full size',1],
-  ['1:10',10],['1:20',20],['1:25',25],['1:50',50],['1:100',100],['1:200',200]
+  /* civil and site plans are called out the other way round */
+  ['1" = 10\'',120],['1" = 20\'',240],['1" = 30\'',360],['1" = 40\'',480],
+  ['1" = 50\'',600],['1" = 60\'',720],['1" = 100\'',1200],
+  ['1:5',5],['1:10',10],['1:20',20],['1:25',25],['1:50',50],['1:75',75],
+  ['1:100',100],['1:150',150],['1:200',200],['1:500',500],['1:1000',1000]
 ];
 const ratioLabel=r=>{ const hit=SCALES.find(s=>Math.abs(s[1]-r)<0.02); return hit?hit[0]:'1:'+r.toFixed(1); };
+/* A scale typed rather than picked. Accepts the three ways a drawing states one:
+   1/4"=1'-0" and 3/32 = 1'0", 1"=30', and 1:75. */
+function parseScale(str){
+  const t=String(str||'').trim().replace(/[\u2033\u201d]/g,'"').replace(/[\u2032\u2019]/g,"'")
+    .replace(/[\u2013\u2014]/g,'-').toLowerCase();
+  if(!t) return null;
+  let m;
+  if((m=/^1\s*[:\/]\s*(\d+(?:\.\d+)?)$/.exec(t))){
+    const n=parseFloat(m[1]); return n>0?n:null;
+  }
+  /* the paper side, which may be a mixed fraction: 1 1/2 */
+  const frac=x=>{
+    const s2=String(x).trim();
+    let mm;
+    if((mm=/^(\d+)\s+(\d+)\s*\/\s*(\d+)$/.exec(s2))) return +mm[1]+ (+mm[2])/(+mm[3]);
+    if((mm=/^(\d+)\s*\/\s*(\d+)$/.exec(s2))) return (+mm[1])/(+mm[2]);
+    if((mm=/^(\d+(?:\.\d+)?)$/.exec(s2))) return +mm[1];
+    return NaN;
+  };
+  /* paper = real, with either side carrying units */
+  m=/^([\d\s./]+)\s*(?:"|in\b|inch(?:es)?)?\s*(?:=|equals|to)\s*([\d\s./]+)\s*(?:'|ft\b|feet|foot)?(?:\s*-?\s*0\s*")?$/.exec(t);
+  if(m){
+    const paper=frac(m[1]), real=frac(m[2]);
+    if(!(paper>0)||!(real>0)) return null;
+    /* the real side is in feet when it is written with feet, or when it is the
+       larger of the two — "1/4 = 1" on a drawing means a foot */
+    return (real*12)/paper;
+  }
+  return null;
+}
+/* Standard sheet sizes, so a page that has been shrunk to letter can be spotted
+   before a scale is trusted. */
+const PAPERS=[['ARCH A',9,12],['ARCH B',12,18],['ARCH C',18,24],['ARCH D',24,36],['ARCH E',36,48],
+  ['ARCH E1',30,42],['ANSI A',8.5,11],['ANSI B',11,17],['ANSI C',17,22],['ANSI D',22,34],
+  ['ANSI E',34,44],['A4',8.27,11.69],['A3',11.69,16.54],['A2',16.54,23.39],['A1',23.39,33.11],
+  ['A0',33.11,46.81]];
+function paperName(wIn,hIn){
+  const a=Math.min(wIn,hIn), b=Math.max(wIn,hIn);
+  const hit=PAPERS.find(p=>Math.abs(p[1]-a)<0.3&&Math.abs(p[2]-b)<0.3);
+  return hit?hit[0]:'';
+}
+/* the open page in paper inches, which is what a stated scale is a scale of */
+function pageInches(){
+  const vp=V.pageObj&&V.pageObj.getViewport?V.pageObj.getViewport({scale:1,rotation:0}):null;
+  if(!vp) return null;
+  return {w:vp.width/72,h:vp.height/72};
+}
 
 /* ---- the seeded library ----
    Real QTL products, named from their own catalogue pages, each carrying the link
@@ -2736,6 +2790,61 @@ function setScale(ratio,all,label){
   } else P.cal[calKey(V.docId,V.page)]=s;
   syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); markDirty();
 }
+/* ---- picking a scale ----
+   Calibrating against a dimension on the sheet is the sure way, because it measures
+   what is actually there. But most drawings state their scale in the titleblock, and
+   typing that in is faster — provided the PDF is at its plotted size. A sheet printed
+   "fit to page" is a smaller drawing at the same stated scale, and a chosen scale is
+   then wrong by exactly the amount it was shrunk. So the page size is shown beside
+   the choice, named where it is a standard sheet, and the dialog says to check it
+   against a known dimension. */
+async function pickScale(){
+  if(!V.docId||!FILES[V.docId]){ toast('Open a drawing first'); return; }
+  const d=P.docs.find(x=>x.id===V.docId);
+  const cur=curScale();
+  const pi=pageInches();
+  const paper=pi?paperName(pi.w,pi.h):'';
+  const near=cur?SCALES.reduce((best,x)=>Math.abs(x[1]-cur.ratio)<Math.abs(best[1]-cur.ratio)?x:best,SCALES[0]):null;
+  const exact=cur&&near&&Math.abs(near[1]-cur.ratio)<0.02;
+  const r=await dlg({title:'Scale — '+sheetLabel(d),fields:[
+    {k:'scale',type:'select',label:'Scale',find:true,findLabel:'a scale',
+      opts:[{v:'',t:'\u2014 type one below \u2014'}].concat(SCALES.map(x=>({v:String(x[1]),t:x[0]}))),
+      val:exact?String(near[1]):''},
+    {k:'custom',label:'or type it',val:exact?'':(cur?cur.label:''),
+      ph:'3/32" = 1\'-0"   ·   1" = 30\'   ·   1:75',
+      hint:'Whichever way the titleblock writes it.'},
+    {k:'where',type:'select',label:'Apply to',opts:[
+      {v:'sheet',t:'The whole sheet \u2014 every page'},
+      {v:'page',t:'This page only'}],val:'sheet'}
+  ],ok:'Set it',cancel:'Cancel',
+    note:(pi?('This page is '+(Math.round(pi.w*100)/100)+' \u00d7 '+(Math.round(pi.h*100)/100)+' in'
+      +(paper?' \u2014 '+paper:'')+'.  '):'')
+      +'A stated scale is only right if the PDF is at its plotted size; a sheet printed to fit a smaller '
+      +'page is wrong by however much it was shrunk'+(paper==='ANSI A'||paper==='A4'?', and this one is letter-sized':'')
+      +'. Check it against a dimension you can read before ordering from it \u2014 the Calibrate tool measures '
+      +'what is actually on the sheet.'});
+  if(!r) return;
+  const typed=String(r.custom||'').trim();
+  let ratio=null,label='';
+  /* what was typed wins, since it is the more deliberate act */
+  if(typed){
+    ratio=parseScale(typed);
+    if(!(ratio>0)){ toast('Could not read "'+typed+'" as a scale — try 1/4" = 1\'-0", 1" = 30\' or 1:75'); return; }
+    const hit=SCALES.find(x=>Math.abs(x[1]-ratio)<0.02);
+    label=hit?hit[0]:typed;
+  }else if(r.scale){
+    ratio=+r.scale;
+    label=(SCALES.find(x=>String(x[1])===String(r.scale))||[])[0]||ratioLabel(ratio);
+  }else{ toast('Pick a scale or type one'); return; }
+  snap('Scale on '+sheetLabel(d));
+  if(r.where==='sheet'){
+    Object.keys(P.cal).forEach(k=>{ if(k.startsWith(V.docId+'|')) delete P.cal[k]; });
+    P.cal[V.docId+'|*']={ratio,label};
+  }else P.cal[calKey(V.docId,V.page)]={ratio,label};
+  syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast(label+' on '+(r.where==='sheet'?'every page of '+sheetLabel(d):'page '+V.page)
+    +' — check it against a dimension before ordering');
+}
 /* ---- scales across a sheet ----
    Per-page calibration has always been possible; what was missing was seeing it.
    This lists every page of the sheet, which pages carry their own scale and
@@ -3652,8 +3761,12 @@ function hitTest(sx,sy,tol){
    ============================================================ */
 /* ---- undo history ---- */
 const HIST=[],FUT=[];
+/* docs is in here because a sheet can be deleted. While sheets were only ever added
+   its absence cost nothing; the moment one can go, leaving it out would undo the
+   markups back onto a sheet that is no longer in the list. specs likewise: deleting
+   a saved fixture spec was snapped but not restorable. */
 const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq,
-  fix:P.fix,ch:P.ch,psu:P.psu,alts:P.alts,base:P.base});
+  fix:P.fix,ch:P.ch,psu:P.psu,alts:P.alts,base:P.base,docs:P.docs,specs:P.specs});
 /* Each step carries what it was, so undo can be aimed rather than counted. The
    label is the caller's; an unlabelled step is honest about being unnamed. */
 let stepAt=0;
@@ -3689,11 +3802,13 @@ function restore(step){
   const d=JSON.parse(asStep(step).j);
   P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq;
   if(d.fix) P.fix=d.fix; if(d.ch) P.ch=d.ch; if(d.psu) P.psu=d.psu;
+  if(Array.isArray(d.docs)) P.docs=d.docs;
+  P.specs=Array.isArray(d.specs)?d.specs:[];
   P.alts=Array.isArray(d.alts)?d.alts:[];
   if(d.base) P.base=d.base; else delete P.base;
   invalidateAnns();
   V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks();
-  renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty();
+  renderSheets(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty();
 }
 function undo(quiet){
   if(!HIST.length){ if(!quiet) toast('Nothing to undo'); return false; }
@@ -6915,6 +7030,71 @@ function wireThSorts(){
 }
 
 /* ---- left rail lists ---- */
+/* ---- deleting a sheet ----
+   A sheet is not only a drawing: its markups, its calibration, the runs measured
+   off it and the links pointing at it all go with it. So the dialog counts what
+   will be lost before anything is, and a run measured off it keeps its length as a
+   typed figure rather than silently becoming zero — the takeoff is what was priced,
+   and losing a drawing is not a reason to change it. */
+function docCost(id){
+  const anns=P.ann.filter(a=>a.doc===id);
+  const ids=new Set(anns.map(a=>a.id));
+  return {
+    anns,
+    treats:P.treat.filter(t=>t.docId===id||(t.annId&&ids.has(t.annId))),
+    links:P.ann.filter(a=>a.type==='link'&&a.target&&a.target.doc===id&&a.doc!==id),
+    shops:P.treat.filter(t=>t.shop===id),
+    scales:Object.keys(P.cal).filter(k=>k===id+'|*'||k.startsWith(id+'|')).length
+  };
+}
+async function delDoc(d){
+  const c=docCost(d.id);
+  const bits=[];
+  if(c.anns.length) bits.push(c.anns.length+' markup'+(c.anns.length===1?'':'s'));
+  if(c.treats.length) bits.push(c.treats.length+' run'+(c.treats.length===1?'':'s')+' measured off it');
+  if(c.links.length) bits.push(c.links.length+' link'+(c.links.length===1?'':'s')+' pointing at it');
+  if(c.scales) bits.push('its scale');
+  const r=await dlg({title:'Delete '+sheetLabel(d)+'?',fields:[
+    {k:'keep',type:'check',cap:'Keep the runs, with their lengths as typed figures',val:true},
+    {k:'go',type:'check',cap:'Yes, delete this sheet',val:false}
+  ],ok:'Delete',
+    note:(bits.length?'This takes '+bits.join(', ')+' with it.  ':'Nothing is measured off it.  ')
+      +(c.treats.length?'Left ticked, those runs stay in the takeoff at the length they measure now, '
+        +'no longer linked to a drawing. Unticked, they go too.  ':'')
+      +(c.shops.length?c.shops.length+' run'+(c.shops.length===1?' has':'s have')+' it as their shop drawing; that reference is cleared.  ':'')
+      +'The drawing itself is also dropped from this browser\u2019s store. Undo puts the markups and runs back, '
+      +'but the PDF has to be re-imported.'});
+  if(!r||!r.go) return;
+  snap('Delete '+sheetLabel(d));
+  const ids=new Set(c.anns.map(a=>a.id));
+  /* a run measured off it: keep the number it measured, or take it with the sheet */
+  c.treats.forEach(t=>{
+    if(!r.keep) return;
+    const L=lenOf(t);
+    if(L>0&&!(+t.manual>0)) t.manual=L;
+    t.annId=null; t.docId=null;
+  });
+  if(!r.keep) P.treat=P.treat.filter(t=>!c.treats.includes(t));
+  P.ann=P.ann.filter(a=>a.doc!==d.id);
+  /* a link into a sheet that is gone is not a link */
+  P.ann.forEach(a=>{ if(a.type==='link'&&a.target&&a.target.doc===d.id) delete a.target; });
+  P.treat.forEach(t=>{ if(t.shop===d.id) t.shop=''; });
+  Object.keys(P.cal).forEach(k=>{ if(k===d.id+'|*'||k.startsWith(d.id+'|')) delete P.cal[k]; });
+  P.docs=P.docs.filter(x=>x.id!==d.id);
+  delete FILES[d.id];
+  if(V.docId===d.id){
+    V.sel=null; V.multi=[]; V.draft=null;
+    if(P.docs.length) openDoc(P.docs[0].id,1,true);
+    else{ V.docId=null; V.pageObj=null; V.vp=null;
+      const st=$('#stage'); if(st) st.style.display='none'; }
+  }
+  pdfDrop(d.id).catch(()=>{});
+  pdfPrune();
+  renderSheets(); renderAnnList(); renderLinks(); renderTreatments(); renderBom();
+  syncScaleUI(); drawOverlay(); stats(); markDirty();
+  toast(sheetLabel(d)+' deleted'+(c.treats.length&&r.keep
+    ?' — '+c.treats.length+' run'+(c.treats.length===1?'':'s')+' kept at the length measured':''));
+}
 function renderSheets(){
   const h=$('#sheetList'); h.innerHTML='';
   $('#cSheets').textContent=P.docs.length;
@@ -6930,8 +7110,10 @@ function renderSheets(){
       +(d.sheetNo||d.title?' · '+esc(d.name.replace(/\.pdf$/i,'').slice(0,18)):'')
       +(d.noText?' · <span style="color:var(--faint)">no text layer</span>':'')
       +(loaded?'':' · <span style="color:var(--flag)">re-import</span>')+'</div></div>'
-      +'<span class="pill '+d.kind+'" data-kind="'+d.id+'" title="Click to switch plan/shop">'+d.kind+'</span>';
-    el.onclick=e=>{ if(e.target.dataset.kind){ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); return; }
+      +'<span class="pill '+d.kind+'" data-kind="'+d.id+'" title="Click to switch plan/shop">'+d.kind+'</span>'
+      +'<button class="btn sm ghost" data-del="1" title="Delete this sheet" style="color:var(--faint)">\u2715</button>';
+    el.onclick=e=>{ if(e.target.closest('[data-del]')){ delDoc(d); return; }
+      if(e.target.dataset.kind){ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); return; }
       openDoc(d.id,1,true); if(narrowUI()) closeRails(); };
     h.appendChild(el);
   });
@@ -11321,6 +11503,9 @@ $('#manClose').onclick=closeManual;
 $('#manPrint').onclick=printManual;
 $('#manScrim').onclick=e=>{ if(e.target===$('#manScrim')) closeManual(); };
 $('#calNagGo').onclick=()=>{ setTool('cal'); toast('Drag along a dimension you can read on the sheet'); };
+$('#calNagPick').onclick=pickScale;
+$('#tbScale').onclick=pickScale;
+$('#tbScale').title='Click to set the scale';
 $('#btnScales').onclick=manageScales;
 function syncSmartBtn(){
   const b=$('#btnSmart'); if(!b) return;
@@ -11604,6 +11789,9 @@ function cmdItems(){
   add('File','Save preset',savePreset);
   add('File','Apply preset',()=>$('#presetInput').click());
   add('File','Save library file',()=>$('#btnLibSave').click());
+  add('Do','Set the scale',pickScale);
+  add('Do','Delete this sheet',()=>{ const d=P.docs.find(x=>x.id===V.docId);
+    if(d) delDoc(d); else toast('Open a drawing first'); });
   add('File','Export the workbook',exportWorkbook);
   add('File','Open the printable report',openReport);
   add('View','Settings…',openSettings,'⌘,');
@@ -11808,6 +11996,8 @@ function manualSections(){
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
     {rows:[
+      ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
+      ['Deleting a sheet','The ✕ on a sheet in the list. It counts what goes with it first — markups, runs measured off it, links pointing at it, its scale — and asks twice. Runs measured off it are kept by default with their measured length written in as a typed figure: the takeoff is what was priced, and losing a drawing is not a reason to change it. Untick that and they go too. The PDF is dropped from this browser as well, so undo brings the markups and runs back but the drawing needs re-importing.'],
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
@@ -12298,6 +12488,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
   fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboOn,comboMatch,libHayFor,
+  pickScale,parseScale,scales:SCALES,paperName,pageInches,delDoc,docCost,
+
 
   defaultLib,libKey:LIBKEY,blank:BLANK,progOpen,progStep,progClose,prog:PROG,
 

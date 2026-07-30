@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.56.0**
+**Version 1.57.0**
 
 ## What it does
 
@@ -79,6 +79,28 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   About. An installed copy opens from its own cache, so it also checks what is on
   the server: the chip turns amber with an arrow when a newer build is waiting,
   and the answer is always to close the app fully and reopen it.
+
+## Setting the scale, and deleting a sheet
+
+**Click the scale in the titleblock.** Pick from the standard architectural, civil
+and metric scales — typed into, like every other list — or write it however the
+titleblock does: `3/32" = 1'-0"`, `1" = 30'`, `1:75`. Apply it to the whole sheet or
+to this page alone.
+
+The dialog shows **the page size**, named where it is a standard sheet, because a
+stated scale is only right if the PDF is at its plotted size. A drawing printed to
+fit a smaller page is wrong by exactly however much it was shrunk, and a
+letter-sized page is called out as one. Calibrating with the ruler measures what is
+actually on the sheet, so it stays the sure way and is worth doing once against a
+dimension you can read.
+
+**Deleting a sheet** is the ✕ on its row. It counts what goes with it first —
+markups, runs measured off it, links pointing at it, its scale — and asks twice.
+Runs measured off it are **kept by default with their measured length written in as
+a typed figure**: the takeoff is what was priced, and losing a drawing is not a
+reason to change it. Untick that and they go too. The PDF is dropped from this
+browser as well, so undo brings the sheet, its markups and its runs back, but the
+drawing needs re-importing — and the row says so.
 
 ## Reading the drawings
 
