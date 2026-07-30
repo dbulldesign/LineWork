@@ -739,7 +739,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.30.0';
+const APP_VER='1.31.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -918,6 +918,50 @@ const feedTerms=kind=>kind==='fixture'?{in:'Lead in',out:'Lead out'}
   :{in:'Connector in',out:'Connector out'};
 const feedsFor=(f,end)=>{ const list=((f&&f.feeds)||[]).filter(v=>FEEDS.some(x=>x.v===v));
   return end==='in'?list.filter(feedIsFeed):list; };
+/* ---- order codes ----
+   A QTL part number is a fixed run of positions, and the sheet prints the
+   vocabulary for each. The format therefore lives on the product, as a template,
+   and is only ever the one its own cutsheet states — a product without one gets
+   no code rather than a guessed one. A token that cannot be filled in comes out
+   as "?" and is named, so an incomplete code is obvious instead of plausible. */
+const WIRE_COLS=[
+  {v:'WH',t:'WH — white'},
+  {v:'BK',t:'BK — black'},
+  {v:'N/A',t:'N/A — barrel (the barrel is white)'},
+];
+const WIRE_TYPES=[
+  {v:'CL2',t:'CL2 — Class 2'},
+  {v:'CL2P',t:'CL2P — Class 2, plenum rated'},
+  {v:'N/A',t:'N/A — barrel'},
+];
+const wireLabel=v=>(WIRE_COLS.find(x=>x.v===v)||{t:v}).t;
+const wtypeLabel=v=>(WIRE_TYPES.find(x=>x.v===v)||{t:v}).t;
+/* the CCT position is the first two digits of the temperature: 1800K is 18,
+   3000K is 30. A product whose sheet codes them differently carries cctCodes. */
+const cctCode=(f,k)=>{ const m=f&&f.cctCodes; if(m&&m[k]) return String(m[k]);
+  return String(k||'').slice(0,2); };
+const codeFmtOf=f=>(f&&f.code&&f.code.fmt)?String(f.code.fmt):'';
+const codeListOf=(f,which)=>{ const c=(f&&f.code)||{}; const l=c[which];
+  return Array.isArray(l)?l:null; };
+/* fills a product's template for one physical piece */
+function orderCode(f,parts,lenIn){
+  const fmt=codeFmtOf(f);
+  if(!fmt) return {code:'',miss:[],fmt:''};
+  const stem=(f.code&&f.code.stem)||'';
+  const lenTok=lenIn>0?(Math.round(lenIn*100)/100)+'"':'';
+  const vals={stem,build:parts.build||'',cct:parts.cct||'',in:parts.in||'',out:parts.out||'',
+    wire:parts.wire||'',type:parts.type||'',len:lenTok};
+  const miss=[];
+  const code=fmt.replace(/\{(\w+)\}/g,(_,k)=>{
+    const v=vals[k];
+    if(v) return v;
+    miss.push(k);
+    return '?';
+  });
+  return {code,miss,fmt};
+}
+const CODE_TOKENS={stem:'product',build:'build',cct:'colour temperature',
+  in:'connector in',out:'connector out',wire:'wire colour',type:'wire type',len:'length'};
 const DEF_FIX=[
  /* Static white strips. The number after the slash is watts per foot; the cut
     point and lumens per foot are as stated on each product page. */
@@ -927,6 +971,11 @@ const DEF_FIX=[
      lumens, so it belongs here and not in the table below */
   ccts:[1800,2000,2200,2400,2700,3000,3500,4000],
   feeds:['BW','BRL','CLS','CON6','CON24'],
+  /* the eight positions the sheet prints, and the sample part number it gives:
+     SW24/1.5-DRY-30-BW-BW-WH-CL2-48" */
+  code:{stem:'SW24/1.5',fmt:'{stem}-{build}-{cct}-{in}-{out}-{wire}-{type}-{len}',
+    wires:['WH','BK','N/A'],types:['CL2','CL2P','N/A'],
+    sample:'SW24/1.5-DRY-30-BW-BW-WH-CL2-48"'},
   lmByCct:{2000:144,2200:149,2400:154,2700:163,3000:172,3500:179,4000:178},
   variants:[{c:'DRY',ip:'IP20',maxLen:768,wid:0.32,hgt:0.06},
             {c:'DMP',ip:'IP54',maxLen:768,wid:0.32,hgt:0.06},
@@ -1254,6 +1303,8 @@ function applyProject(d){
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
     t.cct=+t.cct>0?Math.round(+t.cct):0;
     t.variant=String(t.variant||'').toUpperCase();
+    t.wire=WIRE_COLS.some(x=>x.v===t.wire)?t.wire:'';
+    t.wtype=WIRE_TYPES.some(x=>x.v===t.wtype)?t.wtype:'';
     /* older files carried a single feed choice; it was the incoming one */
     if(typeof t.feed==='string'&&t.feed&&!t.feedIn) t.feedIn=t.feed;
     delete t.feed;
@@ -1335,6 +1386,17 @@ function applyProject(d){
     f.feeds=Array.isArray(f.feeds)?f.feeds.filter(v=>FEEDS.some(x=>x.v===v)):[];
     if(!f.feeds.length) delete f.feeds;
     if(!Array.isArray(f.variants)) delete f.variants;
+    /* an order-code format is only useful if it is a string with tokens in it */
+    if(f.code&&typeof f.code==='object'&&!Array.isArray(f.code)){
+      f.code.stem=String(f.code.stem||'');
+      f.code.fmt=String(f.code.fmt||'');
+      if(!f.code.fmt) delete f.code;
+      else ['wires','types'].forEach(k=>{
+        if(!Array.isArray(f.code[k])) delete f.code[k];
+        else f.code[k]=f.code[k].map(String).filter(Boolean);
+      });
+    } else delete f.code;
+    if(f.cctCodes&&typeof f.cctCodes!=='object') delete f.cctCodes;
     if(!Array.isArray(f.reels)) delete f.reels;
     f.sheetRev=String(f.sheetRev||'').slice(0,16)||undefined;
     if(!f.sheetRev) delete f.sheetRev;
@@ -4740,6 +4802,13 @@ function calc(t){
   const feedList=feedsFor(f,'out').length?feedsFor(f,'out'):null;
   const feedBad=!!(feedList&&((feedIn&&!feedList.includes(feedIn))||(feedOut&&!feedList.includes(feedOut))));
   const feedInBad=!!(feedIn&&!feedIsFeed(feedIn));
+  /* the order code, as far as the choices made so far allow */
+  const wire=String(t.wire||''), wtype=String(t.wtype||'');
+  const codeParts={build:vr?vr.c:'',cct:cctCode(f,cct),in:feedIn,out:feedOut,wire,type:wtype};
+  const oc=orderCode(f,codeParts,cut);
+  /* two rules the sheet states outright */
+  const plenumBad=!!(wtype==='CL2P'&&feedIn&&feedIn!=='BW');
+  const barrelWire=!!((feedIn==='BRL'||feedOut==='BRL')&&wire&&wire!=='N/A');
   const lf=clamp((+P.load||80)/100,.4,1), design=tot.watts/lf;
   const psuQty=ps.watts>0?Math.ceil(design/ps.watts-1e-9):0;
   const w=[];
@@ -4770,6 +4839,12 @@ function calc(t){
   if(feedBad) w.push('Ordered with a connector '+f.name+' is not offered with ('
     +[feedIn,feedOut].filter(v=>v&&feedList&&!feedList.includes(v)).join(', ')+').');
   if(feedInBad) w.push(feedLabel(feedIn)+' cannot feed the run — it is set as the '+fTerms.in.toLowerCase()+'.');
+  /* an order code with holes in it cannot be ordered, so name the holes */
+  if(L>0&&oc.fmt&&oc.miss.length)
+    w.push('Order code is incomplete — no '+oc.miss.map(k=>CODE_TOKENS[k]||k).join(', no ')
+      +'. It reads '+oc.code);
+  if(plenumBad) w.push('CL2P is only available with bare-wire leads, and the feed is '+feedIn+'.');
+  if(barrelWire) w.push('A barrel connector takes no wire colour — the sheet says specify N/A, the barrel is white.');
   /* past the longest run it has to be made in pieces, and fed more than once */
   if(maxRun>0&&cut>maxRun)
     w.push('Longer than '+f.name+' is made: '+fmtLen(cut)+' against a '+fmtLen(maxRun)
@@ -4797,6 +4872,7 @@ function calc(t){
   if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
   return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,maxRun,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,cct,lmFt,cctBad,
     fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,
+    wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
@@ -4899,6 +4975,8 @@ function renderTreatments(){
         +'</select></div>':'')
       +(r.f.feeds&&r.f.feeds.length?'<div class="grid2" style="margin-top:8px">'
         +feedSelect(t,r,'in')+feedSelect(t,r,'out')+'</div>':'')
+      +(r.codeFmt?'<div class="grid2" style="margin-top:8px">'
+        +codeSelect(t,r,'wire')+codeSelect(t,r,'wtype')+'</div>':'')
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Channel / mounting</label><select data-t="chId">'+chOpts+'</select></div>'
         +'<div class="f"><label>Clip spacing</label><input type="text" data-t="clip" value="'+(t.clip||'')+'" placeholder="'+esc(fmtLen(r.c.clip))+'"></div>'
@@ -4948,6 +5026,8 @@ function renderTreatments(){
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
         else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
         else if(k==='variant') t.variant=inp.value;
+        else if(k==='wire') t.wire=inp.value;
+        else if(k==='wtype') t.wtype=inp.value;
         else if(k==='feedIn') t.feedIn=inp.value;
         else if(k==='feedOut') t.feedOut=inp.value;
         else if(k==='type'||k==='zone'||k==='detail'){   /* type, zone and detail refs are capitals */
@@ -5074,6 +5154,19 @@ function cctControl(r){
 /* the connector at each end, offered from what the product is made with. A
    value already on file that the product no longer lists is still shown, so it
    can be seen and corrected rather than silently dropped. */
+/* wire colour and wire type: the last two positions before the length */
+function codeSelect(t,r,which){
+  const cfg=which==='wire'
+    ? {list:codeListOf(r.f,'wires'),all:WIRE_COLS,lab:'Wire colour',cur:t.wire||'',fn:wireLabel}
+    : {list:codeListOf(r.f,'types'),all:WIRE_TYPES,lab:'Wire type',cur:t.wtype||'',fn:wtypeLabel};
+  const list=(cfg.list&&cfg.list.length?cfg.list:cfg.all.map(x=>x.v));
+  const extra=(cfg.cur&&!list.includes(cfg.cur))?[cfg.cur]:[];
+  return '<div class="f"><label>'+cfg.lab+'</label><select data-t="'+(which==='wire'?'wire':'wtype')+'">'
+    +'<option value=""'+(cfg.cur?'':' selected')+'>\u2014 not specified \u2014</option>'
+    +list.concat(extra).map(v=>'<option value="'+esc(v)+'"'+(v===cfg.cur?' selected':'')+'>'
+      +esc(cfg.fn(v))+(extra.includes(v)?' — not offered':'')+'</option>').join('')
+    +'</select></div>';
+}
 function feedSelect(t,r,end){
   const list=feedsFor(r.f,end), cur=end==='in'?(t.feedIn||''):(t.feedOut||'');
   const extra=(cur&&!list.includes(cur))?[cur]:[];
@@ -5095,6 +5188,7 @@ function outHtml(r,t){
     ['Feed points',(r.feedKnown||r.feedSet)?(r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto')
         +(r.maxRun>0?'  ·  '+fmtRun(r.maxRun)+' per feed':''))
       :'unknown — no maximum length on file',false],
+    ['Order code',r.codeFmt?r.code:'no format on file',!!(r.codeFmt&&!r.codeMiss.length)],
     ['Build',r.vars.length?(r.vr?varLabel(r.vr)+(+r.vr.maxLen>0?'  ·  up to '+fmtRun(+r.vr.maxLen):''):'not specified — base figures'):'—',false],
     ['Fed by',(r.feedIn||r.feedOut)
       ?[r.feedIn?r.feedIn+' in':'',r.feedOut?r.feedOut+' out':''].filter(Boolean).join('  ·  ')
@@ -5424,6 +5518,7 @@ function renderLib(){
     +' · '+(f.maxLen>0?('up to '+fmtRun(f.maxLen)+' per run and per feed'):'max length not set')
     +(f.ccts&&f.ccts.length?' · '+f.ccts.length+' CCTs '+f.ccts[0]+'–'+f.ccts[f.ccts.length-1]+'K':'')
     +(f.lm?' · '+f.lm+' lm/ft at 3000K':'')
+    +(codeFmtOf(f)?' · order code '+esc((f.code&&f.code.sample)||codeFmtOf(f)):' · no order-code format')
     +(varList(f).length?' · '+varList(f).map(v=>v.c+(v.ip?'/'+v.ip:'')).join(', '):'')
     +(f.feeds&&f.feeds.length?' · connectors '+f.feeds.join('/')+' either end':'')
     +(f.sheetRev?' · Rev-'+f.sheetRev:'')
@@ -5456,6 +5551,12 @@ async function editFix(f){
       hint:unitHint()+' — also the shortest usable piece.'},
     {k:'maxLen',label:'Maximum length',val:f.maxLen?fmtLen(f.maxLen):'',row:'r2',
       hint:'The longest single run this is made in — which is also the most one feed will carry.'},
+    {k:'rc',type:'row'},
+    {k:'codeStem',label:'Order-code name',val:(f.code&&f.code.stem)||'',row:'rc',ph:'SW24/1.5',
+      hint:'The product as it is written in a part number, without the description.'},
+    {k:'codeFmt',label:'Order-code format',val:codeFmtOf(f),row:'rc',
+      ph:'{stem}-{build}-{cct}-{in}-{out}-{wire}-{type}-{len}',
+      hint:'Straight off the cutsheet. Tokens: {stem} {build} {cct} {in} {out} {wire} {type} {len}. Leave it empty and no code is produced for this product.'},
     {k:'feeds',type:'multi',label:'Connector options — in and out',opts:FEEDS,val:(f.feeds||[]).slice(),
       hint:'What this product can be ordered with at either end. A treatment then picks one for the feed end and one for the far end.'},
     {k:'kind',type:'select',label:'Kind',opts:KINDS,val:f.kind||'tape',
@@ -5474,6 +5575,10 @@ async function editFix(f){
     ccts:(r.ccts||[]).map(Number).filter(x=>x>0).sort((a,b)=>a-b),
     feeds:(r.feeds||[]).filter(v=>FEEDS.some(x=>x.v===v)),
     sheet:String(r.sheet||'').trim(),verified:!!r.verified});
+  /* no format, no code — the option lists on an existing one are kept */
+  const fmt=String(r.codeFmt||'').trim();
+  if(fmt) f.code=Object.assign({},f.code,{stem:String(r.codeStem||'').trim(),fmt});
+  else delete f.code;
   if(isNew) P.fix.push(f);
   renderLib(); renderTreatments(); renderBom(); markDirty();
 }
@@ -5536,16 +5641,20 @@ function pieceData(){
     const r=calc(t); if(r.L<=0) return;
     const tag=tagOf(t);
     for(let run=1;run<=r.qty;run++){
-      if(r.cut>0) rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
-        item:r.f.name,len:r.cut,note:r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length',
-        locked:r.locked,chId:null,detail:t.detail||''});
+      if(r.cut>0){
+        /* the code is per piece because the length is one of its positions */
+        const oc=orderCode(r.f,r.codeParts,r.cut);
+        rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
+          item:r.f.name,len:r.cut,note:r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length',
+          locked:r.locked,chId:null,detail:t.detail||'',code:oc.code,codeMiss:oc.miss});
+      }
       if(r.stock>0){
         let rem=r.L,i=1;
         while(rem>1e-6){
           const p=Math.min(rem,r.stock);
           rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:'channel',item:r.c.name,len:p,
             note:(Math.abs(p-r.stock)<1e-6?'full stock length':'off-cut piece '+i),locked:false,
-            chId:r.c.id,stock:r.stock,detail:t.detail||''});
+            chId:r.c.id,stock:r.stock,detail:t.detail||'',code:'',codeMiss:[]});
           rem-=p; i++;
         }
       }
@@ -5849,21 +5958,24 @@ function renderPieces(){
   else{
     const pst=sortState('piece');
     const pall=pst.by==='order'?pc:sortBy(pc,r=>({tag:r.tag,zone:r.zone||'\uffff',run:r.run,mark:r.mark,
-      item:r.item,len:r.len,note:r.note}[pst.by]),pst);
+      item:r.item,len:r.len,note:r.note,code:r.code||'\uffff'}[pst.by]),pst);
     const pcap=capList('pieceTbl',pall);
     const pord=pcap.shown;
     pt.innerHTML='<tr>'+thSort('piece','mark','Mark')+thSort('piece','tag','Tag')+thSort('piece','zone','Zone')
       +thSort('piece','run','Run','n')+thSort('piece','item','Item')
-      +thSort('piece','len','Cut to','n')+thSort('piece','note','Note')+'</tr>'
+      +thSort('piece','len','Cut to','n')+thSort('piece','code','Order code')
+      +thSort('piece','note','Note')+'</tr>'
       +pord.map(r=>'<tr><td><span class="tag">'+esc(r.mark)+'</span>'
         +'<div class="hint">'+r.seq+' of '+r.of+'</div></td>'
         +'<td>'+esc(r.tag)+'</td><td>'+esc(r.zone||'—')
         +'</td><td class="n">'+r.run+'</td><td>'+esc(r.item)+'<div class="hint">'+esc(r.kind)+'</div></td>'
         +'<td class="n" style="color:var(--amber)">'+esc(fmtLen(r.len))+'</td>'
+        +'<td'+((r.codeMiss||[]).length?' class="hint"':' style="font-family:var(--mono)"')+'>'
+        +esc(r.code||'—')+'</td>'
         +'<td class="hint">'+esc(r.note)+(r.locked?' · locked':'')+'</td></tr>').join('')
-      +capNote('pieceTbl',pcap,7)
+      +capNote('pieceTbl',pcap,8)
       +'<tr class="tot"><td colspan="5">'+pc.length+' pieces</td><td class="n">'
-      +fmtRun(pc.reduce((a,b)=>a+b.len,0))+'</td><td></td></tr>';
+      +fmtRun(pc.reduce((a,b)=>a+b.len,0))+'</td><td></td><td></td></tr>';
   }
   const nest=nestData(), nt=$('#nestTbl');
   if(!nest.length){ nt.innerHTML='<tr><td class="hint" style="padding:12px">No channel with a stock length yet.</td></tr>'; }
@@ -6208,13 +6320,14 @@ async function exportBox(name,text){
 }
 $('#btnCsvCut').onclick=()=>{
   const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Build','IP','CCT (K)',
-    'Connector in','Connector out','Channel','Runs',
+    'Connector in','Connector out','Wire colour','Wire type','Order code','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
     'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually','Approved','Approved at',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
-      r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.c.name+' (cut to length)',r.qty,
+      r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,
+      r.c.name+' (cut to length)',r.qty,
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
       r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
@@ -6573,13 +6686,13 @@ function xlsx(sheets){
 function workbookSheets(){
   const S=[];
   S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind',
-    'Build','IP','CCT (K)','Connector in','Connector out','Channel',
+    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Channel',
     'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
     'Channel ft','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']].concat(
     P.treat.map(t=>{ const r=calc(t);
       return [tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',
         t.detail||'',r.f.name,r.kind,r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',
-        r.cct,r.feedIn,r.feedOut,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
+        r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
         +(r.cut/12).toFixed(3),+r.cut.toFixed(2),r.inc>0?+(r.inc/12).toFixed(4):'any',r.inc>0?r.units:'',
         +r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',+(r.tot.chLen/12).toFixed(3),r.tot.pieces,
         r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes||'']; }))});
@@ -6593,8 +6706,9 @@ function workbookSheets(){
      ['','Markup','',(+P.matUp||0)+'%','',+c.markup.toFixed(2),''],
      ['','Labour',+c.hours.toFixed(2),'h',+c.rate.toFixed(2),+c.labour.toFixed(2),''],
      ['','Total','','','',+c.total.toFixed(2),c.perFt!=null?(c.perFt.toFixed(2)+'/ft'):'']])});
-  S.push({name:'Pieces',rows:[['Mark','Piece','Of','Tag','Zone','Detail','Run','Kind','Item','Cut ft','Cut in','Note','Locked']]
-    .concat(pieceData().map(r=>[r.mark,r.seq,r.of,r.tag,r.zone,r.detail||'',r.run,r.kind,r.item,
+  S.push({name:'Pieces',rows:[['Mark','Piece','Of','Tag','Zone','Detail','Run','Kind','Item','Order code',
+      'Cut ft','Cut in','Note','Locked']]
+    .concat(pieceData().map(r=>[r.mark,r.seq,r.of,r.tag,r.zone,r.detail||'',r.run,r.kind,r.item,r.code||'',
       +(r.len/12).toFixed(3),+r.len.toFixed(2),r.note,r.locked?'yes':'no']))});
   const nest=[];
   nestData().forEach(g=>g.bins.forEach((b,i)=>nest.push([g.name,g.scope||'whole job',+(g.stock/12).toFixed(3),i+1,
@@ -6947,10 +7061,10 @@ async function openProjectFile(file){
 }
 $('#btnPdf').onclick=exportSheetPdf;
 $('#btnCsvPieces').onclick=()=>{
-  const rows=[['Mark','Piece','Of','Tag','Type','Zone','Detail','Run','Kind','Item',
+  const rows=[['Mark','Piece','Of','Tag','Type','Zone','Detail','Run','Kind','Item','Order code',
     'Cut length (ft)','Cut length (in)','Note','Locked']];
   pieceData().forEach(r=>rows.push([r.mark,r.seq,r.of,r.tag,r.type,r.zone,r.detail||'',r.run,r.kind,r.item,
-    (r.len/12).toFixed(3),r.len.toFixed(2),r.note,r.locked?'yes':'no']));
+    r.code||'',(r.len/12).toFixed(3),r.len.toFixed(2),r.note,r.locked?'yes':'no']));
   exportBox(slug(P.name)+'-pieces.csv',csv(rows));
 };
 $('#btnCsvNest').onclick=()=>{
@@ -7423,6 +7537,7 @@ function manualSections(){
   {id:'library',t:'The product library',blocks:[
     {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
     {rows:[
+      ['Order codes','A part number is a fixed run of positions, and each product carries the format its own cutsheet prints — so a product without one gets no code rather than a guessed one. The positions are filled from the choices already made: build, colour temperature, both connectors, wire colour and type, and the piece\u2019s own cut length. Every physical piece therefore gets its own orderable code, on the Pieces tab and in both exports. A position that is not filled in comes out as ? and is named, so an incomplete code reads as incomplete instead of plausible. Rules the sheet states are enforced: CL2P only with bare-wire leads, and a barrel takes N/A for wire colour.'],
       ['Builds','Where a product comes in dry, damp and wet-location builds, the run picks one — and the wet build is a different product for takeoff: it runs shorter and it is dimmer, so it overrides the maximum length and the lumens. Leave it unspecified and the base figures are used, with the calculator saying so.'],
       ['Connectors','A run is ordered with a connector at each end. The product carries the codes it can be had with — which differ from one product to the next — and a treatment picks one for the feed end and one for the far end. A closed end is only offered as the outgoing one, because it cannot feed anything. Leave an end unset and the calculator says the order line is incomplete rather than choosing for you.'],
       ['check','Confirms a cutsheet link still resolves, and dates it. A response a browser is not allowed to read is reported as exactly that, not as good.'],
@@ -7800,6 +7915,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
+  orderCode,cctCode,codeFmtOf,wireColours:WIRE_COLS,wireTypes:WIRE_TYPES,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   reportHtml,openReport,reportCss,

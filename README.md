@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.30.0**
+**Version 1.31.0**
 
 ## What it does
 
@@ -125,6 +125,21 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**Order codes.** A part number is a fixed run of positions, and each product
+carries the format its own cutsheet prints — so a product without one gets no
+code rather than a guessed one. The positions fill from choices already made:
+build, colour temperature, both connectors, wire colour, wire type, and the
+piece's own cut length. A 48" dry 3000K run of SW24/1.5 with bare wire at both
+ends comes out as `SW24/1.5-DRY-30-BW-BW-WH-CL2-48"` — character for character
+the sample part number printed on its sheet.
+
+Because length is one of the positions, **every physical piece gets its own
+orderable code**, on the Pieces tab and in both the CSV and the workbook. A
+position that is not filled in comes out as `?` and is named in plain words, so
+an incomplete code reads as incomplete rather than plausible. Two rules the sheet
+states are enforced: CL2P only with bare-wire leads, and a barrel connector takes
+`N/A` for wire colour.
 
 Where a product comes in **dry, damp and wet-location builds**, the run picks
 one. The wet build is a different product for takeoff — it runs shorter and it is
