@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.28.0**
+**Version 1.29.0**
 
 ## What it does
 
@@ -125,6 +125,14 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+Where a product comes in **dry, damp and wet-location builds**, the run picks
+one. The wet build is a different product for takeoff — it runs shorter and it is
+dimmer — so it overrides the maximum length and the lumens per foot, and with it
+the feed-point count. On SW24/1.5 that is 30 ft and 141 lm/ft against 64 ft and
+172. Leave the build unspecified and the base figures are used, with the
+calculator saying so rather than assuming dry. The build and its IP rating travel
+into the cut list.
 
 A run is ordered with a connector at both ends — that is what the two connector
 positions in a QTL order code are — so the treatment has **Connector in** and

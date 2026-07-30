@@ -729,7 +729,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.28.0';
+const APP_VER='1.29.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1165,6 +1165,7 @@ function applyProject(d){
     t.cutLock=+t.cutLock>0?+t.cutLock:0;
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
     t.cct=+t.cct>0?Math.round(+t.cct):0;
+    t.variant=String(t.variant||'').toUpperCase();
     /* older files carried a single feed choice; it was the incoming one */
     if(typeof t.feed==='string'&&t.feed&&!t.feedIn) t.feedIn=t.feed;
     delete t.feed;
@@ -4577,6 +4578,13 @@ const apDrift=t=>{
    carry — they are the same limit, so they are one number. `feed` is kept as a
    fallback for libraries written before that was understood. */
 const feedLimit=f=>{ const m=+((f||{}).maxLen); return m>0?m:Math.max(0,+((f||{}).feed)||0); };
+/* Some products come in dry, damp and wet-location builds, and the wet one is a
+   different product for takeoff purposes: it runs shorter and it is dimmer. The
+   variant therefore overrides whatever it states, and the base figures are used
+   only where it is silent. */
+const varList=f=>Array.isArray(f&&f.variants)?f.variants.filter(v=>v&&v.c):[];
+const varOf=(f,code)=>varList(f).find(v=>v.c===code)||null;
+const varLabel=v=>v?(v.c+(v.ip?' · '+v.ip:'')):'';
 function calc(t){
   const f=P.fix.find(x=>x.id===t.fixId)||P.fix[0];
   const c=P.ch.find(x=>x.id===t.chId)||P.ch[0];
@@ -4586,6 +4594,9 @@ function calc(t){
   const orphan=[!P.fix.some(x=>x.id===t.fixId)&&'LED product',
     !P.ch.some(x=>x.id===t.chId)&&'channel',
     !P.psu.some(x=>x.id===t.psuId)&&'power supply'].filter(Boolean);
+  /* the build chosen for this run — dry, damp or wet where the product has them */
+  const vars=varList(f), vr=varOf(f,t.variant);
+  const varBad=!!(t.variant&&vars.length&&!vr);
   const L=lenOf(t), qty=Math.max(1,+t.qty||1), inc=+f.cut||0;
   /* Only the LED product carries a cut increment — tape, fixtures and neon.
      Fixtures cannot be cut, so they round up to whole units by default. */
@@ -4607,7 +4618,7 @@ function calc(t){
   const gap=L-cut, watts=cut/12*f.wft;
   /* a product with no maximum length on file cannot be checked for voltage drop —
      the calculator says so rather than quietly reporting one feed point */
-  const maxRun=feedLimit(f);
+  const maxRun=feedLimit(vr&&+vr.maxLen>0?vr:f);
   const feedKnown=maxRun>0;
   const autoFeeds=cut>0?Math.max(1,Math.ceil(cut/(feedKnown?maxRun:1e9)-1e-6)):0;
   const feedSet=+t.feedOv>0, feeds=feedSet?Math.max(1,Math.round(+t.feedOv)):autoFeeds;
@@ -4633,7 +4644,8 @@ function calc(t){
   let cct=+t.cct||+f.cct||3000;
   const cctBad=!!(ccts&&t.cct&&!ccts.includes(cct));
   if(ccts&&!ccts.includes(cct)&&!t.cct) cct=ccts.includes(3000)?3000:ccts[0];
-  const lmFt=(f.lmByCct&&f.lmByCct[cct])||+f.lm||0;
+  const lmTab=(vr&&vr.lmByCct)||f.lmByCct;
+  const lmFt=(lmTab&&lmTab[cct])||(vr&&+vr.lm)||+f.lm||0;
   /* the two connector positions of the order code */
   const fTerms=feedTerms(f.kind||'tape');
   const feedIn=String(t.feedIn||''), feedOut=String(t.feedOut||'');
@@ -4654,6 +4666,12 @@ function calc(t){
   if(L>0&&!(f.wft>0)) w.push('No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
   if(cctBad) w.push(cct+'K is not one of the colour temperatures '+f.name+' is offered in ('
     +(ccts||[]).map(x=>x+'K').join(', ')+').');
+  /* a wet-location build runs shorter and dimmer, so guessing dry is not safe */
+  if(L>0&&vars.length&&!vr)
+    w.push('No build chosen for '+f.name+' ('+vars.map(v=>v.c).join(', ')
+      +') — the base figures are being used. A wet-location build runs shorter and dimmer.');
+  if(varBad) w.push('"'+t.variant+'" is not a build '+f.name+' is made in ('
+    +vars.map(v=>v.c).join(', ')+').');
   /* both connector positions are part of what gets ordered, so an unfilled one
      is an incomplete line rather than a default */
   if(L>0&&feedList){
@@ -4690,7 +4708,7 @@ function calc(t){
   if(clipClamped) w.push('Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
   if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
   return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,maxRun,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,cct,lmFt,cctBad,
-    fTerms,feedIn,feedOut,feedBad,feedInBad,
+    fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
@@ -4784,6 +4802,13 @@ function renderTreatments(){
         +'<div class="f"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
         +'<div class="f"><label>Colour temperature</label>'+cctControl(r)+'</div>'
       +'</div>'
+      +(r.vars.length?'<div class="f" style="margin-top:8px"><label>Build / location</label>'
+        +'<select data-t="variant">'
+        +'<option value=""'+(r.vr?'':' selected')+'>\u2014 not specified \u2014</option>'
+        +r.vars.map(v=>'<option value="'+esc(v.c)+'"'+(r.vr&&r.vr.c===v.c?' selected':'')+'>'
+          +esc(varLabel(v))+(+v.maxLen>0?' · up to '+fmtRun(+v.maxLen):'')
+          +(v.lmByCct&&v.lmByCct[r.cct]?' · '+v.lmByCct[r.cct]+' lm/ft':'')+'</option>').join('')
+        +'</select></div>':'')
       +(r.f.feeds&&r.f.feeds.length?'<div class="grid2" style="margin-top:8px">'
         +feedSelect(t,r,'in')+feedSelect(t,r,'out')+'</div>':'')
       +'<div class="grid2" style="margin-top:8px">'
@@ -4834,6 +4859,7 @@ function renderTreatments(){
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
         else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
+        else if(k==='variant') t.variant=inp.value;
         else if(k==='feedIn') t.feedIn=inp.value;
         else if(k==='feedOut') t.feedOut=inp.value;
         else if(k==='type'||k==='zone'||k==='detail'){   /* type, zone and detail refs are capitals */
@@ -4981,6 +5007,7 @@ function outHtml(r,t){
     ['Feed points',(r.feedKnown||r.feedSet)?(r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto')
         +(r.maxRun>0?'  ·  '+fmtRun(r.maxRun)+' per feed':''))
       :'unknown — no maximum length on file',false],
+    ['Build',r.vars.length?(r.vr?varLabel(r.vr)+(+r.vr.maxLen>0?'  ·  up to '+fmtRun(+r.vr.maxLen):''):'not specified — base figures'):'—',false],
     ['Fed by',(r.feedIn||r.feedOut)
       ?[r.feedIn?r.feedIn+' in':'',r.feedOut?r.feedOut+' out':''].filter(Boolean).join('  ·  ')
         +((r.feedIn&&r.feedOut)?'':'  ·  one end not specified')
@@ -5309,6 +5336,7 @@ function renderLib(){
     +' · '+(f.maxLen>0?('up to '+fmtRun(f.maxLen)+' per run and per feed'):'max length not set')
     +(f.ccts&&f.ccts.length?' · '+f.ccts.length+' CCTs '+f.ccts[0]+'–'+f.ccts[f.ccts.length-1]+'K':'')
     +(f.lm?' · '+f.lm+' lm/ft at 3000K':'')
+    +(varList(f).length?' · '+varList(f).map(v=>v.c+(v.ip?'/'+v.ip:'')).join(', '):'')
     +(f.feeds&&f.feeds.length?' · connectors '+f.feeds.join('/')+' either end':'')
     +(f.sheetRev?' · Rev-'+f.sheetRev:'')
     +(rateOf(f)?' · <b style="color:var(--amber)">'+esc(money(f.cost))+(f.kind==='fixture'?' ea':'/ft')+'</b>':'')
@@ -6091,14 +6119,14 @@ async function exportBox(name,text){
     }catch(e){ toast('Download blocked — copy the text instead'); } });
 }
 $('#btnCsvCut').onclick=()=>{
-  const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','CCT (K)',
+  const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Build','IP','CCT (K)',
     'Connector in','Connector out','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
     'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually','Approved','Approved at',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
-      r.cct,r.feedIn,r.feedOut,r.c.name+' (cut to length)',r.qty,
+      r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.c.name+' (cut to length)',r.qty,
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
       r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
@@ -6428,12 +6456,13 @@ function xlsx(sheets){
 function workbookSheets(){
   const S=[];
   S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind',
-    'CCT (K)','Connector in','Connector out','Channel',
+    'Build','IP','CCT (K)','Connector in','Connector out','Channel',
     'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
     'Channel ft','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']].concat(
     P.treat.map(t=>{ const r=calc(t);
       return [tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',
-        t.detail||'',r.f.name,r.kind,r.cct,r.feedIn,r.feedOut,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
+        t.detail||'',r.f.name,r.kind,r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',
+        r.cct,r.feedIn,r.feedOut,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
         +(r.cut/12).toFixed(3),+r.cut.toFixed(2),r.inc>0?+(r.inc/12).toFixed(4):'any',r.inc>0?r.units:'',
         +r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',+(r.tot.chLen/12).toFixed(3),r.tot.pieces,
         r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes||'']; }))});
@@ -7179,6 +7208,7 @@ function manualSections(){
   {id:'library',t:'The product library',blocks:[
     {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
     {rows:[
+      ['Builds','Where a product comes in dry, damp and wet-location builds, the run picks one — and the wet build is a different product for takeoff: it runs shorter and it is dimmer, so it overrides the maximum length and the lumens. Leave it unspecified and the base figures are used, with the calculator saying so.'],
       ['Connectors','A run is ordered with a connector at each end. The product carries the codes it can be had with — which differ from one product to the next — and a treatment picks one for the feed end and one for the far end. A closed end is only offered as the outgoing one, because it cannot feed anything. Leave an end unset and the calculator says the order line is incomplete rather than choosing for you.'],
       ['check','Confirms a cutsheet link still resolves, and dates it. A response a browser is not allowed to read is reported as exactly that, not as good.'],
       ['read specs','Paste the cutsheet text or hand it the PDF: volts, watts and lumens per foot, the cut point, the maximum length and stock lengths are pulled out for you to confirm.'],
@@ -7554,7 +7584,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   approveTreat,unapproveTreat,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
-  cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,
+  cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   reportHtml,openReport,reportCss,
