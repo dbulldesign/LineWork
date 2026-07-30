@@ -874,7 +874,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.58.0';
+const APP_VER='1.59.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2835,6 +2835,13 @@ function setScale(ratio,all,label){
    then wrong by exactly the amount it was shrunk. So the page size is shown beside
    the choice, named where it is a standard sheet, and the dialog says to check it
    against a known dimension. */
+/* trace something you can read and see whether the scale agrees */
+function checkScale(){
+  if(!V.docId||!FILES[V.docId]){ toast('Open a drawing first'); return; }
+  if(!curScale()){ toast('Set a scale first, then check it'); return; }
+  V.calCheck=true; setTool('cal');
+  toast('Drag along a dimension you can read — the scale will be checked, not changed');
+}
 async function pickScale(){
   if(!V.docId||!FILES[V.docId]){ toast('Open a drawing first'); return; }
   const d=P.docs.find(x=>x.id===V.docId);
@@ -2853,7 +2860,8 @@ async function pickScale(){
       hint:'Whichever way the titleblock writes it.'},
     {k:'where',type:'select',label:'Apply to',opts:[
       {v:'sheet',t:'The whole sheet \u2014 every page'},
-      {v:'page',t:'This page only'}],val:'sheet'}
+      {v:'page',t:'This page only'}],val:'sheet'},
+    {k:'check',type:'check',cap:'Then check it against a dimension on the sheet',val:false}
   ],ok:'Set it',cancel:'Cancel',
     note:(pi?('This page is '+(Math.round(pi.w*100)/100)+' \u00d7 '+(Math.round(pi.h*100)/100)+' in'
       +(paper?' \u2014 '+paper:'')+'.  '):'')
@@ -2886,6 +2894,7 @@ async function pickScale(){
     P.cal[V.docId+'|*']={ratio,label};
   }else P.cal[calKey(V.docId,V.page)]={ratio,label};
   syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  if(r.check){ checkScale(); return; }
   toast(label+' on '+(r.where==='sheet'?'every page of '+sheetLabel(d):'page '+V.page)
     +' — check it against a dimension before ordering');
 }
@@ -5730,6 +5739,50 @@ async function finishDraft(){
       text:String(r.t||'').replace(/\s+$/,''),size:clamp(+r.s||11,4,96),fill:!!r.f};
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty(); setTool('pan'); return;
   }
+  if(d.type==='cal'&&V.calCheck){
+    /* Verifying rather than setting. A stated scale is only right if the PDF is at
+       its plotted size, and the only way to know is to measure something you can
+       read and compare. A sheet printed to fit a smaller page is out by exactly the
+       amount it was shrunk, which this reports as a percentage. */
+    V.calCheck=false;
+    const pts=d.pts.slice(0,2), dist=ptLen(pts[0],pts[1]);
+    const cur=curScale();
+    drawOverlay();
+    if(!cur){ toast('No scale set on this page yet — set one first'); setTool('pan'); return; }
+    const r=await dlg({title:'Check the scale',fields:[
+      {k:'len',label:'What that line really is',val:'',ph:unitHint(),
+        hint:'A dimension printed on the sheet, a grid bay, a door width \u2014 something you can read.'}
+    ],ok:'Check it',
+      note:'The scale is '+cur.label+'. Nothing is changed unless you ask for it below.'});
+    if(!r){ P.ann=P.ann.filter(x=>x.type!=='cal'); drawOverlay(); setTool('pan'); return; }
+    const known=parseLen(r.len);
+    P.ann=P.ann.filter(x=>x.type!=='cal'); drawOverlay();
+    if(!isFinite(known)||known<=0){ toast('Could not read that length'); setTool('pan'); return; }
+    const measured=dist*cur.ratio/72;
+    const err=(measured-known)/known;
+    const want=known*72/dist;
+    const pct=(err*100);
+    if(Math.abs(err)<0.005){
+      toast('Checks out — that measures '+fmtLen(measured)+' against '+fmtLen(known)
+        +', '+(pct>=0?'+':'')+pct.toFixed(2)+'%');
+      setTool('pan'); return;
+    }
+    const fix=await dlg({title:(Math.abs(err)<0.02?'Close, but not exact':'The scale is wrong'),fields:[
+      {k:'go',type:'check',cap:'Correct the scale to '+ratioLabel(want),val:Math.abs(err)>=0.02},
+      {k:'all',type:'check',cap:'Apply the correction to every page of this sheet',
+        val:!P.cal[calKey(V.docId,V.page)]}
+    ],ok:'Done',cancel:'Leave it',
+      note:'That line measures '+fmtLen(measured)+' at '+cur.label+', but you say it is '+fmtLen(known)
+        +' \u2014 '+(pct>=0?'+':'')+pct.toFixed(1)+'%. The scale that fits what you traced is '
+        +ratioLabel(want)+'.'
+        +(Math.abs(err)>0.1?'  An error this size usually means the PDF was printed to fit a smaller page, '
+          +'in which case every sheet in the set is out by the same amount.':'')});
+    if(!fix||!fix.go){ toast('Left at '+cur.label); setTool('pan'); return; }
+    snap('Correct the scale');
+    setScale(want,!!fix.all);
+    toast('Corrected to '+ratioLabel(want)+' — every length on this '+(fix.all?'sheet':'page')+' has moved');
+    setTool('pan'); return;
+  }
   if(d.type==='cal'){
     const pts=d.pts.slice(0,2), dist=ptLen(pts[0],pts[1]);
     drawOverlay();
@@ -6896,6 +6949,9 @@ const WARN_KINDS=[
   {c:'nostock',t:'No stock length on the channel'},
   {c:'undermin',t:'Run shorter than the minimum the fixture is made in'},
   {c:'overreel',t:'Run longer than the reel it would be cut from'},
+  {c:'bendtight',t:'A curve tighter than the product bends to'},
+  {c:'bendcorner',t:'Hard corners on a product that must be bent, not cut'},
+  {c:'nobend',t:'No bend radius on file, so curves cannot be checked'},
   {c:'psvolt',t:'Supply voltage does not match the product'},
   {c:'psfit',t:'Supply does not list this product'},
   {c:'chfit',t:'Product and channel are not listed as fitting each other'},
@@ -7338,6 +7394,53 @@ const feedLimit=f=>{ const m=+((f||{}).maxLen); return m>0?m:Math.max(0,+((f||{}
    different product for takeoff purposes: it runs shorter and it is dimmer. The
    variant therefore overrides whatever it states, and the base figures are used
    only where it is silent. */
+/* ---- bending ----
+   A flexible product will only take a curve down to a radius, and a curve tighter
+   than that either will not go in or fails later. The drawing already carries the
+   geometry: an arc markup has a radius, and a bulged polyline segment is a circular
+   arc whose radius follows from its chord and its bulge. So the run can be checked
+   against what the product's own sheet allows.
+
+   A hard corner is treated separately and on purpose. On cuttable tape a corner is
+   no problem — you cut it and rejoin. On a made-to-length fixture there is nothing
+   to cut, so a corner has to be a bend, and a bend has a minimum radius: a
+   right-angled corner traced on the drawing is not something that can be built, and
+   it also makes the traced length shorter than the real one. Rounding the corners
+   fixes both, so the run says so. */
+const bendOf=f=>Math.max(0,+(f&&f.bendR)||0);
+/* every curve in a markup, with its radius in inches */
+function bendCurves(a,k){
+  const out=[];
+  if(!a||!k) return out;
+  if(a.type==='arc'){ const g=arcOf(a); if(g) out.push({seg:0,r:g.r*k}); return out; }
+  const pts=annPts(a);
+  for(let i=0;i<pts.length-1;i++){
+    const b=bulgeOf(a,i);
+    if(!b) continue;
+    const g=segArcOf(pts[i],pts[i+1],b);
+    if(g) out.push({seg:i,r:g.r*k});
+  }
+  return out;
+}
+/* corners sharp enough to need a bend rather than a change of direction */
+function bendCorners(a){
+  if(!a||a.type==='arc') return 0;
+  const pts=annPts(a);
+  const closed=isClosedType(a.type);
+  let n=0;
+  const last=closed?pts.length:pts.length-1;
+  for(let i=1;i<last;i++){
+    const A=pts[i-1],B=pts[i],C=pts[(i+1)%pts.length];
+    /* a vertex whose segments are both straight is a corner; a bulge either side
+       means it was traced as a curve and is checked as one */
+    if(bulgeOf(a,i-1)||bulgeOf(a,i)) continue;
+    const a1=Math.atan2(B[1]-A[1],B[0]-A[0]), a2=Math.atan2(C[1]-B[1],C[0]-B[0]);
+    let d=Math.abs(normDeg((a2-a1)*180/Math.PI));
+    if(d>180) d=360-d;
+    if(d>8) n++;                       /* below that it is a trace wobble, not a turn */
+  }
+  return n;
+}
 /* ---- what fits what, on the run ----
    The three choices on a run are not independent: a strip is made to sit in certain
    extrusions and a driver is made to run certain strips, and both sheets say so.
@@ -7547,6 +7650,14 @@ function calc(t){
   const minLen=+f.minLen||0;
   const shortPc=minLen>0&&cut>0&&cut<minLen-1e-6;
   const fit=fitOf(f,c,ps);
+  /* bending is only a question for a flexible product, and only where the drawing
+     was actually traced — a typed length has no geometry to check */
+  const bendR=bendOf(f);
+  const bendA=t.annId?P.ann.find(x=>x.id===t.annId):null;
+  const k=inPerPt();
+  const curves=(bendA&&k)?bendCurves(bendA,k):[];
+  const tight=bendR>0?curves.filter(x=>x.r<bendR-1e-6):[];
+  const corners=(bendR>0&&bendA&&(f.kind||'tape')==='fixture')?bendCorners(bendA):0;
   const ccts=(f.ccts&&f.ccts.length)?f.ccts:null;
   let cct=+t.cct||+f.cct||3000;
   const cctBad=!!(ccts&&t.cct&&!ccts.includes(cct));
@@ -7596,6 +7707,19 @@ function calc(t){
     if(cut>reel+1e-6) warn('overreel',fmtRun(cut)+' is longer than the '+fmtRun(reel)
       +' reel '+f.name+' is wound on — it cannot be cut from one.');
   }
+  /* the curves and corners the drawing was traced with, against what this product
+     will bend to */
+  if(bendR>0&&bendA){
+    if(tight.length) warn('bendtight',(tight.length===1
+        ?'A curve of R '+fmtLen(tight[0].r)
+        :tight.length+' curves, the tightest R '+fmtLen(Math.min.apply(null,tight.map(x=>x.r))))
+      +' is tighter than the '+fmtLen(bendR)+' '+f.name+' bends to.');
+    if(corners) warn('bendcorner',corners+' hard corner'+(corners===1?'':'s')+' on a run of '
+      +f.name+', which is made to length and cannot be cut on site — each has to be a bend of at '
+      +'least '+fmtLen(bendR)+'. Round the corners to that radius and the length will be right too.');
+  }else if(bendA&&curves.length&&!bendR)
+    warn('nobend','No bend radius on file for '+f.name+' — the '+curves.length+' curve'
+      +(curves.length===1?'':'s')+' on this run cannot be checked. Read its cutsheet.');
   if(shortPc) warn('undermin',fmtRun(cut)+' is shorter than the '+fmtRun(minLen)
     +' minimum '+f.name+' is made in — it cannot be ordered at that length.');
   /* what the sheets say fits what. Silence where nothing is stated: an incomplete
@@ -7670,7 +7794,7 @@ function calc(t){
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     dim,psDims,dimKnown,dimBad,
     clips,clipSp,clipsInc,clipFree,clipBuy,stock,madeTo,perPiece,chCut:+c.chCut||0,
-    minLen,shortPc,sp:specOf(t.specId),fit,
+    minLen,shortPc,sp:specOf(t.specId),fit,bendR,curves,tight,corners,
     pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w,warnAll:wAll};
 }
 
@@ -8380,6 +8504,19 @@ function feedSelect(t,r,end){
 }
 function outHtml(r,t){
   const kindName={tape:'LED tape',fixture:'Fixtures',neon:'Neon flex'}[r.kind]||'LED';
+  /* every curve on the run against what the product bends to, tightest first, so the
+     one to fix is the one named */
+  const bendTxt=()=>{
+    if(!r.bendR&&!r.curves.length) return '';
+    if(!r.curves.length&&!r.corners) return r.bendR?('no curves traced · bends to '+fmtLen(r.bendR)):'';
+    const list=r.curves.slice().sort((a,b)=>a.r-b.r).slice(0,4).map(c=>
+      (c.seg>0||r.curves.length>1?'seg '+(c.seg+1)+' ':'')+'R '+fmtLen(c.r)
+      +(r.bendR&&c.r<r.bendR-1e-6?' \u2717':''));
+    return (r.bendR?'bends to '+fmtLen(r.bendR)+'  \u00b7  ':'limit not on file  \u00b7  ')
+      +(list.length?list.join(', ')+(r.curves.length>4?' …':''):'no curves')
+      +(r.corners?'  \u00b7  '+r.corners+' hard corner'+(r.corners===1?'':'s'):'');
+  };
+  const bt=bendTxt();
   const rows=[
     ['Cut length per run',fmtLen(r.cut),true],
     [(r.fixed?'Fixtures per run':'Cut increments per run'),r.inc>0?r.units+' × '+fmtLen(r.inc):'cut to any length',false],
@@ -8393,6 +8530,7 @@ function outHtml(r,t){
         :(r.dimKnown?'  \u00b7  supply does it':'  \u00b7  supply not on file')))):'\u2014',false],
     ['Order code',r.codeFmt?r.code:'no format on file',!!(r.codeFmt&&!r.codeMiss.length)],
     ['Space',treatSpace(t)||'—',false],
+    ...(bt?[['Bending',bt,false]]:[]),
     ['Build',r.vars.length?(r.vr?varLabel(r.vr)+(+r.vr.maxLen>0?'  ·  up to '+fmtRun(+r.vr.maxLen):''):'not specified — base figures'):'—',false],
     ['Fed by',(r.feedIn||r.feedOut)
       ?[r.feedIn?r.feedIn+' in':'',r.feedOut?r.feedOut+' out':''].filter(Boolean).join('  ·  ')
@@ -8635,6 +8773,13 @@ function readSpecs(text,kind){
     if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:W|watts?)\s*(?:\/|per\s*)\s*(?:ft|foot|')/i))) out.wft=num(m);
     if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:lm|lumens?)\s*(?:\/|per\s*)\s*(?:ft|foot|')/i))) out.lm=num(m);
     if((m=t.match(/CRI\s*Ra?\D{0,12}(\d{2})/i))) out.cri=num(m);
+    /* the tightest curve a flexible product will take. KURV prints 6" bend radius in
+       so many words; ANYBEND prints the heading and puts the figure in a picture, so
+       it is left unset and the run says the limit is not on file rather than passing
+       a curve it cannot check. */
+    if((m=t.match(/(\d+(?:\.\d+)?)\s*"\s*(?:min(?:imum)?\s*)?bend\s*radius/i))
+     ||(m=t.match(/(?:min(?:imum)?\s*)?bend\s*radius\D{0,16}?(\d+(?:\.\d+)?)\s*"/i))) out.bendR=num(m);
+    else if((m=t.match(/(?:min(?:imum)?\s*)?bend\s*radius\D{0,16}?(\d+(?:\.\d+)?)\s*mm/i))) out.bendR=num(m)/MM;
     /* the wattages one sheet can be ordered in: "1.0 1.0W-SO 2.0 2.0W-HO 4.0
        4.0W-VHO" is three products, and picking the first silently orders the
        dimmest one */
@@ -8770,7 +8915,7 @@ const SPEC_BOOL=new Set(['c2','clipsInc']);
 const SPEC_FIELDS={
   fix:[['volts','Volts'],['wft','Watts per foot'],['cut','Cut increment (in)'],
        ['maxLen','Maximum length, and run per feed (in)'],['minLen','Minimum length made (in)'],
-       ['lm','Lumens per foot'],['cri','CRI']],
+       ['bendR','Minimum bend radius (in)'],['lm','Lumens per foot'],['cri','CRI']],
   ch:[['stock','Stock length (in)'],['clip','Clip spacing (in)'],
       ['madeTo','Made to length, longest piece (in)'],['chCut','Length increment (in)'],
       ['clipsInc','Clips come with it']],
@@ -11949,6 +12094,7 @@ function cmdItems(){
   add('File','Apply preset',()=>$('#presetInput').click());
   add('File','Save library file',()=>$('#btnLibSave').click());
   add('Do','Set the scale',pickScale);
+  add('Do','Check the scale against a dimension',checkScale);
   add('Do','Delete this sheet',()=>{ const d=P.docs.find(x=>x.id===V.docId);
     if(d) delDoc(d); else toast('Open a drawing first'); });
   add('File','Export the workbook',exportWorkbook);
@@ -12157,6 +12303,8 @@ function manualSections(){
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
     {rows:[
+      ['Checking the scale','A stated scale is only right if the PDF is at its plotted size, and the only way to know is to measure something you can read. Check the scale against a dimension traces a line and compares: it reports what that line measures at the current scale against what you say it is, as a percentage, and offers to correct it. Under half a percent it says it checks out. An error over about ten percent usually means the sheet was printed to fit a smaller page, in which case every sheet in the set is out by the same amount \u2014 and it says so. Nothing changes unless you ask for it.'],
+      ['Bending','A flexible product only takes a curve down to a radius, and the drawing already carries the geometry: an arc markup has a radius, and a bulged polyline segment is an arc whose radius follows from its chord and its bulge. Each curve on a run is checked against the radius on the product\u2019s own sheet, and the run card lists them tightest first with a cross against any that are too tight. Where a sheet states no radius the curves are reported as uncheckable rather than passed. Hard corners are treated separately and only on a made-to-length fixture: on cuttable tape a corner is no problem because you cut and rejoin, but a fixture has nothing to cut, so a corner has to be a bend \u2014 which also makes the traced length shorter than the real one. Round the corners to the radius and both are right.'],
       ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. A bare "1/4" is refused rather than guessed at, because as a ratio it means 1:4 and on a drawing it means 1/4" = 1’-0" — twelve times apart. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
       ['Deleting a sheet','The ✕ on a sheet in the list. It counts what goes with it first — markups, runs measured off it, links pointing at it, its scale — and asks twice. Runs measured off it are kept by default with their measured length written in as a typed figure: the takeoff is what was priced, and losing a drawing is not a reason to change it. Untick that and they go too. The PDF is dropped from this browser as well, so undo brings the markups and runs back but the drawing needs re-importing.'],
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
@@ -12654,7 +12802,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   writeSpecs,bulkSpecs,matchLibItem,guessKind,normStem,itemStems,foundSummary,
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
   fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboOn,comboMatch,libHayFor,
-  pickScale,parseScale,scales:SCALES,paperName,pageInches,delDoc,docCost,
+  pickScale,checkScale,parseScale,scales:SCALES,paperName,pageInches,delDoc,docCost,
+  bendOf,bendCurves,bendCorners,
   reelPlan,reelsOf,reelable,closedOf,buyBy:BUY_BY,feedCodes:FEEDS.map(x=>x.v),
 
 

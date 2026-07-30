@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.58.0**
+**Version 1.59.0**
 
 ## What it does
 
@@ -79,6 +79,34 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   About. An installed copy opens from its own cache, so it also checks what is on
   the server: the chip turns amber with an arrow when a newer build is waiting,
   and the answer is always to close the app fully and reopen it.
+
+## Bending, and checking the scale
+
+**A flexible product only takes a curve down to a radius**, and the drawing already
+carries the geometry: an arc markup has a radius, and a bulged polyline segment is a
+circular arc whose radius follows from its chord and its bulge. Every curve on a run
+is checked against the radius on the product's own sheet — KURV states 6" — and the
+run card lists them tightest first with a cross against any that are too tight.
+Where a sheet states no radius the curves are reported as **uncheckable rather than
+passed**: ANYBEND prints the heading and puts the figure in a picture, so nothing is
+invented.
+
+**Hard corners are treated separately, and only on a made-to-length fixture.** On
+cuttable tape a corner is no problem — you cut it and rejoin. A fixture has nothing
+to cut, so a corner has to be a bend, and a bend has a minimum radius: a right angle
+traced on the drawing is not something that can be built, and it also makes the
+traced length shorter than the real one. Rounding the corners fixes both, and the
+message says so.
+
+**Checking the scale.** A stated scale is only right if the PDF is at its plotted
+size, and the only way to know is to measure something you can read. *Check the
+scale against a dimension* traces a line and **compares** rather than replacing: it
+reports what that line measures at the current scale against what you say it is, as
+a percentage, and offers the scale that would fit. Under half a percent it says it
+checks out. An error over about ten percent usually means the sheet was printed to
+fit a smaller page — in which case every sheet in the set is out by the same amount,
+and it says so. Nothing changes unless you ask for it, and the line traced to check
+it does not stay on the drawing.
 
 ## How things are actually bought
 
