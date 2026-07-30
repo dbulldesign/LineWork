@@ -791,7 +791,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.39.0';
+const APP_VER='1.40.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -3255,6 +3255,119 @@ function nearestSeg(a,sx,sy){
   }
   return {i:best,d:bd};
 }
+/* ---- splitting in half ----
+   Two things an estimator asks for, which are not the same thing:
+   halving one segment, which adds a vertex at its midpoint and changes no
+   length; and splitting the whole markup in two, which gives two runs of equal
+   length. Both are exact — the split point is found by walking the path, so a
+   dog-legged polyline halves by length, not by vertex count. */
+function halveSeg(a,i){
+  if(!vertexType(a)||a.free){ toast('Segments can be halved on a run or a region'); return false; }
+  const pts=annPts(a);
+  if(!(i>=1&&i<pts.length)){ toast('Pick a segment first'); return false; }
+  const A=pts[i-1], B=pts[i];
+  const mid=[(A[0]+B[0])/2,(A[1]+B[1])/2];
+  snap('Halve segment');
+  /* on a closed loop the last segment runs back to the first point, so the new
+     vertex goes on the end rather than before a point that is not there */
+  a.pts.splice(Math.min(i,a.pts.length),0,mid);
+  if(a.type==='line'&&!a.poly&&a.pts.length>2) a.poly=true;
+  invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('Segment halved into two of '+fmtLen(ptLen(A,B)*(inPerPt()||0)/2));
+  return true;
+}
+/* the point half way along the path, and the two point lists either side of it */
+function halvePath(pts){
+  let total=0; const seg=[];
+  for(let i=1;i<pts.length;i++){ const d=ptLen(pts[i-1],pts[i]); seg.push(d); total+=d; }
+  if(!(total>0)) return null;
+  const want=total/2;
+  let acc=0;
+  for(let i=0;i<seg.length;i++){
+    if(acc+seg[i]>=want-1e-9){
+      const f=seg[i]>0?(want-acc)/seg[i]:0;
+      const A=pts[i], B=pts[i+1];
+      const m=[A[0]+(B[0]-A[0])*f,A[1]+(B[1]-A[1])*f];
+      return {mid:m,total,
+        first:pts.slice(0,i+1).concat([m]),
+        second:[m].concat(pts.slice(i+1))};
+    }
+    acc+=seg[i];
+  }
+  return null;
+}
+/* an arc halves into two arcs, each needing its own point along the curve */
+function halveArc(a){
+  const g=arcOf(a); if(!g) return null;
+  const at=f=>{ const t=g.a0+g.sweep*f;
+    return [g.c[0]+g.r*Math.cos(t),g.c[1]+g.r*Math.sin(t)]; };
+  return {first:[at(0),at(0.25),at(0.5)],second:[at(0.5),at(0.75),at(1)],mid:at(0.5)};
+}
+async function splitHalf(a){
+  if(!a){ toast('Select a run first'); return; }
+  if(a.type==='area'||isClosedType(a)||a.closed){
+    toast('A closed loop has no halves — halve one of its segments instead'); return;
+  }
+  if(a.type!=='line'&&a.type!=='arc'&&a.type!=='whip'){
+    toast(( ANN_NAMES[a.type]||'That markup')+' cannot be split'); return;
+  }
+  const parts=a.type==='arc'?halveArc(a):halvePath(annPts(a));
+  if(!parts){ toast('That run is too short to split'); return; }
+  const t=a.treat&&P.treat.find(x=>x.id===a.treat);
+  const st=statedOf(a);
+  const half=annLen(a)!=null?annLen(a)/2:null;
+  let mode='one';
+  if(t){
+    const r=await dlg({title:'Split '+tagOf(t)+' in half',fields:[
+      {k:'mode',type:'select',label:'The second half',opts:[
+        {v:'two',t:'becomes its own run, same product choices'},
+        {v:'one',t:'is just a markup — no run on it'}],val:'two'}
+    ],ok:'Split',
+      note:(half!=null?'Each half measures '+fmtLen(half)+'. ':'')
+        +tagOf(t)+' stays on the first half. A second run arrives without a zone number and unapproved — press Renumber to fold it in.'});
+    if(!r) return;
+    mode=r.mode;
+  }
+  snap('Split in half');
+  /* the second half is a new markup; the first keeps the original id so anything
+     pointing at it — the run, its feed points, its splices — still points at it */
+  const b={id:uid('a_'),type:a.type,doc:a.doc,page:a.page,pts:parts.second.map(q=>q.slice()),
+    color:a.color,w:a.w,text:''};
+  if(a.poly) b.poly=true;
+  if(a.free) b.free=true;
+  if(a.type==='whip'){ b.from=null; b.to=a.to; a.to=null; }
+  if(st>0){ a.stated=st/2; b.stated=st/2; }
+  a.pts=parts.first.map(q=>q.slice());
+  if(a.type==='line'&&a.pts.length>2) a.poly=true;
+  P.ann.push(b);
+  let t2=null;
+  if(t&&mode==='two'){
+    t2=clone(t); t2.id=uid('t_'); t2.annId=b.id; b.treat=t2.id;
+    t2.zone=''; t2.manual=0;
+    unapproveTreat(t2); delete t2.rev;
+    P.treat.push(t2);
+  }
+  /* placed feed points and splices know how far along the old path they sat, so
+     each one moves to the half it is actually on, rescaled to that half */
+  if(t){
+    P.ann.filter(x=>(x.type==='feed'||x.type==='splice')&&x.treat===t.id).forEach(x=>{
+      const at=clamp(+x.at||0,0,1);
+      if(at<=0.5){ x.at=at*2; }
+      else{
+        x.at=(at-0.5)*2;
+        if(t2) x.treat=t2.id;
+        else{ P.ann=P.ann.filter(y=>y.id!==x.id); return; }
+      }
+    });
+  }
+  /* the original was approved against a length that no longer exists */
+  if(t&&t.approved) unapproveTreat(t);
+  invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  toast('Split into two of '+(half!=null?fmtLen(half):'equal length')
+    +(t2?' — '+tagOf(t)+' and a new run':(t?' — '+tagOf(t)+' keeps the first half':'')));
+}
 function addPointTo(a,pdfPt,sx,sy){
   if(!vertexType(a)||a.free){ toast('Points can only be added to a run or a region'); return false; }
   const seg=nearestSeg(a,sx,sy);
@@ -3992,7 +4105,8 @@ function ctxForAnn(a){
   items.push({hr:1},
     {id:'cp',t:'Copy markup',k:'⌘C',fn:()=>copyAnn()},
     {id:'du',t:'Duplicate',k:'⌘D',fn:()=>{ V.sel=a.id; pasteAnn(null,a); }},
-    {id:'ar',t:'Array along the grid…',fn:()=>arrayAnn(a)});
+    {id:'ar',t:'Array along the grid…',fn:()=>arrayAnn(a)},
+    {id:'hf',t:'Split in half',k:'S',fn:()=>splitHalf(a)});
   if(a.type!=='cal'&&a.type!=='link') items.push({sw:1});
   items.push({hr:1},{id:'dl',t:'Delete markup',k:'⌫',danger:1,fn:()=>{
     snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(x=>{if(x.annId===a.id)x.annId=null});
@@ -4663,6 +4777,7 @@ function showInspector(a){
     const t2=a.treat&&P.treat.find(x=>x.id===a.treat);
     h+= t2? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t2))+'</button>'
           : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
+    h+='<button class="btn" data-act="half">Split in half  <span class="hint">S</span></button>';
     h+='<div class="hint">Drag the middle handle to change the bow, the ends to move it.</div>';
   }
   if(a.type==='photo'){
@@ -4686,12 +4801,15 @@ function showInspector(a){
       +'<div class="hint" style="margin-top:4px">Where the sheet prints a dimension, type it and it governs. The trace stays visible above.</div></div>';
     if(a.pts.length>1&&!a.free) h+='<button class="btn" data-act="off">Parallel run…</button>';
     h+='<button class="btn" data-act="arr">Array along the grid…</button>';
+    if(!a.closed) h+='<button class="btn" data-act="half">Split in half  <span class="hint">S</span></button>';
     h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
     /* Bluebeam-style per-segment readout */
     if(segs.length>1&&!a.free){
       h+='<div class="seglist">'+segs.map((sg,i)=>
-        '<div class="kv"><span>'+(a.closed&&i===segs.length-1?'closing':'seg '+(i+1))+'</span><b>'
-        +(sg.len==null?'—':fmtLen(sg.len))+'</b></div>').join('')+'</div>';
+        '<div class="kv" data-halve="'+(i+1)+'" style="cursor:pointer" title="Halve this segment">'
+        +'<span>'+(a.closed&&i===segs.length-1?'closing':'seg '+(i+1))+'</span><b>'
+        +(sg.len==null?'—':fmtLen(sg.len))+'</b></div>').join('')+'</div>'
+        +'<div class="hint">Click a segment to halve it — a vertex goes in at its midpoint and no length changes.</div>';
     }
     if(canClose(a)) h+='<button class="btn" data-act="loop">'+(a.closed?'Open loop':'Close loop')+'</button>';
     if(editablePts(a)) h+='<div class="hint">'+a.pts.length+' points. Double-click the run to add one, '
@@ -4847,6 +4965,7 @@ function showInspector(a){
     if(el.value!==up){ const c=el.selectionStart; el.value=up; try{el.setSelectionRange(c,c)}catch(_){} }
     a[el.dataset.up]=up; drawOverlay(); renderAnnList(); renderBom(); markDirty();
   });
+  $$('[data-halve]',bd).forEach(el=>el.onclick=()=>halveSeg(a,+el.dataset.halve));
   $$('[data-up2]',bd).forEach(el=>el.oninput=()=>{
     a[el.dataset.up2]=el.value;
     ovInvalidate(a.id); drawOverlay(); renderAnnList(); markDirty();
@@ -4871,6 +4990,7 @@ function showInspector(a){
     if(act==='off') offsetAnn(a);
     if(act==='arr') arrayAnn(a);
     if(act==='pho') openPhoto(a);
+    if(act==='half') splitHalf(a);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -8544,6 +8664,10 @@ document.addEventListener('keydown',e=>{
   if(k==='r') setTool('area'); if(k==='m') setTool('count');
   if(k==='q') setTool('cloud'); if(k==='d'&&!(e.metaKey||e.ctrlKey)) setTool('driver');
   if(k==='h'&&!(e.metaKey||e.ctrlKey)) setTool('photo');
+  /* S splits whatever is selected in half — press it again for quarters */
+  if(k==='s'&&!(e.metaKey||e.ctrlKey)&&V.sel){
+    const a=P.ann.find(x=>x.id===V.sel); if(a){ e.preventDefault(); splitHalf(a); return; }
+  }
   if(k==='f'&&!(e.metaKey||e.ctrlKey)) setTool('feed');
   if(k==='j') setTool('splice');
   if(k==='w'&&!(e.metaKey||e.ctrlKey)) setTool('whip');
@@ -8634,6 +8758,10 @@ function cmdItems(){
   add('Do','Add a treatment',()=>{ const t=newTreat(null); renderTreatments(); renderBom(); openTreat(t.id,true); });
   add('Do','Edit the picked runs together',editMany);
   add('Do','Renumber zones…',renumber);
+  add('Do','Split the selected run in half',()=>{
+    const a=P.ann.find(x=>x.id===V.sel);
+    if(a) splitHalf(a); else toast('Select a run on the drawing first');
+  },'S');
   add('Do','Compare revisions…',compareRevisions);
   add('Do','Scan titleblocks',()=>scanTitleblocks(false));
   add('Do','Set a baseline…',()=>$('#btnBase').click());
@@ -8711,6 +8839,7 @@ const KEYS=[
   {g:'Tools',k:'A',t:'Arc length — start, a point along the curve, then the end'},
   {g:'Tools',k:'R',t:'Region — area, perimeter and the cove run inside it'},
   {g:'Tools',k:'H',t:'Photo — pin a site photo where it was taken'},
+  {g:'Editing',k:'S',t:'Split the selected run in half — again for quarters'},
   {g:'Tools',k:'F',t:'Feed point — place one on a run'},
   {g:'Tools',k:'J',t:'Splice — mark where two pieces join'},
   {g:'Tools',k:'W',t:'Home run — route the wire from a driver to a feed'},
@@ -8830,6 +8959,8 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Split in half (S)','Two different things, and they are not the same. Splitting a run in half gives two runs of equal length \u2014 the point is found by walking the path, so a dog-legged polyline halves by length and not by vertex count, and an arc halves into two arcs. Press S again for quarters. Halving a segment instead \u2014 click any segment in the inspector\u2019s list \u2014 puts a vertex at its midpoint and changes no length at all.'],
+      ['What a split carries','The first half keeps the original run, so anything pointing at it still does. The second half can become its own run with the same product choices, arriving without a zone number and unapproved. Placed feed points and splices move to the half they are actually on and are rescaled to it. A stated length is halved with the run. The original loses its approval, because it was approved against a length that no longer exists.'],
       ['Photos (H)','Pin a site photo where it was taken, with a caption. The picture is kept in this browser alongside the drawings and travels inside a “Save with drawings” file, so the one file really is the whole job. A pin whose picture is not in this browser says so rather than showing a blank.'],
       ['Command palette (\u2318K)','One searched list of every tool, action, setting, sheet and run in the job. Type part of a name \u2014 every word has to appear somewhere, so \u201ccove z4\u201d narrows to that run, and picking it opens the sheet, selects the markup and opens the card. Arrows to move, return to run, escape to close.'],
       ['Presets','The settings an office reuses on every job \u2014 rates, units, precision, rounding, labour hours, wire allowances, the defaults by type and the quieted warning kinds \u2014 saved as one file, optionally with the product library. Applying one replaces those settings and leaves the sheets, markups and runs alone.'],
@@ -9218,7 +9349,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   renumber,arrayAnn,annMeasured,statedOf,renumSort,showInspector,annSegs,annLen,
   placePoint,feedsPlaced,splicesOn,alongRun,nearRun,
   openCmd,closeCmd,cmdItems,cmdMatch,presetText,applyPreset,savePreset,presetKeys:PRESET_KEYS,
-  placePhoto,photoUrl,openPhoto,photoKey,pdfPrune,grpHead,apDrift,
+  placePhoto,photoUrl,openPhoto,photoKey,pdfPrune,grpHead,
+  splitHalf,halveSeg,halvePath,halveArc,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,

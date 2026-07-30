@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.39.0**
+**Version 1.40.0**
 
 ## What it does
 
@@ -184,6 +184,25 @@ red **REV** badge, warns in the Calculated panel, is searchable, and appears in 
 cut list, the workbook and a section of the printed report. Approving a run clears
 the flag, because approving *is* the re-measure the flag asked for. Runs on other
 sheets are set aside rather than reported clear.
+
+**Split in half (S).** Two different things, and they are not the same.
+
+*Splitting a run* gives **two runs of equal length**. The point is found by walking
+the path, so a dog-legged polyline halves by length rather than by vertex count — a
+300" leg and a 100" leg cut at 200" along the first, not at the corner — and an arc
+halves into two arcs. Press **S** again for quarters. Available on the selected
+markup from the inspector, the right-click menu, the palette, or the key.
+
+*Halving a segment* instead — click any segment in the inspector's list — puts a
+vertex at its midpoint and **changes no length at all**.
+
+What a split carries: the first half keeps the original run, so anything pointing
+at it still does. The second half can become its own run with the same product
+choices, arriving without a zone number and unapproved. Placed feed points and
+splices move to the half they are actually on and are rescaled to it. A stated
+length is halved with the run. The original loses its approval, because it was
+approved against a length that no longer exists. A closed region and anything
+without a length are refused with a reason rather than silently ignored.
 
 **Command palette (⌘K).** One searched list of every tool, action, setting, sheet
 and run in the job. Every word has to appear somewhere, so `cove z4` narrows to
