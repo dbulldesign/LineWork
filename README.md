@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.26.0**
+**Version 1.27.0**
 
 ## What it does
 
@@ -120,7 +120,9 @@ and the DC power supplies — each carrying a link to its own page on qtl.lighti
 A product is described in seven terms, in this order: **name, voltage, watts per
 foot, the colour temperatures it is offered in** (a multi-select), **minimum cut
 increment, maximum length**, and **the feed options** it can be ordered with (BW
-bare wire, BRL barrel, CLS closed end, CON6, CON24 — also a multi-select). A
+bare wire, BRL barrel, CLS closed end, CON6, CON24 — also a multi-select). The
+longest single run a product is made in is also the most one feed will carry, so
+that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature and one feed from what that product
 actually offers, and the light output follows the CCT.
 
@@ -131,7 +133,7 @@ sheet's revision date. A treatment then picks its colour temperature from that
 table and the light output follows. SW24/1.5 is the worked example.
 
 Only the figures the catalogue pages state are filled in for the rest. Where a cut point, a
-maximum run per feed or a stock length is not stated, it is **left unset and the
+maximum length or a stock length is not stated, it is **left unset and the
 item is marked unverified**: the library shows the badge, and the calculator says
 which number is missing rather than rounding on a guess. A blank that announces
 itself is safe; a plausible number nobody checked is not.
@@ -143,7 +145,7 @@ Every LED product, channel and supply has a **cutsheet link**, and two buttons:
   inspected is reported as exactly that rather than as good.
 - **read specs** — paste the cutsheet text, or hand it the cutsheet **PDF**, and
   it pulls out volts, watts per foot, lumens per foot, the cut point (including
-  "8 diodes per 2\"" and metric increments), the maximum run per feed, and stock
+  "8 diodes per 2\"" and metric increments), the maximum length, and stock
   lengths. Nothing changes until you confirm each number.
 
 *Load QTL starter library* puts the seeded set back, merging or replacing, and
@@ -162,9 +164,11 @@ length only says how it is bought, and never rounds the run. The BOM therefore
 lists channel twice: the linear length actually needed, and the number of stock
 lengths to buy.
 
-Feed points are computed from the product's voltage-drop limit, and can be
-overridden per treatment. Setting fewer than the limit allows is flagged rather
-than silently accepted.
+Feed points come from the maximum length — the longest single run a product is
+made in is also the most one feed will carry — and can be overridden per
+treatment. Setting fewer than that limit allows is flagged rather than silently
+accepted, and a product with no maximum length on file says feed points cannot be
+checked instead of reporting one.
 
 A run sits between two cut points. The Calculated panel offers **next shortest**,
 **nearest** and **next longest**, each in decimal feet and in inches, with how far
