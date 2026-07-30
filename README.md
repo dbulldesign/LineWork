@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.44.0**
+**Version 1.45.0**
 
 ## What it does
 
@@ -228,6 +228,22 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Legends
+
+A key placed on the sheet itself, so a colour-coded takeoff reads without the
+panels. Tap where it should sit and pick what it lists:
+
+- **Runs by TYPE**, **by Zone #** or **by status** — a swatch, the number of runs,
+  and the LED total per row, with a total line
+- **Counted items** — each count group with its symbol and tally
+- **Markups by kind** — how many of each
+
+It counts **this page**, **this sheet** or **the whole job**, and it is generated
+from the markups every time it is drawn — change a run's type and the legend
+follows with nothing to touch. Change what it lists, what it counts and its text
+size from the inspector rather than placing a new one. The swatches use the same
+colours as the matching colour-by mode, so the legend and the drawing agree.
 
 ## Five more measurements and markups
 
