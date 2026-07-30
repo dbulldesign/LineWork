@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.45.0**
+**Version 1.46.0**
 
 ## What it does
 
@@ -228,6 +228,26 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Find a symbol (I)
+
+Drawings repeat a symbol, and counting them by hand is where an evening goes. Box
+one and this finds the rest: the page is rendered, both the symbol and the page are
+reduced to ink-or-paper, and every window the symbol's size is scored on how much
+of its ink lands on ink. A summed-area table gates each window in four lookups, so
+a full page is scanned in about a second.
+
+Search **this page**, **every page of this sheet**, or **every sheet that is
+open**. Nothing is stamped until you have seen how many it found and the range they
+scored — then it puts a count on each, in a group and symbol you pick, and can
+**leave out any that already carry one** so a second pass does not double the
+tally. Counts flow into the BOM like any other.
+
+Two sliders: how close a match must be, and what counts as ink. What it will not
+do is guess — it matches the symbol **as drawn**, same size and rotation, because a
+drawing repeats a block rather than a variation of one; a box too small, one that
+is most of the sheet, or a patch with almost no ink in it are each refused with the
+reason; and a sheet that is not open cannot be searched.
 
 ## Legends
 
