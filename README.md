@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.33.0**
+**Version 1.34.0**
 
 ## What it does
 
@@ -125,6 +125,16 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**Revision impact.** What moved is half the answer; which runs are in it is the
+other half. After a compare, every run whose markup crosses a changed area is
+listed — tested *segment against rectangle*, so an L-shaped cove is not blamed for
+a change in a corner it never enters. Flag them for a re-measure and, where they
+were approved, withdraw those approvals in the same step. A flagged run carries a
+red **REV** badge, warns in the Calculated panel, is searchable, and appears in the
+cut list, the workbook and a section of the printed report. Approving a run clears
+the flag, because approving *is* the re-measure the flag asked for. Runs on other
+sheets are set aside rather than reported clear.
 
 **Home-run wire.** A placed driver knows how far it is from each run it feeds, so
 that distance is measured off the sheet and multiplied by the whips the run needs

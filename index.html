@@ -742,7 +742,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.33.0';
+const APP_VER='1.34.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1330,6 +1330,12 @@ function applyProject(d){
     t.cct=+t.cct>0?Math.round(+t.cct):0;
     t.variant=String(t.variant||'').toUpperCase();
     t.dim=DIMS.some(x=>x.v===t.dim)?t.dim:'';
+    /* a revision flag is only meaningful with a revision on it */
+    if(t.rev&&typeof t.rev==='object'&&!Array.isArray(t.rev)){
+      t.rev={n:String(t.rev.n||''),at:String(t.rev.at||''),areas:Math.max(0,+t.rev.areas||0)};
+      if(!t.rev.n) delete t.rev;
+    } else delete t.rev;
+    if(t.approved) delete t.rev;          /* approval settles it */
     t.wire=WIRE_COLS.some(x=>x.v===t.wire)?t.wire:'';
     t.wtype=WIRE_TYPES.some(x=>x.v===t.wtype)?t.wtype:'';
     /* older files carried a single feed choice; it was the incoming one */
@@ -4786,6 +4792,7 @@ function lenOf(t){
 function approveTreat(t){
   const r=calc(t);
   t.approved=true;
+  delete t.rev;                           /* approving is the re-measure the flag asked for */
   t.apAt=new Date().toISOString();
   t.apLen=r.L;
   t.apCut=r.tot.cut;
@@ -4948,6 +4955,9 @@ function calc(t){
   if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
   if(stock===0&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No stock length set for '+c.name+' — read its cutsheet to nest off-cuts.');
   if(L>0&&!clipKnown&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No clip spacing for '+c.name+' — clips are not being counted.');
+  if(t.rev&&t.rev.n)
+    w.push('Rev '+t.rev.n+' changed '+(t.rev.areas>1?t.rev.areas+' areas':'the drawing')
+      +' under this run — re-measure it, then approve to clear this.');
   if(t.approved){
     const d=apDrift(t);
     if(d) w.push('Approved at '+fmtLen(t.apLen)+' but the drawing now measures '+fmtLen(lenOf(t))
@@ -4985,7 +4995,8 @@ function treatMatch(t,q){
   if(!q) return true;
   const r=calc(t), d=P.docs.find(x=>x.id===t.docId);
   const hay=[tagOf(t),t.type,t.zone,t.name,t.room,t.detail,t.notes,r.f.name,r.c.name,r.ps.name,d&&d.name,
-    t.approved?'approved locked':'',apDrift(t)?'drift moved':'']
+    t.approved?'approved locked':'',apDrift(t)?'drift moved':'',
+    (t.rev&&t.rev.n)?('rev '+t.rev.n+' changed remeasure'):'']
     .filter(Boolean).join(' ').toLowerCase();
   /* every whitespace-separated term must appear, so "cove z2" narrows */
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
@@ -5022,7 +5033,10 @@ function renderTreatments(){
     const shopOpts='<option value="">— none —</option>'+P.docs.map(d=>'<option value="'+d.id+'"'+(d.id===t.shop?' selected':'')+'>'+esc(d.name)+'</option>').join('');
     el.innerHTML=
       '<div class="hd"><span class="tag">'+esc(tagOf(t))+'</span>'
-      +'<span class="nm">'+(t.approved?'🔒 ':'')+esc(t.name||'Untitled')+'</span>'
+      +'<span class="nm">'+(t.approved?'\ud83d\udd12 ':'')
+        +((t.rev&&t.rev.n)?'<span class="tag" style="border-color:var(--flag);color:var(--flag)">REV '
+          +esc(t.rev.n)+'</span> ':'')
+        +esc(t.name||'Untitled')+'</span>'
       +'<span class="len"'+(apDrift(t)?' style="color:var(--flag)"':'')+'>'
       +(t.qty>1?t.qty+' × ':'')+fmtLen(r.L)+'</span></div>'
       +'<div class="bd">'
@@ -6384,6 +6398,11 @@ async function reportHtml(opts){
   if(cnt.length) h+='<h2>Counts</h2>'+rTable(['Group','Symbol',{t:'Count',n:1},{t:'Rate',n:1},{t:'Total',n:1},'Sheets'],
     cnt.map(x=>{ const rate=+((P.cntRate||{})[x.grp])||0;
       return [x.grp,x.sym,x.n,rate?money(rate):'—',rate?money(rate*x.n):'—',x.sheets]; }));
+  const flagged=P.treat.filter(t=>t.rev&&t.rev.n);
+  if(flagged.length) h+='<h2>Flagged by a revision</h2>'+rTable(['Tag','Run','Rev',{t:'Areas',n:1},'Flagged'],
+    flagged.map(t=>[tagOf(t),t.name||'',t.rev.n,t.rev.areas||1,
+      t.rev.at?new Date(t.rev.at).toLocaleDateString():'']))
+    +'<p class="hint">These runs sit in areas the compare found changed, and have not been re-measured and approved since.</p>';
   const wsc=whipData();
   if(wsc.rows.length) h+='<h2>Home-run wire</h2>'+rTable(['Driver','Run',{t:'Whips',n:1},{t:'Each',n:1},{t:'Wire',n:1},'Note'],
     wsc.rows.map(r=>[r.drv,r.tag,r.whips,r.per>0?fmtLen(r.per):'—',r.total>0?fmtRun(r.total):'—',r.note]))
@@ -6460,14 +6479,14 @@ async function exportBox(name,text){
 }
 $('#btnCsvCut').onclick=()=>{
   const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Build','IP','CCT (K)',
-    'Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Channel','Runs',
+    'Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
     'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually','Approved','Approved at',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
       r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,
-      r.c.name+' (cut to length)',r.qty,
+      (t.rev&&t.rev.n)?('rev '+t.rev.n):'',r.c.name+' (cut to length)',r.qty,
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
       r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
@@ -6826,13 +6845,14 @@ function xlsx(sheets){
 function workbookSheets(){
   const S=[];
   S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind',
-    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Channel',
+    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Channel',
     'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
     'Channel ft','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']].concat(
     P.treat.map(t=>{ const r=calc(t);
       return [tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',
         t.detail||'',r.f.name,r.kind,r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',
-        r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
+        r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,(t.rev&&t.rev.n)?('rev '+t.rev.n):'',
+        r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
         +(r.cut/12).toFixed(3),+r.cut.toFixed(2),r.inc>0?+(r.inc/12).toFixed(4):'any',r.inc>0?r.units:'',
         +r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',+(r.tot.chLen/12).toFixed(3),r.tot.pieces,
         r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes||'']; }))});
@@ -6981,6 +7001,56 @@ async function compareSheets(aDoc,aPg,bDoc,bPg){
   return {rects,blocks:changed,total:bw*bh,
     pct:bw*bh?changed/(bw*bh):0,ptW:B.ptW,ptH:B.ptH,scale};
 }
+/* ---- revision impact ----
+   A compare says which parts of the sheet moved. What an estimator needs next is
+   which runs sit in those parts, because those are the ones to re-measure — and
+   an approved run under a changed area is the expensive kind of stale. The test
+   is segment against rectangle, not bounding box against bounding box: an
+   L-shaped cove crossing a room would otherwise report as affected by a change
+   in a corner it never enters. */
+function segHitsRect(a,b,R){
+  /* either end inside is a hit */
+  const inside=p=>p[0]>=R.x1&&p[0]<=R.x2&&p[1]>=R.y1&&p[1]<=R.y2;
+  if(inside(a)||inside(b)) return true;
+  /* otherwise the segment has to cross an edge — slab clip against the box */
+  let t0=0,t1=1;
+  const dx=b[0]-a[0], dy=b[1]-a[1];
+  const clip=(p,q)=>{        /* p*t <= q */
+    if(Math.abs(p)<1e-12) return q>=0;
+    const r=q/p;
+    if(p<0){ if(r>t1) return false; if(r>t0) t0=r; }
+    else { if(r<t0) return false; if(r<t1) t1=r; }
+    return true;
+  };
+  return clip(-dx,a[0]-R.x1)&&clip(dx,R.x2-a[0])&&clip(-dy,a[1]-R.y1)&&clip(dy,R.y2-a[1]);
+}
+/* the compare works in viewport coordinates (y down); markups are PDF space
+   (y up), so the rectangles are flipped once, here */
+function rectsToPdf(rects,ptH){
+  return rects.map(r=>({x1:r.x,x2:r.x+r.w,y1:ptH-(r.y+r.h),y2:ptH-r.y}));
+}
+function revImpact(rects,docId,page,ptH){
+  const boxes=rectsToPdf(rects,ptH);
+  const hit=[], clear=[], off=[];
+  P.treat.forEach(t=>{
+    const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+    if(!an||an.doc!==docId||an.page!==page){ off.push(t); return; }
+    const pts=annPts(an);
+    const areas=[];
+    boxes.forEach((R,i)=>{
+      let touch=false;
+      if(pts.length===1){
+        touch=pts[0][0]>=R.x1&&pts[0][0]<=R.x2&&pts[0][1]>=R.y1&&pts[0][1]<=R.y2;
+      } else {
+        for(let k=1;k<pts.length&&!touch;k++) touch=segHitsRect(pts[k-1],pts[k],R);
+      }
+      if(touch) areas.push(i+1);
+    });
+    if(areas.length) hit.push({t,tag:tagOf(t),areas,approved:!!t.approved});
+    else clear.push(t);
+  });
+  return {hit,clear,off,areas:boxes.length};
+}
 /* rectangles are in viewport-style coordinates (y down); markups live in PDF
    user space (y up), so flip as we build the clouds */
 function cloudRects(rects,docId,pg,rev,note,ptH){
@@ -7029,7 +7099,40 @@ async function compareRevisions(){
     if(r.cloud) n=cloudRects(res.rects,V.docId,V.page,r.rev,'rev '+r.rev,res.ptH);
     toast(res.rects.length+' changed area'+(res.rects.length===1?'':'s')+' found ('
       +(res.pct*100).toFixed(1)+'% of the sheet)'+(n?' — '+n+' clouded':''));
+    await showImpact(res.rects,V.docId,V.page,res.ptH,r.rev);
   }catch(e){ toast(e&&e.message||'Could not compare those pages'); }
+}
+/* what moved is only half the answer; which runs are in it is the other half */
+async function showImpact(rects,docId,page,ptH,rev){
+  const im=revImpact(rects,docId,page,ptH);
+  if(!im.hit.length){
+    toast(P.treat.length
+      ? 'Nothing measured on this sheet falls in a changed area'
+      : 'No treatments to check against those changes yet');
+    return;
+  }
+  const ap=im.hit.filter(h=>h.approved);
+  const lines=im.hit.map(h=>h.tag+(h.t.name?' · '+h.t.name:'')
+    +'  —  area '+h.areas.join(', ')+(h.approved?'  ·  approved':''));
+  const conf=await dlg({title:'Runs in the changed areas',fields:[
+    {k:'flag',type:'check',cap:'Mark these '+im.hit.length+' run'+(im.hit.length===1?'':'s')
+      +' as needing a re-measure',val:true},
+    {k:'unap',type:'check',cap:ap.length?('Withdraw approval on the '+ap.length+' approved one'
+      +(ap.length===1?'':'s')+', unlocking the cut'):'No approved runs among them',val:ap.length>0}
+  ],ok:'Apply',cancel:'Just tell me',
+    note:lines.join('\n')+'\n\nRev '+rev+' changed '+im.areas+' area'+(im.areas===1?'':'s')
+      +' on this page. '+im.clear.length+' run'+(im.clear.length===1?'':'s')+' on the page are clear'
+      +(im.off.length?', and '+im.off.length+' are on other sheets or unmeasured':'')+'.'});
+  if(!conf) return;
+  snap('Revision impact');
+  let f=0,u=0;
+  im.hit.forEach(h=>{
+    if(conf.flag){ h.t.rev={n:String(rev||''),at:new Date().toISOString(),areas:h.areas.length}; f++; }
+    if(conf.unap&&h.t.approved){ unapproveTreat(h.t); u++; }
+  });
+  renderTreatments(); renderBom(); stats(); markDirty();
+  toast((f?f+' run'+(f===1?'':'s')+' flagged':'Nothing flagged')
+    +(u?', '+u+' approval withdrawn':''));
 }
 $('#btnCompare').onclick=compareRevisions;
 $('#btnTitles').onclick=()=>scanTitleblocks(false);
@@ -7710,6 +7813,7 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Revision impact','What moved is half the answer; which runs are in it is the other half. After a compare, every run whose markup crosses a changed area is listed \u2014 tested segment against rectangle, so an L-shaped cove is not blamed for a change in a corner it never enters. Flag them for a re-measure and, where they were approved, withdraw the approval in the same step. The flag shows as a REV badge on the run, warns in the Calculated panel, is searchable, and travels into the cut list and the report. Approving a run clears it, because approving is the re-measure the flag asked for.'],
       ['Busy sheets','Hide markups by kind, colour them automatically by TYPE or Zone, sort every list and table, and filter treatments.'],
     ]}]},
   {id:'out',t:'Getting it out',blocks:[
@@ -8086,7 +8190,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
   orderCode,cctCode,codeFmtOf,wireColours:WIRE_COLS,wireTypes:WIRE_TYPES,
-  dimOptions:DIMS,dimLabel,dimsOf,driverLoad,whipData,
+  dimOptions:DIMS,dimLabel,dimsOf,driverLoad,whipData,revImpact,segHitsRect,rectsToPdf,
+  approveTreat,unapproveTreat,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   reportHtml,openReport,reportCss,
