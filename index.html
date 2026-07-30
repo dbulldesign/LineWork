@@ -595,6 +595,7 @@ body.haspen #penFlag{display:inline}
     <button class="tab" data-pane="pLib">Library</button>
     <button class="tab" data-pane="pBom">Cut list &amp; BOM</button>
     <button class="tab" data-pane="pCuts">Pieces</button>
+    <button class="tab" data-pane="pIssues">Issues <span class="c" id="cIss">0</span></button>
   </div>
   <div class="pane on" id="pTreat">
     <div class="sec"><div class="body" style="padding-bottom:0">
@@ -689,6 +690,17 @@ body.haspen #penFlag{display:inline}
       <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current — a <b>.json</b> after every change, a <b>.linework.zip</b> every 15 seconds and whenever you leave the tab, since it is rewritten whole.</div>
     </div></div>
   </div>
+  <div class="pane" id="pIssues">
+    <div class="sec"><div class="body" style="padding-bottom:6px">
+      <div class="hint">Everything the calculator has to say about this job, in one place. Click a run to open it.</div>
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <button class="btn sm" id="btnIssMute">Quiet a kind…</button>
+        <button class="btn sm" id="btnIssCsv">Export issues</button>
+      </div>
+    </div></div>
+    <div id="issList"></div>
+    <div class="empty" id="issEmpty">Nothing to report — no warnings on any run.</div>
+  </div>
   <div class="pane" id="pCuts">
     <div class="sec"><h3>Pieces to cut</h3><div class="body"><div class="hint">One row per physical piece, in the order they come off the run. Channel is cut from stock lengths; LED is cut to the locked or rounded length.</div></div>
       <div class="tw"><table id="pieceTbl"></table></div></div>
@@ -748,7 +760,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.35.0';
+const APP_VER='1.36.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1409,6 +1421,8 @@ function applyProject(d){
   if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
   /* remembered choices per run type: keys are types, values are field subsets */
+  if(!P.mute||typeof P.mute!=='object'||Array.isArray(P.mute)) P.mute={};
+  Object.keys(P.mute).forEach(c=>{ if(!P.mute[c]||!WARN_KINDS.some(k=>k.c===c)) delete P.mute[c]; });
   if(!P.tdef||typeof P.tdef!=='object'||Array.isArray(P.tdef)) P.tdef={};
   Object.keys(P.tdef).forEach(k=>{
     const d=P.tdef[k];
@@ -4565,16 +4579,80 @@ $('#insClose').onclick=()=>{ V.sel=null; showInspector(null); drawOverlay(); };
 /* ---- automatic colour coding ----
    Colouring by type or zone by hand does not survive a busy sheet, so derive it.
    A markup's own colour still wins when coding is off. */
-const CODE_MODES=[{v:'off',t:'Manual colours'},{v:'type',t:'Colour by TYPE'},{v:'zone',t:'Colour by Zone #'}];
+/* ---- warning kinds ----
+   Some of these are permanent facts of an office rather than problems: a shop
+   that always orders to the exact length does not need telling there is no cut
+   increment. Those can be quieted per project — and quieting is recorded, so the
+   issues panel still counts what it is not showing. */
+const WARN_KINDS=[
+  {c:'nolen',t:'Not measured yet'},
+  {c:'tooshort',t:'Shorter than one cut increment'},
+  {c:'nocut',t:'No cut increment on the product'},
+  {c:'nomax',t:'No maximum length on the product'},
+  {c:'nowft',t:'No watts per foot on the product'},
+  {c:'cctbad',t:'Colour temperature the product is not made in'},
+  {c:'nobuild',t:'No build chosen'},
+  {c:'buildbad',t:'Build the product is not made in'},
+  {c:'nofeedend',t:'A connector end not chosen'},
+  {c:'feedbad',t:'Connector the product is not offered with'},
+  {c:'feedinbad',t:'A closed end set as the feed'},
+  {c:'codemiss',t:'Order code incomplete'},
+  {c:'plenum',t:'CL2P without bare-wire leads'},
+  {c:'barrel',t:'Barrel connector with a wire colour'},
+  {c:'toolong',t:'Longer than the product is made'},
+  {c:'orphan',t:'Names a product no longer in the library'},
+  {c:'unverified',t:'Product not checked against its cutsheet'},
+  {c:'gap',t:'Dark gap left by rounding down'},
+  {c:'overrun',t:'Run made longer by rounding up'},
+  {c:'fixdown',t:'Fixtures rounded down'},
+  {c:'feedfew',t:'Fewer feed points than voltage drop allows'},
+  {c:'feedmany',t:'More than one feed point needed'},
+  {c:'dimbad',t:'Supply does not dim that way'},
+  {c:'dimunknown',t:'Supply has no dimming protocols on file'},
+  {c:'class2',t:'Class 2 output over 96 W'},
+  {c:'nostock',t:'No stock length on the channel'},
+  {c:'noclip',t:'No clip spacing on the channel'},
+  {c:'revflag',t:'Changed by a revision'},
+  {c:'apdrift',t:'Approved length no longer matches the drawing'},
+  {c:'clipbad',t:'Clip spacing could not be read'},
+  {c:'clipclamp',t:'Clip spacing clamped'},
+  {c:'cliplong',t:'Clip spacing longer than the run'},
+];
+const warnLabel=c=>(WARN_KINDS.find(x=>x.c===c)||{t:c}).t;
+const wMuted=c=>!!(P.mute&&P.mute[c]);
+const CODE_MODES=[{v:'off',t:'Manual colours'},{v:'type',t:'Colour by TYPE'},{v:'zone',t:'Colour by Zone #'},
+  {v:'status',t:'Colour by status'}];
+/* ---- status ----
+   The plan is the checklist, so it can say which runs are settled, which are
+   waiting on a re-measure, and which the calculator is complaining about. Worst
+   news wins: a flagged run is flagged whether or not it also warns. */
+const STATUSES=[
+  {v:'rev',t:'Changed by a revision',c:'#E4694F'},
+  {v:'warn',t:'Has a warning',c:'#E9A13B'},
+  {v:'approved',t:'Approved',c:'#4FA96B'},
+  {v:'ok',t:'Measured, no warnings',c:'#5B8DEF'},
+  {v:'unmeasured',t:'Not measured yet',c:'#6C7580'},
+];
+const statusColor=v=>(STATUSES.find(x=>x.v===v)||{c:'#6C7580'}).c;
+const statusLabel=v=>(STATUSES.find(x=>x.v===v)||{t:v}).t;
+function statusOf(t){
+  if(t.rev&&t.rev.n) return 'rev';
+  const r=calc(t);
+  if(r.warn.length) return 'warn';
+  if(t.approved) return 'approved';
+  return r.L>0?'ok':'unmeasured';
+}
 function codeKeyFor(a){
   if(!P.code||P.code==='off') return null;
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   if(!t) return null;
+  if(P.code==='status') return 'st:'+statusOf(t);
   const k=(P.code==='zone'?t.zone:t.type)||'';
   return k.trim()||null;
 }
 /* stable colour per key: the same type always gets the same swatch */
 function codeColor(key){
+  if(key.startsWith('st:')) return statusColor(key.slice(3));
   let h=0;
   for(let i=0;i<key.length;i++) h=(h*31+key.charCodeAt(i))|0;
   return COLORS[Math.abs(h)%COLORS.length];
@@ -4584,6 +4662,14 @@ function renderCodeKey(){
   const box=$('#codeKey'); if(!box) return;
   const sel=$('#codeMode'); if(sel) sel.value=P.code||'off';
   if(!P.code||P.code==='off'){ box.innerHTML=''; return; }
+  if(P.code==='status'){
+    const n={};
+    P.treat.forEach(t=>{ const st=statusOf(t); n[st]=(n[st]||0)+1; });
+    box.innerHTML=STATUSES.filter(x=>n[x.v]).map(x=>'<span class="ckey"><i style="background:'+x.c+'"></i>'
+      +esc(x.t)+' '+n[x.v]+'</span>').join('')
+      ||'<div class="hint">Nothing measured yet.</div>';
+    return;
+  }
   const keys=new Set();
   P.treat.forEach(t=>{ const k=((P.code==='zone'?t.zone:t.type)||'').trim(); if(k) keys.add(k); });
   box.innerHTML=[...keys].sort().map(k=>'<span class="ckey"><i style="background:'+codeColor(k)+'"></i>'+esc(k)+'</span>').join('')
@@ -4913,78 +4999,82 @@ function calc(t){
   const barrelWire=!!((feedIn==='BRL'||feedOut==='BRL')&&wire&&wire!=='N/A');
   const lf=clamp((+P.load||80)/100,.4,1), design=tot.watts/lf;
   const psuQty=ps.watts>0?Math.ceil(design/ps.watts-1e-9):0;
-  const w=[];
-  if(L<=0) w.push('No length yet — measure it on the drawing or type it in.');
-  else if(cut<=0) w.push('Run is shorter than one cut increment of '+fmtLen(inc)+'.');
+  /* Each warning carries a code so an office that has settled a question for
+     good can quiet it in Settings. Muting only hides it from the run: the
+     issues panel still counts it, so nothing goes silent. */
+  const w=[], wAll=[];
+  const warn=(code,msg)=>{ wAll.push({c:code,m:msg}); if(!wMuted(code)) w.push(msg); };
+  if(L<=0) warn('nolen','No length yet — measure it on the drawing or type it in.');
+  else if(cut<=0) warn('tooshort','Run is shorter than one cut increment of '+fmtLen(inc)+'.');
   /* the seeded library carries what the catalogue states and no more, so say
      plainly where a number is missing rather than rounding on a guess */
   if(L>0&&inc<=0&&kind!=='channel')
-    w.push('No cut increment on '+f.name+' — the run is being ordered to the exact length. Read its cutsheet to set one.');
+    warn('nocut','No cut increment on '+f.name+' — the run is being ordered to the exact length. Read its cutsheet to set one.');
   if(L>0&&!feedKnown)
-    w.push('No maximum length on '+f.name+' — that is also the run one feed will carry, so feed points cannot be checked. Read its cutsheet to set it.');
-  if(L>0&&!(f.wft>0)) w.push('No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
-  if(cctBad) w.push(cct+'K is not one of the colour temperatures '+f.name+' is offered in ('
+    warn('nomax','No maximum length on '+f.name+' — that is also the run one feed will carry, so feed points cannot be checked. Read its cutsheet to set it.');
+  if(L>0&&!(f.wft>0)) warn('nowft','No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
+  if(cctBad) warn('cctbad',cct+'K is not one of the colour temperatures '+f.name+' is offered in ('
     +(ccts||[]).map(x=>x+'K').join(', ')+').');
   /* a wet-location build runs shorter and dimmer, so guessing dry is not safe */
   if(L>0&&vars.length&&!vr)
-    w.push('No build chosen for '+f.name+' ('+vars.map(v=>v.c).join(', ')
+    warn('nobuild','No build chosen for '+f.name+' ('+vars.map(v=>v.c).join(', ')
       +') — the base figures are being used. A wet-location build runs shorter and dimmer.');
-  if(varBad) w.push('"'+t.variant+'" is not a build '+f.name+' is made in ('
+  if(varBad) warn('buildbad','"'+t.variant+'" is not a build '+f.name+' is made in ('
     +vars.map(v=>v.c).join(', ')+').');
   /* both connector positions are part of what gets ordered, so an unfilled one
      is an incomplete line rather than a default */
   if(L>0&&feedList){
     const miss=[feedIn?'':fTerms.in.toLowerCase(),feedOut?'':fTerms.out.toLowerCase()].filter(Boolean);
-    if(miss.length) w.push('No '+miss.join(' and no ')+' chosen for '+f.name
+    if(miss.length) warn('nofeedend','No '+miss.join(' and no ')+' chosen for '+f.name
       +' — both ends are part of the order code.');
   }
-  if(feedBad) w.push('Ordered with a connector '+f.name+' is not offered with ('
+  if(feedBad) warn('feedbad','Ordered with a connector '+f.name+' is not offered with ('
     +[feedIn,feedOut].filter(v=>v&&feedList&&!feedList.includes(v)).join(', ')+').');
-  if(feedInBad) w.push(feedLabel(feedIn)+' cannot feed the run — it is set as the '+fTerms.in.toLowerCase()+'.');
+  if(feedInBad) warn('feedinbad',feedLabel(feedIn)+' cannot feed the run — it is set as the '+fTerms.in.toLowerCase()+'.');
   /* an order code with holes in it cannot be ordered, so name the holes */
   if(L>0&&oc.fmt&&oc.miss.length)
-    w.push('Order code is incomplete — no '+oc.miss.map(k=>CODE_TOKENS[k]||k).join(', no ')
+    warn('codemiss','Order code is incomplete — no '+oc.miss.map(k=>CODE_TOKENS[k]||k).join(', no ')
       +'. It reads '+oc.code);
-  if(plenumBad) w.push('CL2P is only available with bare-wire leads, and the feed is '+feedIn+'.');
-  if(barrelWire) w.push('A barrel connector takes no wire colour — the sheet says specify N/A, the barrel is white.');
+  if(plenumBad) warn('plenum','CL2P is only available with bare-wire leads, and the feed is '+feedIn+'.');
+  if(barrelWire) warn('barrel','A barrel connector takes no wire colour — the sheet says specify N/A, the barrel is white.');
   /* past the longest run it has to be made in pieces, and fed more than once */
   if(maxRun>0&&cut>maxRun)
-    w.push('Longer than '+f.name+' is made: '+fmtLen(cut)+' against a '+fmtLen(maxRun)
+    warn('toolong','Longer than '+f.name+' is made: '+fmtLen(cut)+' against a '+fmtLen(maxRun)
       +' maximum, which is also one feed\u2019s worth. Split it into separate runs.');
-  orphan.forEach(kind=>w.push('The '+kind+' this treatment named is not in the library — using '
+  orphan.forEach(kind=>warn('orphan','The '+kind+' this treatment named is not in the library — using '
     +(kind==='LED product'?f.name:kind==='channel'?c.name:ps.name)+' instead.'));
-  if(f.verified===false) w.push(f.name+' has not been checked against its cutsheet.');
-  if(c.verified===false&&c.id!=='C_NONE') w.push(c.name+' has not been checked against its cutsheet.');
-  if(ps.verified===false&&ps.watts>0) w.push(ps.name+' has not been checked against its cutsheet.');
-  if(gap>0.06&&cut>0) w.push('Dark gap of '+fmtLen(gap)+' per run. Decide now which end it lands on.');
-  if(gap<-0.06&&cut>0) w.push('Runs '+fmtLen(-gap)+' long per run — rounded up to whole '+(fixed?'fixtures':'cut increments')+'.');
-  if(fixed&&mode==='down'&&gap>0.06) w.push('Fixtures cannot be cut down — rounding down leaves this run short. Use Round up.');
-  if(feedSet&&feeds<autoFeeds) w.push('Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(maxRun)+' per feed.');
-  if(!feedSet&&feeds>1) w.push(feeds+' feed points per run — max '+fmtLen(maxRun)+' per feed. A centre feed usually solves it.');
-  if(dimBad) w.push(ps.name+' does not dim on '+dimLabel(dim)+' — it handles '
+  if(f.verified===false) warn('unverified',f.name+' has not been checked against its cutsheet.');
+  if(c.verified===false&&c.id!=='C_NONE') warn('unverified',c.name+' has not been checked against its cutsheet.');
+  if(ps.verified===false&&ps.watts>0) warn('unverified',ps.name+' has not been checked against its cutsheet.');
+  if(gap>0.06&&cut>0) warn('gap','Dark gap of '+fmtLen(gap)+' per run. Decide now which end it lands on.');
+  if(gap<-0.06&&cut>0) warn('overrun','Runs '+fmtLen(-gap)+' long per run — rounded up to whole '+(fixed?'fixtures':'cut increments')+'.');
+  if(fixed&&mode==='down'&&gap>0.06) warn('fixdown','Fixtures cannot be cut down — rounding down leaves this run short. Use Round up.');
+  if(feedSet&&feeds<autoFeeds) warn('feedfew','Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(maxRun)+' per feed.');
+  if(!feedSet&&feeds>1) warn('feedmany',feeds+' feed points per run — max '+fmtLen(maxRun)+' per feed. A centre feed usually solves it.');
+  if(dimBad) warn('dimbad',ps.name+' does not dim on '+dimLabel(dim)+' — it handles '
     +psDims.map(dimLabel).join(' and ')+'.');
   if(dim&&dim!=='none'&&!dimKnown&&ps.watts>0)
-    w.push('No dimming protocols on file for '+ps.name+', so '+dimLabel(dim)
+    warn('dimunknown','No dimming protocols on file for '+ps.name+', so '+dimLabel(dim)
       +' cannot be checked against it. Read its cutsheet.');
-  if(ps.c2&&watts>96) w.push('Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
-  if(stock===0&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No stock length set for '+c.name+' — read its cutsheet to nest off-cuts.');
-  if(L>0&&!clipKnown&&c.id!=='C_NONE'&&c.id!=='C6') w.push('No clip spacing for '+c.name+' — clips are not being counted.');
+  if(ps.c2&&watts>96) warn('class2','Class 2 outputs cap at 96 W; this run draws '+watts.toFixed(0)+' W.');
+  if(stock===0&&c.id!=='C_NONE'&&c.id!=='C6') warn('nostock','No stock length set for '+c.name+' — read its cutsheet to nest off-cuts.');
+  if(L>0&&!clipKnown&&c.id!=='C_NONE'&&c.id!=='C6') warn('noclip','No clip spacing for '+c.name+' — clips are not being counted.');
   if(t.rev&&t.rev.n)
-    w.push('Rev '+t.rev.n+' changed '+(t.rev.areas>1?t.rev.areas+' areas':'the drawing')
+    warn('revflag','Rev '+t.rev.n+' changed '+(t.rev.areas>1?t.rev.areas+' areas':'the drawing')
       +' under this run — re-measure it, then approve to clear this.');
   if(t.approved){
     const d=apDrift(t);
-    if(d) w.push('Approved at '+fmtLen(t.apLen)+' but the drawing now measures '+fmtLen(lenOf(t))
+    if(d) warn('apdrift','Approved at '+fmtLen(t.apLen)+' but the drawing now measures '+fmtLen(lenOf(t))
       +' ('+(d>0?'+':'')+fmtLen(d)+'). Re-approve or unlock to accept the new length.');
   }
-  if(clipBad) w.push('Clip spacing "'+t.clip+'" could not be read — using '+fmtLen(clipSp)+'.');
-  if(clipClamped) w.push('Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
-  if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
+  if(clipBad) warn('clipbad','Clip spacing "'+t.clip+'" could not be read — using '+fmtLen(clipSp)+'.');
+  if(clipClamped) warn('clipclamp','Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
+  if(L>0&&clipSp>L) warn('cliplong','Clip spacing is longer than the run — only the two end clips are counted.');
   return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,maxRun,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,cct,lmFt,cctBad,
     fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     dim,psDims,dimKnown,dimBad,
-    clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
+    clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w,warnAll:wAll};
 }
 
 /* ---- defaults by type ----
@@ -6278,10 +6368,56 @@ function renderWhips(){
     +'<td class="n">'+fmtRun(w.total)+'</td><td></td></tr>';
 }
 function renderRollups(){
+  renderIssues();
   renderDrivers(); renderWhips();
   rollTable($('#zoneTbl'),'Zone',rollup(t=>t.zone||'(no zone)'));
   rollTable($('#sheetTbl'),'Sheet',rollup(t=>t.docId||'(none)',
     t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)').replace(/\.pdf$/i,'')));
+}
+/* ---- the issues panel ----
+   Every warning on the job, grouped by kind so a systemic gap reads as one line
+   with a count rather than forty identical notes. Muted kinds are still listed,
+   marked as quieted, because a hidden problem is not a solved one. */
+function issueData(){
+  const by={};
+  P.treat.forEach(t=>{
+    const r=calc(t);
+    (r.warnAll||[]).forEach(x=>{
+      const g=by[x.c]||(by[x.c]={c:x.c,label:warnLabel(x.c),muted:wMuted(x.c),runs:[]});
+      g.runs.push({id:t.id,tag:tagOf(t),name:t.name||'',msg:x.m});
+    });
+  });
+  const order=WARN_KINDS.map(k=>k.c);
+  return Object.values(by).sort((a,b)=>
+    (a.muted-b.muted)||(order.indexOf(a.c)-order.indexOf(b.c)));
+}
+function renderIssues(){
+  const el=$('#issList'); if(!el) return;
+  const groups=issueData();
+  const live=groups.filter(g=>!g.muted).reduce((s,g)=>s+g.runs.length,0);
+  const c=$('#cIss'); if(c) c.textContent=live;
+  const em=$('#issEmpty'); if(em) em.style.display=groups.length?'none':'';
+  el.innerHTML=groups.map(g=>'<div class="sec"><h3'+(g.muted?' style="opacity:.55"':'')+'>'
+    +esc(g.label)+(g.muted?' — quieted':'')
+    +' <span class="c">'+g.runs.length+'</span></h3>'
+    +g.runs.map(r=>'<div class="item" data-iss="'+r.id+'">'
+      +'<span class="tag">'+esc(r.tag)+'</span>'
+      +'<div style="flex:1;min-width:0"><div>'+esc(r.name||'Untitled')+'</div>'
+      +'<div class="hint">'+esc(r.msg)+'</div></div></div>').join('')
+    +'<div class="body" style="padding-top:6px"><button class="btn sm" data-mute="'+g.c+'">'
+      +(g.muted?'Show this kind again':'Quiet this kind')+'</button></div>'
+    +'</div>').join('');
+  $$('[data-iss]',el).forEach(b=>b.onclick=()=>{
+    $$('.tab').find(x=>x.dataset.pane==='pTreat').click();
+    openTreat(b.dataset.iss,false);
+  });
+  $$('[data-mute]',el).forEach(b=>b.onclick=()=>{
+    const c2=b.dataset.mute;
+    P.mute=P.mute||{};
+    if(P.mute[c2]) delete P.mute[c2]; else P.mute[c2]=true;
+    renderIssues(); renderTreatments(); renderCodeKey(); drawOverlay(); stats(); markDirty();
+    toast(P.mute[c2]?('“'+warnLabel(c2)+'” quieted — still counted here'):('“'+warnLabel(c2)+'” shown again'));
+  });
 }
 function renderPieces(){
   const pc=pieceData();
@@ -7516,6 +7652,23 @@ $('#btnCsvDrv').onclick=()=>{
     r.warn.join(' | ')]));
   exportBox(slug(P.name)+'-drivers.csv',csv(rows));
 };
+$('#btnIssCsv').onclick=()=>{
+  const rows=[['Kind','Quieted','Tag','Run','Message']];
+  issueData().forEach(g=>g.runs.forEach(r=>rows.push([g.label,g.muted?'yes':'no',r.tag,r.name,r.msg])));
+  exportBox(slug(P.name)+'-issues.csv',csv(rows));
+};
+$('#btnIssMute').onclick=async()=>{
+  const r=await dlg({title:'Quiet warning kinds',fields:[
+    {k:'mute',type:'multi',label:'Tick a kind to stop it showing on runs',
+      opts:WARN_KINDS.map(k=>({v:k.c,t:k.t})),val:Object.keys(P.mute||{})}
+  ],ok:'Apply',
+    note:'A quieted kind still appears here with its count, and still exports. This hides it on the runs and stops it colouring them; it does not decide the question.'});
+  if(!r) return;
+  P.mute={}; (r.mute||[]).forEach(c=>{ if(WARN_KINDS.some(k=>k.c===c)) P.mute[c]=true; });
+  markDirty(); renderIssues(); renderTreatments(); renderCodeKey(); drawOverlay(); stats();
+  const n=Object.keys(P.mute).length;
+  toast(n?n+' kind'+(n===1?'':'s')+' quieted':'Nothing quieted');
+};
 $('#btnCsvWhip').onclick=()=>{
   const w=whipData();
   const rows=[['Driver','Supply','Sheet','Run','Runs','Feed points/run','Whips',
@@ -8379,7 +8532,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   keys:KEYS,touchGestures:TOUCH,manualSections,manualHtml,manualPrintHtml,keyTableHtml,
   openManual,closeManual,printManual,
   approveTreat,unapproveTreat,editMany,tdefFor,saveTdef,clearTdef,applyTdef,tdefKeys:TDEF_KEYS,
-  tsel:()=>V.tsel||new Set(),apDrift,
+  tsel:()=>V.tsel||new Set(),issueData,renderIssues,warnKinds:WARN_KINDS,statusOf,statuses:STATUSES,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,

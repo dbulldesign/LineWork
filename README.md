@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.35.0**
+**Version 1.36.0**
 
 ## What it does
 
@@ -125,6 +125,22 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**The issues panel.** Every warning on the job in one place, grouped by kind — so
+a systemic gap reads as one line with a count of forty rather than forty identical
+notes buried in forty cards. Click a run to jump straight to it. Exports as a CSV.
+
+**Quieting a kind.** Some warnings are permanent facts of an office rather than
+problems: a shop that always orders to the exact length does not need telling
+there is no cut increment. Quieting a kind stops it showing on runs and stops it
+colouring them — but it does not decide the question. The issues panel still
+lists it, still counts it, marks it *quieted*, and still exports it. Nothing goes
+silent.
+
+**Colour by status.** A fourth colour mode paints the drawing by where each run
+stands: changed by a revision, has a warning, approved, measured and clean, or not
+measured yet. Worst news wins, so a flagged run reads as flagged whether or not it
+also warns. The key counts each one, which turns the plan into the punch list.
 
 **Defaults by type.** A run's type says most of what it is, so the product, build,
 colour temperature, both connectors, wire colour and type, dimming, channel,
