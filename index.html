@@ -199,6 +199,11 @@ tr.tot td{border-top:1px solid var(--line2);font-weight:600;background:var(--s2)
 
 /* treatment cards */
 .card{border-bottom:1px solid var(--line)}
+.card .grp{display:flex;gap:8px;align-items:baseline;margin:14px 0 2px;padding-top:8px;
+  border-top:1px solid var(--line)}
+.card .grp span{font-size:10px;letter-spacing:.09em;text-transform:uppercase;color:var(--faint);flex:0 0 auto}
+.card .grp b{font-family:var(--mono);font-size:10.5px;color:var(--dim);font-weight:400;
+  flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
 .card .hd{display:flex;gap:8px;align-items:center;padding:8px 12px;cursor:pointer}
 /* type designation: always upper case, in the mono face so it reads as a code */
 .card .hd .typ{font-family:var(--mono);font-size:10.5px;font-weight:600;letter-spacing:.04em;
@@ -320,6 +325,19 @@ input.up{text-transform:uppercase}
   text-transform:none;letter-spacing:0;white-space:nowrap;cursor:pointer}
 .multi input{width:auto;min-height:0}
 @media(pointer:coarse){.multi label{padding:5px 0}.multi{gap:6px 16px}}
+#cmdScrim{align-items:flex-start;justify-content:center}
+#cmdScrim .cmdbox{width:min(620px,94vw);margin-top:12vh;background:var(--s2);border:1px solid var(--line2);
+  border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.6);overflow:hidden;display:flex;flex-direction:column}
+#cmdQ{width:100%;border:0;border-bottom:1px solid var(--line2);border-radius:0;padding:13px 15px;font-size:14px;background:none}
+#cmdQ:focus{outline:none}
+#cmdList{max-height:min(52vh,440px);overflow:auto}
+#cmdList .row{display:flex;gap:10px;align-items:center;padding:9px 15px;cursor:pointer;border-bottom:1px solid var(--line)}
+#cmdList .row.on{background:var(--s3)}
+#cmdList .row b{font-weight:500;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#cmdList .row .g{font-size:10.5px;color:var(--faint);text-transform:uppercase;letter-spacing:.05em;flex:0 0 auto}
+#cmdList .row .k{font-family:var(--mono);font-size:10.5px;color:var(--dim);border:1px solid var(--line2);
+  border-radius:3px;padding:1px 5px;flex:0 0 auto}
+#cmdScrim .hint{padding:8px 15px;border-top:1px solid var(--line)}
 #lockBar{position:fixed;left:50%;transform:translateX(-50%);top:calc(env(safe-area-inset-top) + 8px);
   z-index:70;display:none;align-items:center;gap:10px;padding:8px 10px 8px 14px;border-radius:10px;
   background:var(--s2);border:1px solid var(--amber);color:var(--ink);
@@ -530,6 +548,7 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="area" title="Region — trace a room for its area, perimeter and cove run (R)"><svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg></button>
     <button class="tool" data-tool="count" title="Count — stamp and tally a symbol (M)"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg></button>
     <button class="tool" data-tool="cloud" title="Revision cloud with a delta (Q)"><svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg></button>
+    <button class="tool" data-tool="photo" title="Pin a site photo (H)"><svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 012-2h2l1.5-2h7L17 6h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="12.5" r="3.4"/></svg></button>
     <button class="tool" data-tool="feed" title="Place a feed point on a run (F)"><svg viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M12 17V8"/><circle cx="12" cy="6" r="2.6"/><path d="M8 12h8"/></svg></button>
     <button class="tool" data-tool="splice" title="Place a splice where pieces join (J)"><svg viewBox="0 0 24 24"><path d="M3 12h6M15 12h6"/><path d="M9 8v8M15 8v8"/></svg></button>
     <button class="tool" data-tool="whip" title="Route a home run — click the driver, then each turn, then the feed (W)"><svg viewBox="0 0 24 24"><path d="M4 20V9a3 3 0 013-3h6a3 3 0 013 3v6a2 2 0 002 2h2"/><circle cx="4" cy="20" r="1.9"/><circle cx="20" cy="17" r="1.9"/></svg></button>
@@ -685,11 +704,15 @@ body.haspen #penFlag{display:inline}
         <input type="file" id="projInput" accept=".json,.zip,application/json,application/zip" hidden>
         <button class="btn pri" id="btnJson">Save project file</button>
         <button class="btn" id="btnBundle">Save with drawings</button>
+        <input type="file" id="presetInput" accept=".json,application/json" hidden>
+        <button class="btn" id="btnPresetSave">Save preset</button>
+        <button class="btn" id="btnPresetOpen">Apply preset</button>
         <button class="btn" id="btnOpenProj">Open project file</button>
         <button class="btn" id="btnAutoFile" style="display:none">Auto-save to a file…</button>
       </div>
       <div class="hint" style="margin-top:6px"><b>Save project file</b> writes the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> (⌘S / Ctrl-S). Small, but the drawings are not in it: open it elsewhere and you re-import the same PDFs for the markups to reattach.</div>
       <div class="hint" style="margin-top:4px"><b>Save with drawings</b> writes a <b>.linework.zip</b> with the PDFs inside, byte for byte. That one file is the whole job — put it in iCloud Drive, Dropbox or OneDrive and open it on another machine with the drawings already there. It is an ordinary zip, so the sheets can be pulled out by hand too. Expect it to be as big as the drawings are.</div>
+      <div class="hint" style="margin-top:4px"><b>Save preset</b> keeps the settings an office reuses on every job — rates, units, precision, rounding, labour hours, wire allowances, the defaults by type and the quieted warning kinds — optionally with the product library. <b>Apply preset</b> puts them into this job without touching its sheets, markups or runs.</div>
       <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current — a <b>.json</b> after every change, a <b>.linework.zip</b> every 15 seconds and whenever you leave the tab, since it is rewritten whole.</div>
     </div></div>
   </div>
@@ -733,6 +756,11 @@ body.haspen #penFlag{display:inline}
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div class="toast" id="toast"></div>
 <div id="lockBar"><span></span><button class="btn" id="btnTakeOver">Take over</button></div>
+<div class="scrim" id="cmdScrim"><div class="cmdbox">
+  <input type="search" id="cmdQ" placeholder="Type a tool, an action, a setting, or a run…" autocomplete="off">
+  <div id="cmdList"></div>
+  <div class="hint" id="cmdHint"></div>
+</div></div>
 <div class="scrim" id="manScrim"><div class="setwrap manwrap">
   <div class="sethd">
     <b>Manual</b>
@@ -763,7 +791,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.38.0';
+const APP_VER='1.39.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1296,7 +1324,10 @@ async function pdfForget(){
 async function pdfPrune(){
   try{
     const keys=await pdfKeys();
+    /* the same store holds pinned photos under their own prefix, and they are
+       live while their pin is on a sheet — pruning by document alone would eat them */
     const live=new Set(P.docs.map(d=>d.id));
+    P.ann.forEach(a=>{ if(a.type==='photo'&&a.photo) live.add(photoKey(a.photo)); });
     for(const k of (keys||[])) if(!live.has(k)) await pdfDrop(k);
   }catch(e){}
 }
@@ -2790,6 +2821,15 @@ function drawAnn(a,selected,isDraft,multi){
         +'" stroke="'+col+'" stroke-width="'+(W*1.1).toFixed(2)+'"/>';
     }
   }
+  if(a.type==='photo'){
+    const [x,y]=pts[0], R=7.5*W_MUL;
+    g+='<rect x="'+(x-R).toFixed(1)+'" y="'+(y-R*.82).toFixed(1)+'" width="'+(R*2).toFixed(1)
+      +'" height="'+(R*1.64).toFixed(1)+'" rx="'+(1.6*W_MUL).toFixed(1)+'" fill="'+OVL
+      +'" fill-opacity=".92" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>'
+      +'<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(R*.42).toFixed(1)
+      +'" fill="none" stroke="'+col+'" stroke-width="'+(W*.9).toFixed(2)+'"/>';
+    if(a.text) g+=chip(x,y-R*.82-CHIP_H*.6,a.text.slice(0,30),col,null,a,'total',lblRotFor(a,'total'));
+  }
   if(a.type==='whip'){
     /* the route itself, dashed, with a tick at each turn */
     g+='<path d="'+pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join('')
@@ -3348,6 +3388,7 @@ function setTool(t){
     arc:'Arc length — click the start, a point along the curve, then the end',
     area:'Region — click each corner of the room, ⏎ to close it',
     count:'Count — click to stamp one, and it tallies into the BOM',
+    photo:'Photo — click where it was taken, then choose the picture',
     feed:'Feed point — click on a run where it is fed',
     splice:'Splice — click on a run where two pieces join',
     whip:'Home run — click the driver, then each turn, then the feed. ⏎ to finish',
@@ -3591,6 +3632,7 @@ function endPointer(e){
   if(tool==='count'){ if(!pr.moved) placeCount(p); return; }
   if(tool==='driver'){ if(!pr.moved) placeDriver(p); return; }
   if(tool==='feed'||tool==='splice'){ if(!pr.moved) placePoint(tool,p); return; }
+  if(tool==='photo'){ if(!pr.moved) placePhoto(p); return; }
   if(tool==='whip'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='area'||tool==='cloud'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
@@ -3826,7 +3868,7 @@ stage.addEventListener('contextmenu',e=>{
 const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
   area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver',
-  feed:'Feed point',splice:'Splice',whip:'Home run'};
+  feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo'};
 async function offsetAnn(a){
   if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
   const k=inPerPt();
@@ -4374,6 +4416,56 @@ function alongRun(an,p){
   }
   return clamp(best.run/total,0,1);
 }
+/* ---- site photos ----
+   A photo pinned where it was taken answers questions a dimension cannot: what
+   the condition actually looks like. The image goes in the same browser store as
+   the drawings, under its own key, so it travels in a bundle and nothing about
+   the project file changes. */
+const photoKey=id=>'photo:'+id;
+async function placePhoto(p){
+  if(P.keepPdf===false){ toast('Turn “keep drawings in this browser” back on in Settings to pin photos'); setTool('pan'); return; }
+  const r=await dlg({title:'Pin a photo',fields:[
+    {k:'img',type:'file',label:'The picture',accept:'image/*'},
+    {k:'cap',label:'Caption',val:'',ph:'What it shows'},
+  ],ok:'Pin',note:'Kept in this browser with the drawings, and carried inside a “Save with drawings” file.'});
+  if(!r){ setTool('pan'); return; }
+  if(!r.img||!r.img.name){ toast('No picture chosen'); setTool('pan'); return; }
+  if(r.img.size>12*1048576){ toast('That picture is over 12 MB — shrink it first'); setTool('pan'); return; }
+  const id=uid('ph_');
+  try{
+    const buf=await r.img.arrayBuffer();
+    await pdfSave(photoKey(id),buf,{name:r.img.name,size:r.img.size,mime:r.img.type||'image/jpeg'});
+  }catch(e){ toast('Could not store that picture — the browser store may be full'); setTool('pan'); return; }
+  snap('Photo');
+  const a={id:uid('a_'),type:'photo',doc:V.docId,page:V.page,pts:[p],photo:id,
+    text:String(r.cap||'').trim(),file:r.img.name,mime:r.img.type||'image/jpeg',
+    color:'#7FB77E',w:V.width};
+  P.ann.push(a); invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+  setTool('pan');
+}
+async function photoUrl(a){
+  if(!a||!a.photo) return null;
+  if(PHOTO_URL[a.photo]) return PHOTO_URL[a.photo];
+  try{
+    const rec=await pdfLoad(photoKey(a.photo));
+    if(!rec||!rec.buf) return null;
+    const u=URL.createObjectURL(new Blob([rec.buf],{type:rec.mime||a.mime||'image/jpeg'}));
+    PHOTO_URL[a.photo]=u;
+    return u;
+  }catch(e){ return null; }
+}
+const PHOTO_URL={};
+async function openPhoto(a){
+  const u=await photoUrl(a);
+  if(!u){ toast('That picture is not in this browser — open the file it was saved with'); return; }
+  const w=window.open('','_blank');
+  if(!w){ toast('The browser blocked the window'); return; }
+  w.document.write('<title>'+esc(a.text||a.file||'Photo')+'</title>'
+    +'<body style="margin:0;background:#111;display:grid;place-items:center;min-height:100vh">'
+    +'<img src="'+u+'" style="max-width:100vw;max-height:100vh">');
+  w.document.close();
+}
 async function placePoint(kind,p){
   const near=nearRun(p,V.docId,V.page);
   if(!near){ toast('Measure a run on this page first — a '+(kind==='feed'?'feed point':'splice')+' belongs to one'); setTool('pan'); return; }
@@ -4573,6 +4665,13 @@ function showInspector(a){
           : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
     h+='<div class="hint">Drag the middle handle to change the bow, the ends to move it.</div>';
   }
+  if(a.type==='photo'){
+    h+='<div class="kv"><span>File</span><b>'+esc(a.file||'—')+'</b></div>';
+    h+='<div class="f" style="margin-top:6px"><label>Caption</label>'
+      +'<input type="text" data-up2="text" value="'+esc(a.text||'')+'"></div>';
+    h+='<button class="btn pri" data-act="pho">Open the picture</button>';
+    h+='<div class="hint">Kept in this browser with the drawings, and inside a “Save with drawings” file.</div>';
+  }
   if(a.type==='line'){
     const L=annLen(a), segs=annSegs(a);
     const st=statedOf(a), mz=annMeasured(a);
@@ -4748,6 +4847,10 @@ function showInspector(a){
     if(el.value!==up){ const c=el.selectionStart; el.value=up; try{el.setSelectionRange(c,c)}catch(_){} }
     a[el.dataset.up]=up; drawOverlay(); renderAnnList(); renderBom(); markDirty();
   });
+  $$('[data-up2]',bd).forEach(el=>el.oninput=()=>{
+    a[el.dataset.up2]=el.value;
+    ovInvalidate(a.id); drawOverlay(); renderAnnList(); markDirty();
+  });
   $$('[data-ins="stated"]',bd).forEach(el=>el.onchange=()=>{
     const txt=String(el.value||'').trim();
     if(!txt){ if(statedOf(a)){ snap('Stated length'); delete a.stated; } }
@@ -4767,6 +4870,7 @@ function showInspector(a){
     if(act==='mk') treatFromAnn(a);
     if(act==='off') offsetAnn(a);
     if(act==='arr') arrayAnn(a);
+    if(act==='pho') openPhoto(a);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -4890,7 +4994,7 @@ function renderCodeKey(){
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
   ['cloud','Revision clouds'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
-  ['whip','Home runs'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
+  ['whip','Home runs'],['photo','Photos'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
 const layerOn=type=>!(P.hide&&P.hide[type]);
 const annVisible=a=>layerOn(a.type)&&!a.hidden;
@@ -5638,6 +5742,7 @@ function renderTreatments(){
         +'<div class="f"><label>'+(r.fixed?'Fixtures per run':'Cuts per run')+'</label>'
           +'<input type="text" value="'+esc(r.inc>0?String(r.units):'—')+'" disabled></div>'
       +'</div>'
+      +grpHead('Product',r.f.name+(r.cct?'  ·  '+r.cct+'K':''))
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
         +'<div class="f"><label>Colour temperature</label>'+cctControl(r)+'</div>'
@@ -5651,12 +5756,15 @@ function renderTreatments(){
         +'</select></div>':'')
       +(r.f.feeds&&r.f.feeds.length?'<div class="grid2" style="margin-top:8px">'
         +feedSelect(t,r,'in')+feedSelect(t,r,'out')+'</div>':'')
-      +(r.codeFmt?'<div class="grid2" style="margin-top:8px">'
+      +(r.codeFmt?grpHead('Order code',r.code)
+        +'<div class="grid2" style="margin-top:8px">'
         +codeSelect(t,r,'wire')+codeSelect(t,r,'wtype')+'</div>':'')
+      +grpHead('Channel',r.c.name)
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Channel / mounting</label><select data-t="chId">'+chOpts+'</select></div>'
         +'<div class="f"><label>Clip spacing</label><input type="text" data-t="clip" value="'+(t.clip||'')+'" placeholder="'+esc(fmtLen(r.c.clip))+'"></div>'
       +'</div>'
+      +grpHead('Power',r.ps.name+(r.dim?'  ·  '+dimLabel(r.dim):''))
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Power supply</label><select data-t="psuId">'+psOpts+'</select></div>'
         +'<div class="f"><label>Dimming</label><select data-t="dim">'
@@ -5666,6 +5774,7 @@ function renderTreatments(){
             +'</option>').join('')
         +'</select></div>'
       +'</div>'
+      +grpHead('Documentation','')
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Millwork / shop drawing</label><select data-t="shop">'+shopOpts+'</select></div>'
         +'<div class="f"><label>Detail reference</label><input type="text" class="up" data-t="detail" value="'+esc(t.detail||'')+'" placeholder="3/A-501"></div>'
@@ -5886,6 +5995,13 @@ function codeSelect(t,r,which){
     +list.concat(extra).map(v=>'<option value="'+esc(v)+'"'+(v===cfg.cur?' selected':'')+'>'
       +esc(cfg.fn(v))+(extra.includes(v)?' — not offered':'')+'</option>').join('')
     +'</select></div>';
+}
+/* The card carries fourteen fields now. A quiet rule above each group says what
+   the group currently amounts to, so the whole thing can be read without reading
+   every control. */
+function grpHead(label,summary){
+  return '<div class="grp"><span>'+esc(label)+'</span>'
+    +(summary?'<b>'+esc(summary)+'</b>':'')+'</div>';
 }
 function feedSelect(t,r,end){
   const list=feedsFor(r.f,end), cur=end==='in'?(t.feedIn||''):(t.feedOut||'');
@@ -7836,8 +7952,19 @@ async function bundleBlob(){
     if(!buf){ missing.push(d.name||d.id); continue; }
     files.push({name:'sheets/'+d.id+'.pdf',data:new Uint8Array(buf)});
   }
-  return {blob:zipStore(files,'application/zip'),missing,
-    sheets:files.length-2};
+  /* pinned photos travel too — the file is the job, not just the drawings */
+  let photos=0;
+  for(const a of P.ann.filter(x=>x.type==='photo'&&x.photo)){
+    try{
+      const rec=await pdfLoad(photoKey(a.photo));
+      if(!rec||!rec.buf){ missing.push(a.file||a.photo); continue; }
+      const ext=/\.(jpe?g|png|webp|heic|gif)$/i.exec(a.file||'')||[,'jpg'];
+      files.push({name:'photos/'+a.photo+'.'+ext[1].toLowerCase(),data:new Uint8Array(rec.buf)});
+      photos++;
+    }catch(e){ missing.push(a.file||a.photo); }
+  }
+  return {blob:zipStore(files,'application/zip'),missing,photos,
+    sheets:files.length-2-photos};
 }
 /* the drawings in a bundle are put back into this browser's store, so the job
    behaves exactly as if the PDFs had been imported here */
@@ -7847,7 +7974,9 @@ async function openBundle(file){
   if(!json) throw new Error(file.name+' has no project.json in it');
   const d=JSON.parse(new TextDecoder().decode(json));
   const pdfs=Object.keys(map).filter(k=>/^sheets\/.+\.pdf$/.test(k));
-  return {data:d,pdfs:pdfs.map(k=>({id:k.slice(7,-4),buf:map[k]}))};
+  const pics=Object.keys(map).filter(k=>/^photos\/.+\.[a-z0-9]+$/i.test(k));
+  return {data:d,pdfs:pdfs.map(k=>({id:k.slice(7,-4),buf:map[k]})),
+    photos:pics.map(k=>({id:k.slice(7).replace(/\.[^.]+$/,''),buf:map[k],name:k.slice(7)}))};
 }
 function projFileText(){ return JSON.stringify(Object.assign(
   {app:'linework',ver:FILE_VER,appVer:APP_VER,savedAt:new Date().toISOString()},P),null,1); }
@@ -7901,13 +8030,15 @@ async function saveBundleFile(){
         types:[{description:'Linework project with drawings',accept:{'application/zip':['.zip']}}]});
       const w=await h.createWritable(); await w.write(b.blob); await w.close();
       FH=h; syncFileBtn(); stampSaved(h.name);
-      toast('Saved '+h.name+' — '+mb+' MB, '+b.sheets+' drawing'+(b.sheets===1?'':'s')+' inside');
+      toast('Saved '+h.name+' — '+mb+' MB, '+b.sheets+' drawing'+(b.sheets===1?'':'s')
+        +(b.photos?' and '+b.photos+' photo'+(b.photos===1?'':'s'):'')+' inside');
       return;
     }catch(e){ if(e&&e.name==='AbortError') return; }
   }
   try{
     downloadBlob(name,b.blob);
-    toast('Saved '+name+' — '+mb+' MB, '+b.sheets+' drawing'+(b.sheets===1?'':'s')+' inside');
+    toast('Saved '+name+' — '+mb+' MB, '+b.sheets+' drawing'+(b.sheets===1?'':'s')
+      +(b.photos?' and '+b.photos+' photo'+(b.photos===1?'':'s'):'')+' inside');
   }catch(e){ toast('Download blocked — save the project file instead'); }
 }
 function syncFileBtn(){
@@ -7926,9 +8057,9 @@ async function isBundle(file){
   }catch(e){ return false; }
 }
 async function openProjectFile(file){
-  let d,packed=null;
+  let d,packed=null,pics=null;
   if(await isBundle(file)){
-    try{ const b=await openBundle(file); d=b.data; packed=b.pdfs; }
+    try{ const b=await openBundle(file); d=b.data; packed=b.pdfs; pics=b.photos; }
     catch(e){ toast('Could not read '+file.name+' — '+e.message); return; }
   }else{
     try{ d=JSON.parse(await file.text()); }
@@ -7963,6 +8094,17 @@ async function openProjectFile(file){
       try{ await pdfSave(p.id,p.buf.buffer.slice(p.buf.byteOffset,p.buf.byteOffset+p.buf.byteLength),
              {name:doc.name||p.id,size:p.buf.byteLength}); put++; }
       catch(e){ /* out of room: restoreDrawings simply will not find it */ }
+    }
+  }
+  /* photos come back with them, keyed the way they were pinned */
+  if(pics&&pics.length&&P.keepPdf!==false){
+    for(const p of pics){
+      if(!P.ann.some(a=>a.type==='photo'&&a.photo===p.id)) continue;
+      const an=P.ann.find(a=>a.type==='photo'&&a.photo===p.id);
+      try{ await pdfSave(photoKey(p.id),
+        p.buf.buffer.slice(p.buf.byteOffset,p.buf.byteOffset+p.buf.byteLength),
+        {name:(an&&an.file)||p.name,size:p.buf.byteLength,mime:(an&&an.mime)||'image/jpeg'}); }
+      catch(e){ /* no room: the pin stays and says the picture is not here */ }
     }
   }
   /* the same drawings may already be in this browser from a previous session */
@@ -8041,6 +8183,67 @@ $('#btnCsvZone').onclick=()=>{
   exportBox(slug(P.name)+'-rollup.csv',csv(rows));
 };
 
+/* ---- a job preset ----
+   Rates, load factor, precision, labour hours, wire allowances, the defaults by
+   type and the quieted warning kinds are the same on every job an office does,
+   and they were being re-entered each time. A preset is those settings — and
+   optionally the product library with them — as one file to start from. */
+const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt','labFeed','labEa',
+  'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblSize','snap',
+  'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','keepPdf'];
+function presetText(withLib){
+  const set={};
+  PRESET_KEYS.forEach(k=>{ if(P[k]!==undefined) set[k]=clone(P[k]); });
+  const out={app:'linework-preset',ver:1,appVer:APP_VER,savedAt:new Date().toISOString(),set};
+  if(withLib){ out.fix=P.fix; out.ch=P.ch; out.psu=P.psu; }
+  return JSON.stringify(out,null,1);
+}
+function applyPreset(d,withLib){
+  if(!d||d.app!=='linework-preset') throw new Error('That is not a LineWork preset file');
+  const set=d.set&&typeof d.set==='object'?d.set:{};
+  let n=0;
+  PRESET_KEYS.forEach(k=>{ if(set[k]!==undefined){ P[k]=clone(set[k]); n++; } });
+  let lib=0;
+  if(withLib){
+    if(Array.isArray(d.fix)&&d.fix.length){ P.fix=clone(d.fix); lib+=d.fix.length; }
+    if(Array.isArray(d.ch)&&d.ch.length){ P.ch=clone(d.ch); lib+=d.ch.length; }
+    if(Array.isArray(d.psu)&&d.psu.length){ P.psu=clone(d.psu); lib+=d.psu.length; }
+  }
+  /* run it through the same checks a project file gets, so a hand-edited preset
+     cannot put nonsense into the settings */
+  applyProject(JSON.parse(projFileText()));
+  return {n,lib};
+}
+async function savePreset(){
+  const r=await dlg({title:'Save these settings as a preset',fields:[
+    {k:'lib',type:'check',cap:'Include the product library as well',val:true}
+  ],ok:'Save',
+    note:'Rates, units, precision, rounding, labour hours, wire allowances, the defaults by type and the quieted warning kinds. Start a job from it and none of that has to be typed again.'});
+  if(!r) return;
+  const name=slug(P.name)+'.linework-preset.json';
+  const txt=presetText(!!r.lib);
+  try{ download(name,txt,'application/json'); toast('Preset saved'+(r.lib?' with the library':'')); }
+  catch(e){ exportBox(name,txt); }
+}
+async function openPreset(file){
+  let d;
+  try{ d=JSON.parse(await file.text()); }
+  catch(e){ toast('Could not read '+file.name+' — not valid JSON'); return; }
+  if(!d||d.app!=='linework-preset'){ toast(file.name+' is not a LineWork preset file'); return; }
+  const hasLib=!!(d.fix||d.ch||d.psu);
+  const r=await dlg({title:'Apply preset',fields:[
+    {k:'lib',type:'check',cap:hasLib?'Replace the product library with the one in it':'No library in this preset',
+      val:hasLib}
+  ],ok:'Apply',
+    note:'Settings in this project are replaced by the ones in the file. Sheets, markups and runs are untouched.'});
+  if(!r) return;
+  snap('Apply preset');
+  let res;
+  try{ res=applyPreset(d,!!(r.lib&&hasLib)); }
+  catch(e){ toast(e.message); return; }
+  boot(true); renderSettings&&0; markDirty();
+  toast(res.n+' setting'+(res.n===1?'':'s')+' applied'+(res.lib?' and '+res.lib+' products loaded':''));
+}
 /* ---- product library as its own file, so a company standard is shared ---- */
 const libFileText=()=>JSON.stringify({app:'linework-library',ver:1,appVer:APP_VER,
   savedAt:new Date().toISOString(),fix:P.fix,ch:P.ch,psu:P.psu},null,1);
@@ -8121,6 +8324,11 @@ $('#libInput').onchange=async e=>{
 
 $('#btnJson').onclick=$('#btnSave').onclick=saveProjectFile;
 $('#btnBundle').onclick=saveBundleFile;
+$('#btnPresetSave').onclick=savePreset;
+$('#cmdQ').oninput=()=>{ CMD.shown=cmdMatch(CMD.items,$('#cmdQ').value.trim()); CMD.i=0; cmdDraw(); };
+$('#cmdScrim').onclick=e=>{ if(e.target.id==='cmdScrim') closeCmd(); };
+$('#btnPresetOpen').onclick=()=>$('#presetInput').click();
+$('#presetInput').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openPreset(f); };
 $('#btnTakeOver').onclick=lockTake;
 $('#btnAutoFile').onclick=()=>{
   if(!FH) return saveProjectFile();          /* nothing linked yet — pick a file */
@@ -8292,6 +8500,22 @@ document.addEventListener('keydown',e=>{
     if(e.key==='Escape'){ e.preventDefault(); closeManual(); }
     return;
   }
+  /* the palette owns the keyboard while it is open, including the arrows and
+     return, because the query field is an input and the guard below would eat them */
+  if($('#cmdScrim').classList.contains('show')){
+    if(e.key==='Escape'){ e.preventDefault(); closeCmd(); return; }
+    if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+      e.preventDefault();
+      if(CMD.shown.length){
+        CMD.i=(CMD.i+(e.key==='ArrowDown'?1:-1)+CMD.shown.length)%CMD.shown.length;
+        cmdDraw();
+      }
+      return;
+    }
+    if(e.key==='Enter'){ e.preventDefault(); cmdRun(CMD.i); return; }
+    return;
+  }
+  if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){ e.preventDefault(); openCmd(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){ e.preventDefault(); saveProjectFile(); return; }
   if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='o'){ e.preventDefault(); $('#projInput').click(); return; }
   const tag=(e.target.tagName||'').toLowerCase();
@@ -8319,6 +8543,7 @@ document.addEventListener('keydown',e=>{
   if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
   if(k==='r') setTool('area'); if(k==='m') setTool('count');
   if(k==='q') setTool('cloud'); if(k==='d'&&!(e.metaKey||e.ctrlKey)) setTool('driver');
+  if(k==='h'&&!(e.metaKey||e.ctrlKey)) setTool('photo');
   if(k==='f'&&!(e.metaKey||e.ctrlKey)) setTool('feed');
   if(k==='j') setTool('splice');
   if(k==='w'&&!(e.metaKey||e.ctrlKey)) setTool('whip');
@@ -8391,13 +8616,101 @@ function boot(keepDoc){
 /* ---- the shortcut table ----
    One list, read by the tool tooltips, the manual and the printed sheet, so a key
    cannot be documented in one place and bound in another. */
+/* ---- the command palette ----
+   Thirty-nine keys is more than anyone remembers, and half the app lives behind
+   buttons in three different rails. One list, searched, that also finds the runs
+   in this job — because "where is COVE Z4" is the commonest question of all. */
+function cmdItems(){
+  const out=[];
+  const add=(g,name,run,key)=>out.push({g,name,run,key});
+  const tool=(k,name,t)=>add('Tool',name,()=>setTool(t),k);
+  tool('V','Select and pan','pan'); tool('C','Calibrate the scale','cal');
+  tool('L','Dimension','line'); tool('G','Poly length','poly'); tool('A','Arc length','arc');
+  tool('R','Region','area'); tool('M','Count','count'); tool('Q','Revision cloud','cloud');
+  tool('D','Driver','driver'); tool('F','Feed point','feed'); tool('J','Splice','splice');
+  tool('W','Home run','whip'); tool('B','Area box','box'); tool('P','Pencil ink','ink');
+  tool('E','Erase','erase'); tool('T','Text','text'); tool('X','Text box','tbox');
+  tool('N','Callout note','note'); tool('K','Link a shop drawing','link');
+  add('Do','Add a treatment',()=>{ const t=newTreat(null); renderTreatments(); renderBom(); openTreat(t.id,true); });
+  add('Do','Edit the picked runs together',editMany);
+  add('Do','Renumber zones…',renumber);
+  add('Do','Compare revisions…',compareRevisions);
+  add('Do','Scan titleblocks',()=>scanTitleblocks(false));
+  add('Do','Set a baseline…',()=>$('#btnBase').click());
+  add('Do','Undo',undo,'⌘Z'); add('Do','Redo',redo,'⇧⌘Z');
+  add('File','Save project file',saveProjectFile,'⌘S');
+  add('File','Save with drawings',saveBundleFile);
+  add('File','Open project file',()=>$('#projInput').click());
+  add('File','Save preset',savePreset);
+  add('File','Apply preset',()=>$('#presetInput').click());
+  add('File','Save library file',()=>$('#btnLibSave').click());
+  add('File','Export the workbook',exportWorkbook);
+  add('File','Open the printable report',openReport);
+  add('View','Settings…',openSettings,'⌘,');
+  add('View','Manual',()=>openManual(),'?');
+  add('View','Issues',()=>{ const b=$$('.tab').find(x=>x.dataset.pane==='pIssues'); if(b) b.click(); });
+  add('View','Colour by status',()=>{ P.code='status'; const sel=$('#codeMode'); if(sel) sel.value='status';
+    renderCodeKey(); drawOverlay(); renderAnnList(); markDirty(); });
+  add('View','Manual colours',()=>{ P.code='off'; const sel=$('#codeMode'); if(sel) sel.value='off';
+    renderCodeKey(); drawOverlay(); renderAnnList(); markDirty(); });
+  add('View','Light or dark',()=>$('#btnTheme').click());
+  add('View','Hide or show the left rail',()=>setPanel('left',(P.panels||{}).left===false),'[');
+  add('View','Hide or show the right rail',()=>setPanel('right',(P.panels||{}).right===false),']');
+  SET_TABS.forEach(t=>add('Settings',t.t,()=>{ setTab=t.k; openSettings(); }));
+  P.treat.forEach(t=>add('Run',tagOf(t)+(t.name?' · '+t.name:''),()=>{
+    $$('.tab').find(x=>x.dataset.pane==='pTreat').click();
+    openTreat(t.id,false);
+    if(t.annId){ const a=P.ann.find(x=>x.id===t.annId); if(a&&a.doc){ openDoc(a.doc,a.page); V.sel=a.id; drawOverlay(); showInspector(a); } }
+  }));
+  P.docs.forEach(d=>{
+    const n=Math.max(1,+d.pages||1);
+    for(let pg=1;pg<=n;pg++) add('Sheet',d.name.replace(/\.pdf$/i,'')+(n>1?' · p'+pg:''),()=>openDoc(d.id,pg));
+  });
+  return out;
+}
+/* every term has to appear somewhere, so "cove z4" narrows and order is free */
+function cmdMatch(items,q){
+  const terms=q.toLowerCase().split(/\s+/).filter(Boolean);
+  if(!terms.length) return items.slice(0,40);
+  return items.filter(it=>{
+    const hay=(it.g+' '+it.name+' '+(it.key||'')).toLowerCase();
+    return terms.every(w=>hay.includes(w));
+  }).slice(0,40);
+}
+let CMD={items:[],shown:[],i:0};
+function cmdDraw(){
+  const el=$('#cmdList');
+  if(!CMD.shown.length){ el.innerHTML='<div class="row"><b class="hint">Nothing matches that</b></div>'; }
+  else el.innerHTML=CMD.shown.map((it,i)=>'<div class="row'+(i===CMD.i?' on':'')+'" data-i="'+i+'">'
+    +'<span class="g">'+esc(it.g)+'</span><b>'+esc(it.name)+'</b>'
+    +(it.key?'<span class="k">'+esc(it.key)+'</span>':'')+'</div>').join('');
+  $$('.row',el).forEach(r=>{ if(r.dataset.i!=null) r.onclick=()=>cmdRun(+r.dataset.i); });
+  const on=el.querySelector('.row.on'); if(on) on.scrollIntoView({block:'nearest'});
+  const h=$('#cmdHint');
+  if(h) h.textContent=CMD.shown.length+' of '+CMD.items.length+'  ·  ↑↓ to move, ⏎ to run, esc to close';
+}
+function cmdRun(i){
+  const it=CMD.shown[i]; if(!it) return;
+  closeCmd();
+  try{ it.run(); }catch(e){ toast('That did not work: '+(e&&e.message||e)); }
+}
+function openCmd(){
+  CMD.items=cmdItems(); CMD.i=0;
+  CMD.shown=cmdMatch(CMD.items,'');
+  $('#cmdScrim').classList.add('show');
+  const q=$('#cmdQ'); q.value=''; cmdDraw();
+  setTimeout(()=>{ q.focus(); q.select(); },0);
+}
+function closeCmd(){ $('#cmdScrim').classList.remove('show'); }
 const KEYS=[
+  {g:'Everything',k:'⌘K',t:'Command palette — every tool, action, setting and run, searched'},
   {g:'Tools',k:'V',t:'Select and pan'},
   {g:'Tools',k:'C',t:'Calibrate the scale'},
   {g:'Tools',k:'L',t:'Dimension — drag to trace a curve, or tap each corner'},
   {g:'Tools',k:'G',t:'Poly length — every segment measured separately'},
   {g:'Tools',k:'A',t:'Arc length — start, a point along the curve, then the end'},
   {g:'Tools',k:'R',t:'Region — area, perimeter and the cove run inside it'},
+  {g:'Tools',k:'H',t:'Photo — pin a site photo where it was taken'},
   {g:'Tools',k:'F',t:'Feed point — place one on a run'},
   {g:'Tools',k:'J',t:'Splice — mark where two pieces join'},
   {g:'Tools',k:'W',t:'Home run — route the wire from a driver to a feed'},
@@ -8517,6 +8830,9 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Photos (H)','Pin a site photo where it was taken, with a caption. The picture is kept in this browser alongside the drawings and travels inside a “Save with drawings” file, so the one file really is the whole job. A pin whose picture is not in this browser says so rather than showing a blank.'],
+      ['Command palette (\u2318K)','One searched list of every tool, action, setting, sheet and run in the job. Type part of a name \u2014 every word has to appear somewhere, so \u201ccove z4\u201d narrows to that run, and picking it opens the sheet, selects the markup and opens the card. Arrows to move, return to run, escape to close.'],
+      ['Presets','The settings an office reuses on every job \u2014 rates, units, precision, rounding, labour hours, wire allowances, the defaults by type and the quieted warning kinds \u2014 saved as one file, optionally with the product library. Applying one replaces those settings and leaves the sheets, markups and runs alone.'],
       ['Issues','Every warning on the job in one place, grouped by kind, so a systemic gap reads as one line with a count instead of forty identical notes. Click a run to open it. Exports as a CSV.'],
       ['Quieting a kind','Some warnings are permanent facts of an office rather than problems \u2014 a shop that always orders to the exact length does not need telling there is no cut increment. Quieting a kind stops it showing on runs and stops it colouring them. It does not decide the question: the issues panel still lists it, still counts it, marks it as quieted, and still exports it.'],
       ['Colour by status','Colours the drawing by where each run stands: changed by a revision, has a warning, approved, measured and clean, or not measured yet. Worst news wins, so a flagged run reads as flagged whether or not it also warns. The key counts each one.'],
@@ -8900,7 +9216,9 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   approveTreat,unapproveTreat,editMany,tdefFor,saveTdef,clearTdef,applyTdef,tdefKeys:TDEF_KEYS,
   tsel:()=>V.tsel||new Set(),issueData,renderIssues,warnKinds:WARN_KINDS,statusOf,statuses:STATUSES,
   renumber,arrayAnn,annMeasured,statedOf,renumSort,showInspector,annSegs,annLen,
-  placePoint,feedsPlaced,splicesOn,alongRun,nearRun,apDrift,
+  placePoint,feedsPlaced,splicesOn,alongRun,nearRun,
+  openCmd,closeCmd,cmdItems,cmdMatch,presetText,applyPreset,savePreset,presetKeys:PRESET_KEYS,
+  placePhoto,photoUrl,openPhoto,photoKey,pdfPrune,grpHead,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,

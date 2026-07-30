@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.38.0**
+**Version 1.39.0**
 
 ## What it does
 
@@ -184,6 +184,29 @@ red **REV** badge, warns in the Calculated panel, is searchable, and appears in 
 cut list, the workbook and a section of the printed report. Approving a run clears
 the flag, because approving *is* the re-measure the flag asked for. Runs on other
 sheets are set aside rather than reported clear.
+
+**Command palette (⌘K).** One searched list of every tool, action, setting, sheet
+and run in the job. Every word has to appear somewhere, so `cove z4` narrows to
+that run — and picking it opens the sheet, selects the markup and opens the card.
+Arrows to move, return to run, escape to close. Thirty-nine shortcuts are more
+than anyone remembers; this is how you find them.
+
+**Presets.** The settings an office reuses on every job — rates, units, precision,
+rounding, labour hours, wire allowances, the defaults by type and the quieted
+warning kinds — saved as one file, optionally with the product library. Applying
+one replaces those settings and leaves the sheets, markups and runs alone. It runs
+through the same validation a project file gets, so a hand-edited preset cannot
+put nonsense into the settings.
+
+**Photos (H).** Pin a site photo where it was taken, with a caption. The picture is
+kept in this browser alongside the drawings and travels inside a *Save with
+drawings* file, so the one file really is the whole job. A pin whose picture is not
+in this browser says so rather than showing a blank.
+
+**A grouped card.** With fourteen fields on a run, the card is split into Product,
+Order code, Channel, Power and Documentation, each under a quiet rule that
+summarises what the group amounts to — the order-code group's heading *is* the code
+it builds.
 
 **Feed points, routed home runs, splices.** Three tools that turn assumptions
 into measurements.
