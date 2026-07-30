@@ -131,7 +131,16 @@ body.swap.hideL.hideR .sheet{grid-template-columns:0 1fr 0}
 
 /* ---------- viewer ---------- */
 main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min-width:0;min-height:0}
-.tools{display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--s1);border-bottom:1px solid var(--line2);flex-wrap:wrap}
+.tools{display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--s1);
+  border-bottom:1px solid var(--line2);flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
+/* However many tools are turned on, the toolbar stays one row: the tool strip
+   yields space to the controls after it and scrolls sideways inside itself, so the
+   zoom and page controls never move and never end up under a panel. */
+#toolbtns{display:flex;align-items:center;gap:4px;flex:1 1 0;min-width:44px;
+  overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+#toolbtns::-webkit-scrollbar{display:none}
+#toolbtns .tool{flex:0 0 auto}
+#toolbtns .sep{flex:0 0 auto}
 .tool{width:30px;height:28px;display:grid;place-items:center;background:none;border:1px solid transparent;cursor:pointer;color:var(--dim);border-radius:2px}
 .tool:hover{background:var(--s3);color:var(--txt)}
 .tool.on{background:var(--amber);border-color:var(--amber);color:#20170A}
@@ -160,8 +169,14 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
 .dropzone.hot{border-color:var(--amber);background:rgba(242,169,59,.06)}
 
 /* selected annotation inspector */
-#inspector{position:absolute;right:14px;bottom:14px;z-index:5;width:262px;background:var(--s1);border:1px solid var(--line2);box-shadow:0 12px 34px rgba(0,0,0,.55);border-radius:2px;display:none}
-#inspector.show{display:block}
+/* The inspector grows with what it is inspecting — a poly run with a dozen
+   segments has a lot to say. It is capped to its container and scrolls inside,
+   so it can never reach up over the toolbar. */
+#inspector{position:absolute;right:14px;bottom:14px;z-index:5;width:262px;background:var(--s1);
+  border:1px solid var(--line2);box-shadow:0 12px 34px rgba(0,0,0,.55);border-radius:2px;display:none;
+  max-height:var(--insMax,60vh);flex-direction:column;overflow:hidden}
+#inspector.show{display:flex}
+#inspector .bd{overflow-y:auto;overflow-x:hidden;min-height:0}
 #inspector .hd{padding:7px 10px;background:var(--s2);border-bottom:1px solid var(--line);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);display:flex;gap:8px;align-items:center}
 #inspector .bd{padding:10px;display:grid;gap:8px}
 .swatches{display:flex;gap:5px}
@@ -307,6 +322,12 @@ input.up{text-transform:uppercase}
 .setbody{overflow:auto;padding:6px 0 12px}
 .setgrp{padding:10px 14px 4px}
 .setgrp h4{margin:0 0 2px;font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--faint)}
+.tchk{display:inline-flex;align-items:center;gap:5px;padding:3px 7px 3px 5px;border:1px solid var(--line2);
+  border-radius:5px;font-size:11px;color:var(--dim);cursor:pointer;background:var(--s1)}
+.tchk.on{border-color:var(--amber);color:var(--ink)}
+.tchk.core{opacity:.7;cursor:default}
+.tchk input{width:auto;margin:0}
+.tchk svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7}
 .setrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px dotted var(--line)}
 .setrow:last-child{border-bottom:0}
 .setrow .lab{flex:1 1 auto;min-width:0}
@@ -326,6 +347,15 @@ input.up{text-transform:uppercase}
   text-transform:none;letter-spacing:0;white-space:nowrap;cursor:pointer}
 .multi input{width:auto;min-height:0}
 @media(pointer:coarse){.multi label{padding:5px 0}.multi{gap:6px 16px}}
+.pal{position:fixed;z-index:46;background:var(--s2);border:1px solid var(--line2);border-radius:8px;
+  box-shadow:0 10px 34px rgba(0,0,0,.5);overflow:hidden;min-width:64px}
+.palhd{display:flex;align-items:center;gap:6px;padding:4px 6px 4px 9px;background:var(--s3);
+  border-bottom:1px solid var(--line2);cursor:grab;touch-action:none}
+.palhd span{flex:1;font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--dim);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.palhd .x{background:none;border:0;color:var(--faint);font-size:14px;line-height:1;cursor:pointer;padding:0 2px}
+.palhd .x:hover{color:var(--ink)}
+.palbody{display:flex;flex-wrap:wrap;gap:2px;padding:4px;max-width:196px}
 #cmdScrim{align-items:flex-start;justify-content:center}
 #cmdScrim .cmdbox{width:min(620px,94vw);margin-top:12vh;background:var(--s2);border:1px solid var(--line2);
   border-radius:10px;box-shadow:0 24px 70px rgba(0,0,0,.6);overflow:hidden;display:flex;flex-direction:column}
@@ -446,7 +476,9 @@ body.haspen #penFlag{display:inline}
    and form fields go to 16 px because anything smaller makes iOS Safari zoom the
    whole page the moment you tap into one. */
 @media(pointer:coarse){
-  .tool{width:44px;height:42px}
+  .tool{width:44px;height:42px;flex:0 0 auto}
+  /* one swipe should reach every control, so the strip does not scroll separately */
+  #toolbtns{flex:0 0 auto;overflow:visible;min-width:0}
   .tool svg{width:21px;height:21px}
   .btn{padding:9px 13px;min-height:40px}
   .btn.sm{padding:7px 10px;min-height:34px;font-size:12px}
@@ -540,27 +572,7 @@ body.haspen #penFlag{display:inline}
 
 <main>
   <div class="tools" id="toolbar">
-    <button class="tool on" data-tool="pan" title="Select / pan (V)"><svg viewBox="0 0 24 24"><path d="M4 3l6.5 16 2-6.5L19 10.5z"/></svg></button>
-    <button class="tool" data-tool="cal" title="Calibrate scale (C)"><svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/></svg></button>
-    <span class="sep"></span>
-    <button class="tool" data-tool="line" title="Dimension / linear run (L)"><svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg></button>
-    <button class="tool" data-tool="arc" title="Arc length — click start, a point along the curve, then the end (A)"><svg viewBox="0 0 24 24"><path d="M3 19a16 16 0 0118 0"/><circle cx="3" cy="19" r="1.9"/><circle cx="12" cy="11.6" r="1.9"/><circle cx="21" cy="19" r="1.9"/></svg></button>
-    <button class="tool" data-tool="poly" title="Poly length — click each corner, per-segment lengths (G)"><svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg></button>
-    <button class="tool" data-tool="area" title="Region — trace a room for its area, perimeter and cove run (R)"><svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg></button>
-    <button class="tool" data-tool="count" title="Count — stamp and tally a symbol (M)"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg></button>
-    <button class="tool" data-tool="cloud" title="Revision cloud with a delta (Q)"><svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg></button>
-    <button class="tool" data-tool="photo" title="Pin a site photo (H)"><svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 012-2h2l1.5-2h7L17 6h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="12.5" r="3.4"/></svg></button>
-    <button class="tool" data-tool="feed" title="Place a feed point on a run (F)"><svg viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M12 17V8"/><circle cx="12" cy="6" r="2.6"/><path d="M8 12h8"/></svg></button>
-    <button class="tool" data-tool="splice" title="Place a splice where pieces join (J)"><svg viewBox="0 0 24 24"><path d="M3 12h6M15 12h6"/><path d="M9 8v8M15 8v8"/></svg></button>
-    <button class="tool" data-tool="whip" title="Route a home run — click the driver, then each turn, then the feed (W)"><svg viewBox="0 0 24 24"><path d="M4 20V9a3 3 0 013-3h6a3 3 0 013 3v6a2 2 0 002 2h2"/><circle cx="4" cy="20" r="1.9"/><circle cx="20" cy="17" r="1.9"/></svg></button>
-    <button class="tool" data-tool="driver" title="Place a power supply / driver (D)"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="1"/><path d="M7 8V5M17 8V5M6 12.5h4M14 12.5h4"/></svg></button>
-    <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
-    <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
-    <button class="tool" data-tool="erase" title="Erase markups (E)"><svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg></button>
-    <button class="tool" data-tool="text" title="Text — plain note straight on the sheet (T)"><svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></svg></button>
-    <button class="tool" data-tool="tbox" title="Text box — drag a box, text wraps inside (X)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M7 9h10M7 12h10M7 15h6"/></svg></button>
-    <button class="tool" data-tool="note" title="Callout note with a leader (N)"><svg viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4"/></svg></button>
-    <button class="tool" data-tool="link" title="Link a shop drawing (K)"><svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 006 .5l2-2a4 4 0 00-5.6-5.6l-1 1"/><path d="M14 10a4 4 0 00-6-.5l-2 2A4 4 0 0011.6 17l1-1"/></svg></button>
+    <span id="toolbtns"></span>
     <span class="sep"></span>
     <span class="inkbar" id="inkbar"></span>
     <select id="inkW" title="Line weight for new markups" style="width:auto;padding:4px 6px;font-size:11px"><option value="1">Hairline</option><option value="1.8" selected>Thin</option><option value="3">Medium</option><option value="4.5">Bold</option><option value="7">Heavy</option></select>
@@ -755,6 +767,7 @@ body.haspen #penFlag{display:inline}
 <div id="railScrim"></div>
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
+<div id="pals"></div>
 <div class="toast" id="toast"></div>
 <div id="lockBar"><span></span><button class="btn" id="btnTakeOver">Take over</button></div>
 <div class="scrim" id="cmdScrim"><div class="cmdbox">
@@ -792,7 +805,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.42.0';
+const APP_VER='1.43.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1451,7 +1464,11 @@ function applyProject(d){
     }
   });
   P.ann=P.ann.filter(a=>a&&Array.isArray(a.pts)&&a.pts.length&&
-    !((a.type==='area'||a.type==='cloud')&&a.pts.length<3));
+    !((a.type==='area'||a.type==='cloud')&&a.pts.length<3)
+    /* the new markups have fixed shapes: two points for a box-like one, three for
+       an angle or a radius. Anything else could not be drawn or measured. */
+    &&!(/^(arrow|hl|ell)$/.test(a.type)&&a.pts.length<2)
+    &&!(/^(ang|rad)$/.test(a.type)&&a.pts.length<3));
   /* a driver cannot feed a treatment that has been deleted */
   const tids=new Set(P.treat.map(t=>t.id));
   P.ann.forEach(a=>{ if(a.type==='driver') a.serves=a.serves.filter(id=>tids.has(id)); });
@@ -1483,6 +1500,17 @@ function applyProject(d){
   if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
   /* remembered choices per run type: keys are types, values are field subsets */
+  /* a hidden tool has to be a tool, and a palette has to hold tools */
+  if(!P.hideTool||typeof P.hideTool!=='object'||Array.isArray(P.hideTool)) P.hideTool={};
+  Object.keys(P.hideTool).forEach(k=>{
+    const d=TOOLS.find(x=>x.k===k);
+    if(!P.hideTool[k]||!d||d.core) delete P.hideTool[k];
+  });
+  if(!Array.isArray(P.pals)) P.pals=[];
+  P.pals=P.pals.filter(p=>p&&typeof p==='object').map(p=>({
+    id:String(p.id||uid('pal_')),name:String(p.name||'Tools'),
+    tools:Array.isArray(p.tools)?p.tools.filter(k=>TOOLS.some(x=>x.k===k)):[],
+    x:clamp(+p.x||24,0,4000),y:clamp(+p.y||120,0,4000),open:p.open!==false}));
   if(!P.mute||typeof P.mute!=='object'||Array.isArray(P.mute)) P.mute={};
   Object.keys(P.mute).forEach(c=>{ if(!P.mute[c]||!WARN_KINDS.some(k=>k.c===c)) delete P.mute[c]; });
   if(!P.tdef||typeof P.tdef!=='object'||Array.isArray(P.tdef)) P.tdef={};
@@ -2155,6 +2183,43 @@ function annPts(a){
   if(isClosedType(a)) return a.pts.length>2?a.pts.concat([a.pts[0]]):a.pts;
   return (a.closed&&canClose(a))? a.pts.concat([a.pts[0]]) : a.pts;
 }
+/* ---- ellipse, angle, radius ----
+   An ellipse is two points: a corner of its box and the opposite corner, same as
+   a rectangle. What it measures is the way round its edge — a round cove — for
+   which Ramanujan's approximation is good to about one part in ten million, far
+   inside any drawing's accuracy. */
+function ellOf(a){
+  if(!a||!a.pts||a.pts.length<2) return null;
+  const rx=Math.abs(a.pts[1][0]-a.pts[0][0])/2, ry=Math.abs(a.pts[1][1]-a.pts[0][1])/2;
+  if(!(rx>0)||!(ry>0)) return null;
+  const cx=(a.pts[0][0]+a.pts[1][0])/2, cy=(a.pts[0][1]+a.pts[1][1])/2;
+  const h=Math.pow(rx-ry,2)/Math.pow(rx+ry,2);
+  const per=Math.PI*(rx+ry)*(1+(3*h)/(10+Math.sqrt(4-3*h)));
+  return {c:[cx,cy],rx,ry,per,area:Math.PI*rx*ry,round:Math.abs(rx-ry)<1e-6};
+}
+function ellPts(a,n){
+  const g=ellOf(a); if(!g) return (a.pts||[]).slice();
+  n=n||72; const out=[];
+  for(let i=0;i<=n;i++){ const t=i/n*Math.PI*2;
+    out.push([g.c[0]+g.rx*Math.cos(t),g.c[1]+g.ry*Math.sin(t)]); }
+  return out;
+}
+/* an angle is three points: the corner, then one down each leg */
+function angOf(a){
+  if(!a||!a.pts||a.pts.length<3) return null;
+  const [C,A,B]=a.pts;
+  const v0=[A[0]-C[0],A[1]-C[1]], v1=[B[0]-C[0],B[1]-C[1]];
+  const l0=Math.hypot(v0[0],v0[1]), l1=Math.hypot(v1[0],v1[1]);
+  if(!(l0>0)||!(l1>0)) return null;
+  const dot=clamp((v0[0]*v1[0]+v0[1]*v1[1])/(l0*l1),-1,1);
+  const deg=Math.acos(dot)*180/Math.PI;
+  return {deg,legs:[l0,l1],
+    /* the leg lengths matter too: a miter is cut from the angle and the reach */
+    a0:Math.atan2(v0[1],v0[0]),a1:Math.atan2(v1[1],v1[0])};
+}
+/* a radius measurement is three points on the curve — the same circle the arc
+   tool fits, reported as R, D and the arc between the outer two */
+const radOf=a=>arcOf(a);
 /* ---- curved segments ----
    A cove that turns a corner on a radius is not two straight legs, and measuring
    it as a chord loses real feet. So any one segment of a run can carry a bulge —
@@ -2337,9 +2402,12 @@ function annLen(a){
   if(st>0) return st;
   const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
   if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
+  /* a round cove is measured the way round it */
+  if(a.type==='ell'){ const g=ellOf(a); return g?g.per*k:null; }
   /* for a region the length that matters downstream is the cove run, not the
      perimeter — that is what a treatment linked to it should order */
   if(a.type==='area'){ const m=areaMetrics(a); return m?m.cove:null; }
+  if(a.type==='ell'){ const g=ellOf(a); return g?g.per*k:null; }
   const pts=annPath(a); let t=0;
   for(let i=1;i<pts.length;i++) t+=ptLen(pts[i-1],pts[i]);
   return t*k;
@@ -2937,6 +3005,79 @@ function drawAnn(a,selected,isDraft,multi){
       +'" text-anchor="middle">'+esc(a.name||'PS')+'</text>';
     g+=chip(x,y+h/2+CHIP_H*.7,driverLabel(a,d0),c2,null,a,'total',lblRotFor(a,'total'));
   }
+  if(a.type==='arrow'){
+    const [A,B]=pts, L=Math.hypot(B[0]-A[0],B[1]-A[1]);
+    const h=Math.max(7,Math.min(18,L*.22))*W_MUL/1.2, ang=Math.atan2(B[1]-A[1],B[0]-A[0]);
+    const wing=d2=>[B[0]-h*Math.cos(ang-d2),B[1]-h*Math.sin(ang-d2)];
+    const w1=wing(0.42), w2=wing(-0.42);
+    g+='<path d="M'+A[0].toFixed(1)+' '+A[1].toFixed(1)+'L'+B[0].toFixed(1)+' '+B[1].toFixed(1)
+      +'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'" stroke-linecap="round"/>'
+      +'<path d="M'+w1[0].toFixed(1)+' '+w1[1].toFixed(1)+'L'+B[0].toFixed(1)+' '+B[1].toFixed(1)
+      +'L'+w2[0].toFixed(1)+' '+w2[1].toFixed(1)+'Z" fill="'+col+'" stroke="'+col+'" stroke-width="'+(W*.6).toFixed(2)+'"/>';
+    if(a.text) g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.7,a.text.slice(0,30),col,null,a,'total',lblRotFor(a,'total',A,B));
+  }
+  if(a.type==='hl'){
+    const x=Math.min(pts[0][0],pts[1][0]), y=Math.min(pts[0][1],pts[1][1]);
+    const w2=Math.abs(pts[1][0]-pts[0][0]), h2=Math.abs(pts[1][1]-pts[0][1]);
+    /* a highlighter marks without hiding, so it multiplies rather than covers */
+    g+='<rect x="'+x.toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+w2.toFixed(1)+'" height="'+h2.toFixed(1)
+      +'" fill="'+col+'" fill-opacity=".3" style="mix-blend-mode:multiply"/>';
+  }
+  if(a.type==='ell'){
+    const g0=ellOf(a), ep=ellPts(a).map(sp);
+    g+='<polygon points="'+ep.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
+      +'" fill="'+col+'" fill-opacity=".07" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
+    const tot=annLen(a), tg=a.treat&&P.treat.find(t=>t.id===a.treat);
+    if(g0){
+      const c2=sp(g0.c), k=inPerPt();
+      g+=chip(c2[0],c2[1],(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,
+        null,a,'total',lblRotFor(a,'total'));
+      if(P.arcDetail!==false&&k)
+        g+=chip(c2[0],c2[1]+CHIP_H*1.15,
+          (g0.round?'R '+fmtRun(g0.rx*k):fmtRun(g0.rx*2*k)+' × '+fmtRun(g0.ry*2*k))
+          +'  ·  '+(g0.area*k*k/144).toFixed(1)+' sq ft',col,null,a,'sub',lblRotFor(a,'sub'));
+    }
+  }
+  if(a.type==='ang'){
+    const g0=angOf(a), [C,A,B]=pts;
+    g+='<path d="M'+A[0].toFixed(1)+' '+A[1].toFixed(1)+'L'+C[0].toFixed(1)+' '+C[1].toFixed(1)
+      +'L'+B[0].toFixed(1)+' '+B[1].toFixed(1)+'" fill="none" stroke="'+col
+      +'" stroke-width="'+W.toFixed(2)+'" stroke-linejoin="round" stroke-linecap="round"/>';
+    if(g0){
+      /* the little arc between the legs, drawn a fixed way out from the corner */
+      const R=Math.min(34,Math.max(16,Math.min(Math.hypot(A[0]-C[0],A[1]-C[1]),Math.hypot(B[0]-C[0],B[1]-C[1]))*.42));
+      const t0=Math.atan2(A[1]-C[1],A[0]-C[0]), t1=Math.atan2(B[1]-C[1],B[0]-C[0]);
+      let dt=t1-t0; while(dt>Math.PI) dt-=Math.PI*2; while(dt<-Math.PI) dt+=Math.PI*2;
+      const N=Math.max(6,Math.ceil(Math.abs(dt)/0.15)), arcp=[];
+      for(let i=0;i<=N;i++){ const t=t0+dt*i/N; arcp.push([C[0]+R*Math.cos(t),C[1]+R*Math.sin(t)]); }
+      g+='<polyline points="'+arcp.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
+        +'" fill="none" stroke="'+col+'" stroke-width="'+(W*.8).toFixed(2)+'" stroke-opacity=".85"/>';
+      const mid=arcp[Math.floor(arcp.length/2)];
+      const k=inPerPt();
+      g+=chip(mid[0],mid[1],g0.deg.toFixed(1)+'\u00b0',col,null,a,'total',lblRotFor(a,'total'));
+      if(P.arcDetail!==false&&k)
+        g+=chip(mid[0],mid[1]+CHIP_H*1.15,'legs '+fmtRun(g0.legs[0]*k)+' / '+fmtRun(g0.legs[1]*k),
+          col,null,a,'sub',lblRotFor(a,'sub'));
+    }
+  }
+  if(a.type==='rad'){
+    const g0=arcOf(a), ap=arcPts(a).map(sp);
+    g+='<polyline points="'+ap.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
+      +'" fill="none" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'" stroke-linecap="round"/>';
+    g+=pts.map(q=>'<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)
+      +'" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
+    if(g0){
+      const c2=sp(g0.c), mid=ap[Math.floor(ap.length/2)], k=inPerPt();
+      /* the radius itself, drawn from the centre to the middle of the arc */
+      g+='<path d="M'+c2[0].toFixed(1)+' '+c2[1].toFixed(1)+'L'+mid[0].toFixed(1)+' '+mid[1].toFixed(1)
+        +'" stroke="'+col+'" stroke-width="'+(W*.7).toFixed(2)+'" stroke-dasharray="5 4" stroke-opacity=".8"/>'
+        +'<circle cx="'+c2[0].toFixed(1)+'" cy="'+c2[1].toFixed(1)+'" r="'+(2.4*W_MUL).toFixed(1)+'" fill="'+col+'"/>';
+      g+=chip(mid[0],mid[1]-CHIP_H*.8,'R '+(k?fmtRun(g0.r*k):'set scale'),col,null,a,'total',lblRotFor(a,'total'));
+      if(P.arcDetail!==false&&k)
+        g+=chip(mid[0],mid[1]+CHIP_H*.6,'D '+fmtRun(g0.r*2*k)+'  ·  '+fmtLen(g0.len*k)
+          +'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'\u00b0',col,null,a,'sub',lblRotFor(a,'sub'));
+    }
+  }
   if(a.type==='feed'||a.type==='splice'){
     const [x,y]=pts[0], R=6.5*W_MUL;
     if(a.type==='feed'){
@@ -3102,6 +3243,23 @@ function hitTest(sx,sy,tol){
     const deg=rotatable(a)?rotOf(a):0;
     let X=sx, Y=sy;
     if(deg){ const q=rotPt([sx,sy],rotCentre(a),-deg); X=q[0]; Y=q[1]; }
+    if(a.type==='ell'){
+      const ep=ellPts(a).map(sp);
+      for(let i=1;i<ep.length;i++) if(distSeg([X,Y],ep[i-1],ep[i])<tol) return a;
+      if(ptInPoly([X,Y],ep)) return a;                  /* a round cove is a surface too */
+      continue;
+    }
+    if(a.type==='hl'){
+      const x1=Math.min(pts[0][0],pts[1][0]),x2=Math.max(pts[0][0],pts[1][0]);
+      const y1=Math.min(pts[0][1],pts[1][1]),y2=Math.max(pts[0][1],pts[1][1]);
+      if(X>x1-tol&&X<x2+tol&&Y>y1-tol&&Y<y2+tol) return a;
+      continue;
+    }
+    if(a.type==='arrow'||a.type==='ang'||a.type==='rad'){
+      const seq=a.type==='rad'?arcPts(a).map(sp):(a.type==='ang'?[pts[1],pts[0],pts[2]]:pts);
+      for(let i=1;i<seq.length;i++) if(distSeg([X,Y],seq[i-1],seq[i])<tol) return a;
+      continue;
+    }
     if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'||a.type==='area'||a.type==='cloud'){
       for(let i=1;i<pts.length;i++) if(distSeg([X,Y],pts[i-1],pts[i])<tol+(a.type==='ink'?(a.w||2)*V.zoom/2:0)) return a;
       /* a region is a surface, not just its edge — clicking inside it selects it */
@@ -3915,8 +4073,68 @@ const isMeasureTool=t=>isLineTool(t)||t==='arc'||t==='area';
 /* tools that build a vertex-by-vertex draft */
 const isTapTool=t=>t==='poly'||t==='area'||t==='cloud';
 const isPolyDraft=d=>!!d&&(d.type==='line'||d.type==='cal'||d.type==='area'||d.type==='cloud');
+/* ---- the tools, as data ----
+   The toolbar is rendered from this, so a tool can be hidden from it in Settings
+   or pinned onto a palette without the markup being touched. Hiding one only
+   takes it off the toolbar: its key still works and it still appears in the
+   palette picker, because hiding is about clutter, not capability. */
+const TOOLS=[
+  {k:'arrow',g:'Annotate',key:'',t:"Arrow — drag from tail to head",svg:'<svg viewBox="0 0 24 24"><path d="M4 20L20 4"/><path d="M13 4h7v7"/></svg>'},
+  {k:'hl',g:'Annotate',key:'',t:"Highlight — drag a band across the sheet",svg:'<svg viewBox="0 0 24 24"><path d="M4 15l7-7 5 5-7 7H4z"/><path d="M14 6l4 4"/><path d="M3 21h18"/></svg>'},
+  {k:'ell',g:'Measure',key:'O',t:"Ellipse — a round cove, measured round its edge",svg:'<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></svg>'},
+  {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
+  {k:'rad',g:'Measure',key:'U',t:"Radius — three points on a curve gives R, D and the arc",svg:'<svg viewBox="0 0 24 24"><path d="M3 18a12 12 0 0118 0"/><path d="M12 6.2V18"/><circle cx="12" cy="18" r="1.6"/></svg>'},
+  {k:'pan',g:'Select',key:'V',t:"Select / pan",svg:'<svg viewBox="0 0 24 24"><path d="M4 3l6.5 16 2-6.5L19 10.5z"/></svg>',core:1},
+  {k:'cal',g:'Select',key:'C',t:"Calibrate scale",svg:'<svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/></svg>',core:1},
+  {k:'line',g:'Measure',key:'L',t:"Dimension / linear run",svg:'<svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg>'},
+  {k:'arc',g:'Measure',key:'A',t:"Arc length \u2014 click start, a point along the curve, then the end",svg:'<svg viewBox="0 0 24 24"><path d="M3 19a16 16 0 0118 0"/><circle cx="3" cy="19" r="1.9"/><circle cx="12" cy="11.6" r="1.9"/><circle cx="21" cy="19" r="1.9"/></svg>'},
+  {k:'poly',g:'Measure',key:'G',t:"Poly length \u2014 click each corner, per-segment lengths",svg:'<svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg>'},
+  {k:'area',g:'Measure',key:'R',t:"Region \u2014 trace a room for its area, perimeter and cove run",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg>'},
+  {k:'count',g:'Measure',key:'M',t:"Count \u2014 stamp and tally a symbol",svg:'<svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg>'},
+  {k:'cloud',g:'Review',key:'Q',t:"Revision cloud with a delta",svg:'<svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg>'},
+  {k:'photo',g:'Review',key:'H',t:"Pin a site photo",svg:'<svg viewBox="0 0 24 24"><path d="M3 8a2 2 0 012-2h2l1.5-2h7L17 6h2a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2z"/><circle cx="12" cy="12.5" r="3.4"/></svg>'},
+  {k:'feed',g:'Lighting',key:'F',t:"Place a feed point on a run",svg:'<svg viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M12 17V8"/><circle cx="12" cy="6" r="2.6"/><path d="M8 12h8"/></svg>'},
+  {k:'splice',g:'Lighting',key:'J',t:"Place a splice where pieces join",svg:'<svg viewBox="0 0 24 24"><path d="M3 12h6M15 12h6"/><path d="M9 8v8M15 8v8"/></svg>'},
+  {k:'whip',g:'Lighting',key:'W',t:"Route a home run \u2014 click the driver, then each turn, then the feed",svg:'<svg viewBox="0 0 24 24"><path d="M4 20V9a3 3 0 013-3h6a3 3 0 013 3v6a2 2 0 002 2h2"/><circle cx="4" cy="20" r="1.9"/><circle cx="20" cy="17" r="1.9"/></svg>'},
+  {k:'driver',g:'Lighting',key:'D',t:"Place a power supply / driver",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="1"/><path d="M7 8V5M17 8V5M6 12.5h4M14 12.5h4"/></svg>'},
+  {k:'box',g:'Annotate',key:'B',t:"Area box",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg>'},
+  {k:'ink',g:'Annotate',key:'P',t:"Pencil ink \u2014 freehand notes & sketching",svg:'<svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg>'},
+  {k:'erase',g:'Annotate',key:'E',t:"Erase markups",svg:'<svg viewBox="0 0 24 24"><path d="M8 20H4l-1-3 9.5-9.5a2 2 0 013 0l3 3a2 2 0 010 3L11 20z"/><path d="M8 20h12"/></svg>'},
+  {k:'text',g:'Annotate',key:'T',t:"Text \u2014 plain note straight on the sheet",svg:'<svg viewBox="0 0 24 24"><path d="M5 6h14M12 6v13M9 19h6"/></svg>'},
+  {k:'tbox',g:'Annotate',key:'X',t:"Text box \u2014 drag a box, text wraps inside",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/><path d="M7 9h10M7 12h10M7 15h6"/></svg>'},
+  {k:'note',g:'Annotate',key:'N',t:"Callout note with a leader",svg:'<svg viewBox="0 0 24 24"><path d="M5 4h14v12l-4 4H5z"/><path d="M15 20v-4h4"/></svg>'},
+  {k:'link',g:'Review',key:'K',t:"Link a shop drawing",svg:'<svg viewBox="0 0 24 24"><path d="M10 14a4 4 0 006 .5l2-2a4 4 0 00-5.6-5.6l-1 1"/><path d="M14 10a4 4 0 00-6-.5l-2 2A4 4 0 0011.6 17l1-1"/></svg>'},
+];
+/* the toolbar reads left to right in this order, whatever order the registry is
+   written in, so a group is never split in two by the one after it */
+const TOOL_GROUPS=['Select','Measure','Lighting','Review','Annotate'];
+const toolOrder=()=>TOOLS.slice().sort((a,b)=>
+  (TOOL_GROUPS.indexOf(a.g)-TOOL_GROUPS.indexOf(b.g))||(TOOLS.indexOf(a)-TOOLS.indexOf(b)));
+const toolDef=k=>TOOLS.find(x=>x.k===k)||null;
+const toolShown=k=>{ const d=toolDef(k); if(!d) return false;
+  if(d.core) return true; return !(P.hideTool&&P.hideTool[k]); };
+/* the toolbar, and every pinned palette, are drawn from the registry */
+function renderToolbar(){
+  const host=$('#toolbtns'); if(!host) return;
+  let g='', last='';
+  toolOrder().filter(d=>toolShown(d.k)).forEach(d=>{
+    if(last&&d.g!==last) g+='<span class="sep"></span>';
+    last=d.g;
+    g+=toolBtn(d);
+  });
+  host.innerHTML=g;
+  wireTools(host);
+  $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===V.tool));
+}
+const toolBtn=d=>'<button class="tool'+(V.tool===d.k?' on':'')+'" data-tool="'+d.k+'" title="'
+  +esc(d.t)+(d.key?' ('+d.key+')':'')+'">'+d.svg+'</button>';
+function wireTools(host){
+  $$('[data-tool]',host).forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+}
 function setTool(t){
-  V.tool=t; $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
+  V.tool=t;
+  /* the same tool can be on the toolbar and on any number of palettes */
+  $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   viewport.classList.toggle('pan',t==='pan'); viewport.classList.toggle('draw',t!=='pan');
   const names={pan:'Select / pan',cal:'Calibrate — drag along a known dimension',
     line:'Dimension — drag to trace a curved run, or tap each corner',
@@ -3933,10 +4151,73 @@ function setTool(t){
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
     text:'Text — tap to place a note on the sheet',
     tbox:'Text box — drag a box, the text wraps inside it',
-    note:'Callout note — tap to place',link:'Link — tap to place, then pick the shop drawing'};
+    note:'Callout note — tap to place',link:'Link — tap to place, then pick the shop drawing',
+    arrow:'Arrow — drag from the tail to the head',
+    hl:'Highlight — drag a band across what matters',
+    ell:'Ellipse — drag out a round cove; it measures round its edge',
+    ang:'Angle — click the corner, then a point down each leg',
+    rad:'Radius — click three points along the curve'};
   $('#stTool').textContent=names[t]; V.draft=null; stroke=null; press=null; drawOverlay(); syncDrawbar();
 }
-$$('.tool[data-tool]').forEach(b=>b.onclick=()=>setTool(b.dataset.tool));
+/* ---- pinned tool palettes ----
+   A floating set of the tools a particular job needs, kept where it was put. The
+   toolbar is one long row; a palette is the handful you are actually using, next
+   to the drawing. They live in the project, so they come back with the job. */
+function palBox(p){
+  return '<div class="pal" data-pal="'+p.id+'" style="left:'+(+p.x||24)+'px;top:'+(+p.y||120)+'px">'
+    +'<div class="palhd"><span>'+esc(p.name||'Tools')+'</span>'
+      +'<button class="x" data-palclose="'+p.id+'" title="Unpin">×</button></div>'
+    +'<div class="palbody">'
+      +toolOrder().filter(d=>(p.tools||[]).includes(d.k)).map(toolBtn).join('')
+      +((p.tools||[]).length?'':'<span class="hint" style="padding:6px">No tools on it yet</span>')
+    +'</div></div>';
+}
+function renderPals(){
+  const host=$('#pals'); if(!host) return;
+  const list=(P.pals||[]).filter(p=>p&&p.open!==false);
+  host.innerHTML=list.map(palBox).join('');
+  wireTools(host);
+  $$('[data-palclose]',host).forEach(b=>b.onclick=()=>{
+    const p=(P.pals||[]).find(x=>x.id===b.dataset.palclose);
+    if(p){ p.open=false; renderPals(); markDirty(); toast('Unpinned — Settings › Tools puts it back'); }
+  });
+  /* drag a palette by its bar; where it sits is part of the job */
+  $$('.palhd',host).forEach(hd=>hd.onpointerdown=e=>{
+    if(e.target.dataset.palclose) return;
+    const box=hd.parentElement, id=box.dataset.pal;
+    const p=(P.pals||[]).find(x=>x.id===id); if(!p) return;
+    const x0=e.clientX, y0=e.clientY, px=+p.x||24, py=+p.y||120;
+    hd.setPointerCapture(e.pointerId);
+    const mv=ev=>{
+      p.x=Math.max(0,Math.min(innerWidth-60,px+ev.clientX-x0));
+      p.y=Math.max(0,Math.min(innerHeight-40,py+ev.clientY-y0));
+      box.style.left=p.x+'px'; box.style.top=p.y+'px';
+    };
+    const up=()=>{ hd.removeEventListener('pointermove',mv); hd.removeEventListener('pointerup',up); markDirty(); };
+    hd.addEventListener('pointermove',mv); hd.addEventListener('pointerup',up);
+  });
+  $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===V.tool));
+}
+async function editPal(p){
+  const isNew=!p;
+  const r=await dlg({title:isNew?'Pin a tool palette':'Edit “'+(p.name||'Tools')+'”',fields:[
+    {k:'name',label:'Name',val:p?p.name:'My tools',ph:'My tools'},
+    {k:'tools',type:'multi',label:'Tools on it',
+      opts:toolOrder().map(d=>({v:d.k,t:d.g+' · '+d.t})),val:p?(p.tools||[]).slice():['line','poly','arc','area']},
+    ...(isNew?[]:[{k:'del',type:'check',cap:'Delete this palette',val:false}])
+  ],ok:isNew?'Pin it':'Apply',
+    note:'A palette floats over the drawing where you leave it, and comes back with the job. Tools hidden from the toolbar can still go on one.'});
+  if(!r) return;
+  if(r.del&&p){ P.pals=(P.pals||[]).filter(x=>x.id!==p.id); renderPals(); markDirty(); toast('Palette deleted'); return; }
+  const tools=(r.tools||[]).filter(k=>toolDef(k));
+  if(p){ p.name=String(r.name||'Tools'); p.tools=tools; p.open=true; }
+  else{
+    P.pals=P.pals||[];
+    P.pals.push({id:uid('pal_'),name:String(r.name||'Tools'),tools,x:24,y:120,open:true});
+  }
+  renderPals(); markDirty();
+  toast(tools.length+' tool'+(tools.length===1?'':'s')+' on “'+String(r.name||'Tools')+'”');
+}
 
 /* ---- long press ----
    There is no right button on a tablet, and iOS only sometimes turns a long press
@@ -4074,7 +4355,7 @@ stage.addEventListener('pointerdown',e=>{
   press={id:e.pointerId,x0:e.clientX,y0:e.clientY,p0:p,moved:false,vertex:!!V.draft,free:null};
   if(V.tool==='ink'){ snap(); stroke={id:uid('a_'),type:'ink',doc:V.docId,page:V.page,pts:[[p[0],p[1],e.pressure||.5]],color:V.color,w:V.width}; V.draft=stroke; drawOverlay(); }
   else if(V.tool==='erase'){ eraseAt(sc); }
-  else if(V.tool==='box'||V.tool==='tbox'){ V.draft={id:'d',type:V.tool,doc:V.docId,page:V.page,pts:[p,p.slice()],color:V.color,w:V.width,size:11,text:''}; }
+  else if(/^(box|tbox|arrow|hl|ell)$/.test(V.tool)){ V.draft={id:'d',type:V.tool,doc:V.docId,page:V.page,pts:[p,p.slice()],color:V.color,w:V.width,size:11,text:''}; }
 },{passive:false});
 
 stage.addEventListener('pointermove',e=>{
@@ -4114,7 +4395,15 @@ stage.addEventListener('pointermove',e=>{
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>0.9) stroke.pts.push([q[0],q[1],ev.pressure||.5]); });
       drawOverlayFor(); return; }
     if(V.tool==='erase'){ evs.forEach(ev=>eraseAt(toS(ev))); return; }
-    if((V.tool==='box'||V.tool==='tbox')&&V.draft){ V.draft.pts[1]=p; drawOverlayFor(); return; }
+    if(/^(box|tbox|arrow|hl|ell)$/.test(V.tool)&&V.draft){
+      V.draft.pts[1]=V.tool==='arrow'?ortho(V.draft.pts[0],p,e.shiftKey):p;
+      /* ⇧ on an ellipse makes it a circle, which is what a round cove usually is */
+      if(V.tool==='ell'&&e.shiftKey){
+        const dx=p[0]-V.draft.pts[0][0], dy=p[1]-V.draft.pts[0][1];
+        const r=Math.max(Math.abs(dx),Math.abs(dy));
+        V.draft.pts[1]=[V.draft.pts[0][0]+(dx<0?-r:r),V.draft.pts[0][1]+(dy<0?-r:r)];
+      }
+      drawOverlayFor(); liveLen(V.draft); return; }
     if(V.tool==='cal'&&press.moved){
       V.draft={id:'d',type:'cal',doc:V.docId,page:V.page,pts:[snapped(press.p0),snapped(ortho(press.p0,p,e.shiftKey))],color:'#5AB6DE',w:V.width};
       drawOverlayFor(); liveLen(V.draft); return; }
@@ -4176,7 +4465,8 @@ function endPointer(e){
   const pr=press, tool=V.tool, p=toPt(e); press=null;
   if(tool==='ink'){ commitInk(); return; }
   if(tool==='erase') return;
-  if(tool==='box'||tool==='tbox'){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
+  if(/^(box|tbox|arrow|hl|ell)$/.test(tool)){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
+  if(tool==='ang'||tool==='rad'){ tapThree(p); return; }
   if(tool==='count'){ if(!pr.moved) placeCount(p); return; }
   if(tool==='driver'){ if(!pr.moved) placeDriver(p); return; }
   if(tool==='feed'||tool==='splice'){ if(!pr.moved) placePoint(tool,p); return; }
@@ -4229,6 +4519,38 @@ function tapVertex(p,e){
     V.draft.pts.push(V.draft.pts[V.draft.pts.length-1].slice());
   }
   drawOverlayFor(); liveLen(V.draft);
+}
+/* angle and radius are both three clicks, so they share the tapping */
+function tapThree(p){
+  const kind=V.tool;
+  if(kind==='rad'&&!curScale()){ toast('Set the scale first — a radius is a real distance'); setTool('cal'); return; }
+  p=snapped(p);
+  if(!V.draft||V.draft.type!==kind){
+    V.draft={id:'d',type:kind,doc:V.docId,page:V.page,pts:[p,p.slice(),p.slice()],
+      color:kind==='ang'?'#9B8CE8':V.color,w:V.width};
+    V.threeN=1;
+  }else{
+    V.threeN=(V.threeN||1)+1;
+    V.draft.pts[Math.min(V.threeN-1,2)]=p;
+    if(V.threeN>=3){
+      const d=V.draft; V.draft=null; V.threeN=0;
+      if(kind==='rad'&&!arcOf(d)){ toast('Those three points are in a line — there is no circle through them'); drawOverlay(); return; }
+      if(kind==='ang'&&!angOf(d)){ toast('Those points make no angle — click the corner, then one point down each leg'); drawOverlay(); return; }
+      snap(kind==='ang'?'Angle':'Radius');
+      const a={id:uid('a_'),type:kind,doc:d.doc,page:d.page,pts:d.pts.map(q=>q.slice()),
+        color:d.color,w:d.w,text:''};
+      P.ann.push(a); V.sel=a.id;
+      drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+      const k=inPerPt();
+      if(kind==='ang'){ const g=angOf(a);
+        toast('Angle '+g.deg.toFixed(1)+'°'+(k?'  ·  legs '+fmtRun(g.legs[0]*k)+' and '+fmtRun(g.legs[1]*k):'')); }
+      else{ const g=arcOf(a);
+        toast('R '+(k?fmtRun(g.r*k):'—')+'  ·  D '+(k?fmtRun(g.r*2*k):'—')
+          +'  ·  arc '+(k?fmtLen(g.len*k):'—')+' over '+(Math.abs(g.sweep)*180/Math.PI).toFixed(1)+'°'); }
+      return;
+    }
+  }
+  drawOverlay(); liveLen(V.draft);
 }
 function tapArc(p){
   if(!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
@@ -4421,6 +4743,7 @@ stage.addEventListener('contextmenu',e=>{
    A double-row cove is one traced path and an offset, not two traces that never
    quite match. Works on runs and on regions. */
 const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',
+  arrow:'Arrow',hl:'Highlight',ell:'Ellipse',ang:'Angle',rad:'Radius',
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
   area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver',
   feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo'};
@@ -4501,14 +4824,16 @@ function ctxForLabel(lc){
 function ctxForAnn(a){
   const names=ANN_NAMES;
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
-  const L=(a.type==='line'||a.type==='arc'||a.type==='area')?annLen(a):null;
+  const L=/^(line|arc|area|ell)$/.test(a.type)?annLen(a)
+    :(a.type==='rad'&&arcOf(a)&&inPerPt())?arcOf(a).r*inPerPt()
+    :null;
   const items=[{hd:names[a.type]+(L!=null?'  ·  '+fmtLen(L):'')}];
   if(a.type==='count') items.push({id:'cn',t:'Count group '+(a.grp||'COUNT')+'  ·  '+countsOf(a.grp).length+' stamped',off:1});
   items.push({id:'ms',t:inMulti(a.id)?'Take out of the selection':'Add to the selection',
     fn:()=>{ toggleMulti(a.id); if(!V.addSel){ V.addSel=true; syncMultiBtn(); } }});
   if(vertexType(a)&&!a.free&&a.pts.length>1) items.push({id:'of',t:'Parallel run…',fn:()=>offsetAnn(a)});
   if(vertexType(a)&&!a.free&&a.pts.length>2) items.push({id:'rc',t:'Round all corners…',fn:()=>roundCorners(a)});
-  if(a.type==='line'||a.type==='arc'||a.type==='area') items.push(t
+  if(a.type==='line'||a.type==='arc'||a.type==='area'||a.type==='ell') items.push(t
     ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
     : {id:'mk',t:'Create treatment from this',fn:()=>treatFromAnn(a)});
   if(canClose(a)) items.push({id:'lp',t:a.closed?'Open loop':'Close loop',fn:()=>{ snap(); a.closed=!a.closed;
@@ -4547,7 +4872,7 @@ function ctxForAnn(a){
     if(!r) return;
     snap('Angle'); a.rot=normDeg(+r.deg||0); if(!a.rot) delete a.rot;
     drawOverlay(); if(V.sel===a.id) showInspector(a); markDirty(); }});
-  if(/^(line|area|arc)$/.test(a.type)) items.push({id:'la',
+  if(/^(line|area|arc|ell|ang|rad)$/.test(a.type)) items.push({id:'la',
     t:alignRuns(a)?'Lay the labels flat':'Run the labels along the measurement',
     fn:()=>{ snap('Label angle'); a.lblAlign=alignRuns(a)?'flat':'run';
       drawOverlay(); if(V.sel===a.id) showInspector(a); markDirty(); }});
@@ -4743,10 +5068,22 @@ async function finishDraft(){
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
   }
-  if(d.type==='box'){
+  if(d.type==='box'||d.type==='arrow'||d.type==='hl'){
     snap();
-    const a={id:uid('a_'),type:'box',doc:d.doc,page:d.page,pts:d.pts,color:d.color,w:d.w||V.width,text:''};
+    const a={id:uid('a_'),type:d.type,doc:d.doc,page:d.page,pts:d.pts,color:d.color,w:d.w||V.width,text:''};
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty(); return;
+  }
+  if(d.type==='ell'){
+    const g=ellOf(d);
+    if(!g){ drawOverlay(); toast('Drag it out — an ellipse needs a width and a height'); return; }
+    snap();
+    const a={id:uid('a_'),type:'ell',doc:d.doc,page:d.page,pts:d.pts,color:d.color,w:d.w||V.width,text:''};
+    P.ann.push(a); V.sel=a.id;
+    drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+    const k=inPerPt();
+    toast(g.round?('Circle R '+(k?fmtRun(g.rx*k):'—')+' — '+(k?fmtLen(g.per*k):'set the scale')+' round it')
+      :('Ellipse '+(k?fmtLen(g.per*k):'set the scale')+' round it'));
+    return;
   }
   if(d.type==='tbox'){
     const [p0,p1]=d.pts;
@@ -5229,7 +5566,17 @@ function lblRotRow(a){
     +'<div class="hint" style="margin-top:4px">Right-click or long-press a label to turn just that one.</div></div>';
 }
 /* ---- inspector ---- */
+/* The toolbar is a sibling inside <main>, so a percentage cap would still let the
+   inspector reach up over it. Measure the row and cap to what is left below it. */
+function sizeInspector(){
+  const m=document.querySelector('main'), tb=document.querySelector('.tools'), ins=$('#inspector');
+  if(!m||!ins) return;
+  const room=m.clientHeight-(tb?tb.offsetHeight:0)-28;
+  ins.style.setProperty('--insMax',Math.max(160,room)+'px');
+}
+addEventListener('resize',()=>setTimeout(sizeInspector,140));
 function showInspector(a){
+  sizeInspector();
   const box=$('#inspector');
   if(!a){ box.classList.remove('show'); return; }
   box.classList.add('show');
@@ -5248,6 +5595,40 @@ function showInspector(a){
           : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
     h+='<button class="btn" data-act="half">Split in half  <span class="hint">S</span></button>';
     h+='<div class="hint">Drag the middle handle to change the bow, the ends to move it.</div>';
+  }
+  if(a.type==='ell'){
+    const g0=ellOf(a), k=inPerPt();
+    h+='<div class="kv"><span>Round the edge</span><b class="hi">'+fmtLen(annLen(a))+'</b></div>';
+    if(g0&&k){
+      h+='<div class="kv"><span>'+(g0.round?'Radius':'Axes')+'</span><b>'
+        +(g0.round?fmtRun(g0.rx*k):fmtRun(g0.rx*2*k)+' × '+fmtRun(g0.ry*2*k))+'</b></div>';
+      h+='<div class="kv"><span>Area</span><b>'+(g0.area*k*k/144).toFixed(2)+' sq ft</b></div>';
+    }
+    h+= t? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t))+'</button>'
+        : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
+    h+='<div class="hint">A round cove is measured the way round it. Drag either corner handle to resize; hold ⇧ while drawing to keep it a circle.</div>';
+  }
+  if(a.type==='ang'){
+    const g0=angOf(a), k=inPerPt();
+    h+='<div class="kv"><span>Angle</span><b class="hi">'+(g0?g0.deg.toFixed(1)+'°':'—')+'</b></div>';
+    if(g0) h+='<div class="kv"><span>Turned through</span><b>'+(180-g0.deg).toFixed(1)+'°</b></div>';
+    if(g0&&k){
+      h+='<div class="kv"><span>Leg 1</span><b>'+fmtLen(g0.legs[0]*k)+'</b></div>';
+      h+='<div class="kv"><span>Leg 2</span><b>'+fmtLen(g0.legs[1]*k)+'</b></div>';
+      h+='<div class="kv"><span>Mitre each side</span><b>'+(g0.deg/2).toFixed(1)+'°</b></div>';
+    }
+    h+='<div class="hint">First point is the corner. A mitre is cut at half the angle on each piece.</div>';
+  }
+  if(a.type==='rad'){
+    const g0=arcOf(a), k=inPerPt();
+    if(g0&&k){
+      h+='<div class="kv"><span>Radius</span><b class="hi">'+fmtLen(g0.r*k)+'</b></div>';
+      h+='<div class="kv"><span>Diameter</span><b>'+fmtLen(g0.r*2*k)+'</b></div>';
+      h+='<div class="kv"><span>Arc between the ends</span><b>'+fmtLen(g0.len*k)+'</b></div>';
+      h+='<div class="kv"><span>Included angle</span><b>'+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°</b></div>';
+      h+='<div class="kv"><span>Chord</span><b>'+fmtLen(ptLen(a.pts[0],a.pts[2])*k)+'</b></div>';
+    } else h+='<div class="hint">Set the scale to read the radius.</div>';
+    h+='<div class="hint">Three points anywhere along the curve. Use the radius to curve a run\u2019s segment to match.</div>';
   }
   if(a.type==='photo'){
     h+='<div class="kv"><span>File</span><b>'+esc(a.file||'—')+'</b></div>';
@@ -5591,7 +5972,8 @@ function renderCodeKey(){
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
   ['cloud','Revision clouds'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
-  ['whip','Home runs'],['photo','Photos'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
+  ['whip','Home runs'],['photo','Photos'],['ell','Ellipses'],['ang','Angles'],['rad','Radii'],
+  ['arrow','Arrows'],['hl','Highlights'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
 const layerOn=type=>!(P.hide&&P.hide[type]);
 const annVisible=a=>layerOn(a.type)&&!a.hidden;
@@ -6508,7 +6890,7 @@ function renderTreatments(){
         if(narrowUI()) closeRails();           /* get the sheet on screen on a tablet */
         toast('Showing '+tagOf(t)+' on '+((P.docs.find(d=>d.id===an.doc)||{}).name||'the sheet')); }
       if(a==='unlink'){ const an=P.ann.find(x=>x.id===t.annId); if(an) delete an.treat; t.manual=lenOf(t); t.annId=null; renderTreatments(); drawOverlay(); renderAnnList(); markDirty(); openTreat(t.id); }
-      if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'||x.type==='area'));
+      if(a==='link'){ const an=P.ann.find(x=>x.id===V.sel&&/^(line|arc|area|ell)$/.test(x.type));
         if(!an){ toast('Select a dimension on the drawing first'); return; }
         P.treat.forEach(o=>{ if(o.annId===an.id) o.annId=null; });
         t.annId=an.id; an.treat=t.id; t.docId=an.doc; t.page=an.page;
@@ -8999,7 +9381,7 @@ $('#btnTselNone').onclick=()=>{ TSEL().clear(); renderTreatments(); };
 $('#btnAddTreat').onclick=()=>{ const t=newTreat(null);
   if($('#treatFind').value){ $('#treatFind').value=''; }   /* never hide the one just added */
   renderTreatments(); renderBom(); openTreat(t.id,true); };
-$('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&(x.type==='line'||x.type==='arc'||x.type==='area'));
+$('#btnFromSel').onclick=()=>{ const a=P.ann.find(x=>x.id===V.sel&&/^(line|arc|area|ell)$/.test(x.type));
   if(!a){toast('Select a dimension, arc or region on the drawing first');return;} treatFromAnn(a); };
 /* ---- the rails ----
    On a wide screen they are columns that can be hidden or swapped, and that
@@ -9127,7 +9509,7 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&k==='a'&&V.vp){ e.preventDefault();
     setMulti(pageAnns().filter(annVisible).map(a=>a.id));
     toast((V.multi.length||(V.sel?1:0))+' markup(s) selected on this page'); return; }
-  if(k==='escape'){ closeCtx(); closeRails(); V.draft=null; V.sel=null; V.multi=[]; V.marq=null;
+  if(k==='escape'){ closeCtx(); closeRails(); V.draft=null; V.threeN=0; V.arcN=0; V.sel=null; V.multi=[]; V.marq=null;
     if(V.addSel){ V.addSel=false; syncMultiBtn(); }
     showInspector(null);
     if(V.tool!=='pan') setTool('pan'); else { drawOverlay(); syncDrawbar(); }
@@ -9147,6 +9529,9 @@ document.addEventListener('keydown',e=>{
   }
   if(k==='f'&&!(e.metaKey||e.ctrlKey)) setTool('feed');
   if(k==='j') setTool('splice');
+  if(k==='o'&&!(e.metaKey||e.ctrlKey)) setTool('ell');
+  if(k==='y'&&!(e.metaKey||e.ctrlKey)) setTool('ang');
+  if(k==='u'&&!(e.metaKey||e.ctrlKey)) setTool('rad');
   if(k==='w'&&!(e.metaKey||e.ctrlKey)) setTool('whip');
   if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
   /* ? and F1 both open the manual; ? needs shift on most layouts, so match either */
@@ -9252,6 +9637,8 @@ function cmdItems(){
   add('File','Export the workbook',exportWorkbook);
   add('File','Open the printable report',openReport);
   add('View','Settings…',openSettings,'⌘,');
+  add('View','Tools — what shows, and palettes…',()=>{ setTab='tools'; openSettings(); });
+  add('View','Pin a tool palette…',()=>editPal(null));
   add('View','Manual',()=>openManual(),'?');
   add('View','Issues',()=>{ const b=$$('.tab').find(x=>x.dataset.pane==='pIssues'); if(b) b.click(); });
   add('View','Colour by status',()=>{ P.code='status'; const sel=$('#codeMode'); if(sel) sel.value='status';
@@ -9320,6 +9707,9 @@ const KEYS=[
   {g:'Tools',k:'F',t:'Feed point — place one on a run'},
   {g:'Tools',k:'J',t:'Splice — mark where two pieces join'},
   {g:'Tools',k:'W',t:'Home run — route the wire from a driver to a feed'},
+  {g:'Tools',k:'O',t:'Ellipse — a round cove, measured round its edge'},
+  {g:'Tools',k:'Y',t:'Angle — the two legs of a corner'},
+  {g:'Tools',k:'U',t:'Radius — three points along a curve'},
   {g:'Tools',k:'M',t:'Count — stamp and tally a symbol'},
   {g:'Tools',k:'Q',t:'Revision cloud with a delta'},
   {g:'Tools',k:'D',t:'Place a driver'},
@@ -9436,6 +9826,10 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Ellipse (O)','A round cove. Drag it out \u2014 \u21e7 keeps it a circle \u2014 and it measures the way round its edge, with the radius or both axes and the area alongside. It can carry a treatment like any other measurement, so a circular cove orders properly.'],
+      ['Angle (Y)','Click the corner, then a point down each leg. It reads the angle, what the run turns through, both leg lengths, and the mitre to cut on each side \u2014 half the angle.'],
+      ['Radius (U)','Three points anywhere along a curve on the drawing and it fits the circle through them: radius, diameter, the arc between the outer two, the included angle and the chord. Read a radius off a plan this way, then type it into a run\u2019s segment to match.'],
+      ['Arrow and highlight','An arrow drags tail to head, with \u21e7 for straight. A highlight is a band that multiplies rather than covers, so what is under it still reads.'],
       ['Rounding corners','The other way a cove turns: the two legs are where they should be and the corner between them is radiused. Round all corners pulls both legs back by the tangent distance and puts an arc between them, so the run gets <em>shorter</em> — the opposite of curving a chord, and both are real. A corner too tight for the radius is left alone and reported rather than forced.'],
       ['Curving while you trace','Hold ctrl (or \u2318) as you place a point and the segment just laid becomes a 90\u00b0 arc, so a run can be traced with its curves in it rather than converted afterwards. Drag its grip to shape it.'],
       ['Curved segments','A cove that turns a corner on a radius is not two straight legs, and measuring it as a chord loses real feet. Every segment of a selected run carries a round grip halfway along it: drag that and the segment bows into an arc, with the radius, the angle and the length live in the status bar as you go. It is magnetic at straight and at 45, 60, 90, 120 and 180\u00b0, \u21e7 forces a quarter circle, and alt-click straightens it again. For an exact figure, right-click the segment \u2014 or use the arc button beside it in the inspector\u2019s segment list \u2014 and give it an included angle or a radius: 90\u00b0 is the usual cove corner, and whichever you give, the other follows. The length then follows the curve everywhere it matters: the run total, the cut list, the piece list, the feed points and the wire schedule. The curve is stored the way a CAD polyline stores one, so the segment is still one segment with two ends you can drag, and the label sits on the arc where the length is. Straighten it again from the same menu. Adding or removing a vertex on a curved segment is refused rather than quietly flattening it, and a split whose halfway point lands inside an arc says so instead.'],
@@ -9489,7 +9883,7 @@ const SET_DEFAULTS={
   panels:{left:true,right:true,swap:false},
 };
 const SET_TABS=[
-  {k:'view',t:'View'},{k:'measure',t:'Measuring'},{k:'labels',t:'Labels'},
+  {k:'view',t:'View'},{k:'tools',t:'Tools'},{k:'measure',t:'Measuring'},{k:'labels',t:'Labels'},
   {k:'est',t:'Estimating'},{k:'input',t:'Input'},{k:'files',t:'Files'},{k:'about',t:'About'}];
 let setTab='view';
 
@@ -9586,6 +9980,32 @@ function settingsHtml(){
     +setRow('Wire rate','Per foot of home-run wire. Leave at 0 and it shows as unpriced.',
       setNum('wireRate',P.wireRate||0,0,100,0.01,P.cur||'$'))
     +'</div>';
+  if(setTab==='tools'){
+    const groups=TOOL_GROUPS.filter(g2=>TOOLS.some(d=>d.g===g2));
+    let h='<div class="setgrp"><h4>On the toolbar</h4>'
+      +'<div class="setrow"><div class="lab"><b>What shows</b><span>Turning one off only takes it off the toolbar — its key still works and it can still go on a palette.</span></div>'
+      +'<div class="ctl"><button class="btn sm" data-set="toolsAll">Show every tool</button></div></div>';
+    groups.forEach(gname=>{
+      h+='<div class="setrow"><div class="lab"><b>'+esc(gname)+'</b></div><div class="ctl" style="flex-wrap:wrap;gap:4px;justify-content:flex-end">'
+        +toolOrder().filter(d=>d.g===gname).map(d=>'<label class="tchk'+(toolShown(d.k)?' on':'')+(d.core?' core':'')+'" title="'
+          +esc(d.t)+(d.core?' — always on the toolbar':'')+'">'
+          +'<input type="checkbox" data-tool-on="'+d.k+'"'+(toolShown(d.k)?' checked':'')
+          +(d.core?' disabled':'')+'>'+d.svg+'<span>'+esc(d.t.split(/[—·]/)[0].trim())+'</span></label>').join('')
+        +'</div></div>';
+    });
+    h+='</div><div class="setgrp"><h4>Pinned palettes</h4>'
+      +'<div class="setrow"><div class="lab"><b>Floating sets of tools</b><span>A palette sits over the drawing where you leave it and comes back with the job. Drag it by its bar.</span></div>'
+      +'<div class="ctl"><button class="btn sm pri" data-set="palNew">Pin a palette…</button></div></div>';
+    (P.pals||[]).forEach(p=>{
+      h+='<div class="setrow"><div class="lab"><b>'+esc(p.name||'Tools')+'</b><span>'
+        +((p.tools||[]).length?(p.tools||[]).map(k=>{const d=toolDef(k);return d?d.t.split(/[—·]/)[0].trim():k;}).join(', '):'nothing on it')
+        +'</span></div><div class="ctl">'
+        +'<button class="btn sm" data-set="palShow" data-pal="'+p.id+'">'+(p.open===false?'Pin it back':'Unpin')+'</button>'
+        +'<button class="btn sm" data-set="palEdit" data-pal="'+p.id+'">Edit…</button></div></div>';
+    });
+    if(!(P.pals||[]).length) h+='<div class="setrow"><div class="lab"><span>None yet.</span></div><div class="ctl"></div></div>';
+    return h+'</div>';
+  }
   if(setTab==='input') return '<div class="setgrp"><h4>Pointer</h4>'
     +setRow('Scroll wheel','Zoom at the cursor, or scroll the sheet.',
       setSel('scrollZoom',[{v:'1',t:'Zooms at the cursor'},{v:'0',t:'Scrolls the sheet'}],P.scrollZoom===false?'0':'1'))
@@ -9648,7 +10068,26 @@ function renderSettings(){
   $$('#setNav button').forEach(b=>b.onclick=()=>{ setTab=b.dataset.tab; renderSettings(); });
   const body=$('#setBody');
   body.innerHTML=settingsHtml();
+  /* the tools tab is buttons rather than inputs, so it is wired on its own */
+  $$('[data-tool-on]',body).forEach(el=>el.onchange=()=>{
+    P.hideTool=P.hideTool||{};
+    if(el.checked) delete P.hideTool[el.dataset.toolOn]; else P.hideTool[el.dataset.toolOn]=true;
+    renderToolbar(); renderSettings(); markDirty();
+  });
+  $$('button[data-set]',body).forEach(el=>{
+    const k=el.dataset.set;
+    if(k==='toolsAll') el.onclick=()=>{ P.hideTool={}; renderToolbar(); renderSettings(); markDirty();
+      toast('Every tool is on the toolbar'); };
+    if(k==='palNew') el.onclick=async()=>{ await editPal(null); renderSettings(); };
+    if(k==='palEdit') el.onclick=async()=>{
+      await editPal((P.pals||[]).find(p=>p.id===el.dataset.pal)); renderSettings(); };
+    if(k==='palShow') el.onclick=()=>{
+      const p=(P.pals||[]).find(x=>x.id===el.dataset.pal);
+      if(p){ p.open=p.open===false; renderPals(); renderSettings(); markDirty(); }
+    };
+  });
   $$('[data-set]',body).forEach(el=>{
+    if(el.tagName==='BUTTON') return;
     const ev=el.type==='range'?'input':(el.tagName==='SELECT'||el.type==='checkbox'?'change':'input');
     el.addEventListener(ev,()=>applySetting(el));
     if(el.type==='range') el.addEventListener('input',()=>{
@@ -9833,6 +10272,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   splitHalf,halveSeg,halvePath,halveArc,halveRun,
   segToArc,setBulge,shiftBulge,bulgeOf,bulgeGeom,bulgeFromDeg,bulgeFromRadius,bowSign,delPointFrom,
   bowGrip,hitBow,bowFromPoint,roundCorners,roundOne,finishDraft,
+  tools:TOOLS,toolGroups:TOOL_GROUPS,toolOrder,toolDef,toolShown,renderToolbar,renderPals,editPal,
+  ellOf,ellPts,angOf,radOf,tapThree,
   annPath,annPathSeg,segArcOf,segArcPts,hasBulge,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
@@ -9855,7 +10296,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
 (async()=>{
   probeInsets();
   addEventListener('orientationchange',()=>setTimeout(probeInsets,250));
-  await loadProject(); loadHist(); boot(); setTool('pan');
+  await loadProject(); loadHist(); renderToolbar(); renderPals(); boot(); setTool('pan');
   lockStart();
   setTimeout(checkForUpdate,4000);
   if(!PDF_OK){ toast('The PDF engine did not load — check vendor/pdf.min.js'); return; }

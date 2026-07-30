@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.42.0**
+**Version 1.43.0**
 
 ## What it does
 
@@ -184,6 +184,44 @@ red **REV** badge, warns in the Calculated panel, is searchable, and appears in 
 cut list, the workbook and a section of the printed report. Approving a run clears
 the flag, because approving *is* the re-measure the flag asked for. Runs on other
 sheets are set aside rather than reported clear.
+
+## Tools, turned on and off, and pinned
+
+Every tool is an entry in one registry, and the toolbar is rendered from it. That
+makes two things possible.
+
+**Settings › Tools** turns any tool off. It only comes off the toolbar: its key
+still works and it still appears in the palette picker, because hiding is about
+clutter, not capability. *Select* and *Calibrate* are core and cannot be hidden —
+and a project file that claims otherwise is corrected on load. **Show every tool**
+puts them all back.
+
+**Pinned palettes** are floating sets of the tools a particular job needs — the
+Tool Chest idea. Pin one, put any tools on it, drag it by its bar to wherever suits
+the drawing. Where it sits and what is on it live in the project, so it comes back
+with the job. Unpinning keeps it so it can be pinned back. A tool lights up on the
+toolbar and on every palette at once.
+
+However many tools are on, the toolbar stays **one row**: the tool strip yields
+space to the zoom and page controls and scrolls sideways inside itself, so those
+never move. On a tablet the whole row scrolls instead, so one swipe reaches
+everything.
+
+## Five more measurements and markups
+
+- **Ellipse (O)** — a round cove. Drag it out, ⇧ keeps it a circle, and it measures
+  the way round its edge (Ramanujan, good to a part in ten million), with the radius
+  or both axes and the area alongside. It carries a treatment like any other
+  measurement, so a circular cove orders properly.
+- **Angle (Y)** — click the corner, then a point down each leg. Reads the angle,
+  what the run turns through, both leg lengths, and the **mitre to cut on each
+  side**, which is half the angle.
+- **Radius (U)** — three points anywhere along a curve and it fits the circle
+  through them: radius, diameter, the arc between the outer two, the included angle
+  and the chord. Read a radius off a plan, then type it into a run's segment to match.
+- **Arrow** — drags tail to head, ⇧ for straight.
+- **Highlight** — a band that multiplies rather than covers, so what is under it
+  still reads.
 
 **Curved segments.** A cove that turns a corner on a radius is not two straight
 legs, and measuring it as a chord loses real feet.
