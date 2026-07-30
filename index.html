@@ -724,7 +724,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.24.0';
+const APP_VER='1.25.0';
 const APP_BUILD='2026-07-29';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -886,7 +886,17 @@ const DEF_FIX=[
  /* Static white strips. The number after the slash is watts per foot; the cut
     point and lumens per foot are as stated on each product page. */
  {id:'F_SW2415',name:'SW24/1.5 · static white',kind:'tape',volts:24,wft:1.5,cut:1,feed:0,lm:172,
-  sheet:QTL+'linear-led-strips-sw2415/',verified:false,note:'172 lm/ft at 3000K · 6 diodes per 1" cut point'},
+  maxLen:768,cct:3000,cri:98,
+  lmByCct:{2000:144,2200:149,2400:154,2700:163,3000:172,3500:179,4000:178},
+  variants:[{c:'DRY',ip:'IP20',maxLen:768,wid:0.32,hgt:0.06},
+            {c:'DMP',ip:'IP54',maxLen:768,wid:0.32,hgt:0.06},
+            {c:'WET',ip:'IP67',maxLen:360,wid:0.39,hgt:0.21,
+             lmByCct:{2000:123,2200:128,2400:131,2700:131,3000:141,3500:155,4000:161}}],
+  reels:[768,1200],
+  sheet:'https://www.qtl.lighting/Customer-Content/www/products/Files/SPEC_SHEET/QTL_SW24_1_5.pdf',
+  sheetRev:'05-05-26',verified:true,
+  note:'6 diodes per 1" cut point · 1"–768" in 1" increments (WET 360") · 172 lm/ft, 102 lm/W, CRI 98 at 3000K'
+    +' · reels 64 ft Class 2 and 100 ft · maximum run per feed not stated on the sheet'},
  {id:'F_SW2430',name:'SW24/3.0 · static white',kind:'tape',volts:24,wft:3.0,cut:1,feed:0,lm:300,
   sheet:QTL+'linear-led-strips-sw2430/',verified:false,note:'300 lm/ft at 3000K · 6 diodes per 1" cut point'},
  {id:'F_SW2440',name:'SW24/4.0 · static white',kind:'tape',volts:24,wft:4.0,cut:1,feed:0,lm:373,
@@ -1123,6 +1133,7 @@ function applyProject(d){
     t.feedOv=+t.feedOv>0?Math.round(+t.feedOv):0;
     t.cutLock=+t.cutLock>0?+t.cutLock:0;
     if(t.round!=='near'&&t.round!=='up'&&t.round!=='down') t.round='';
+    t.cct=+t.cct>0?Math.round(+t.cct):0;
     if(t.cutOpt!=='near'&&t.cutOpt!=='up'&&t.cutOpt!=='down') delete t.cutOpt;
     if(!(+t.cutLock>0)) delete t.cutOpt;
     t.detail=String(t.detail||'').toUpperCase();
@@ -1179,6 +1190,21 @@ function applyProject(d){
   if(P.base&&!Array.isArray(P.base.treat)) delete P.base;
   if(!NEST_SCOPES.some(x=>x.v===P.nestBy)) P.nestBy='job';
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
+  P.fix.forEach(f=>{
+    f.maxLen=Math.max(0,+f.maxLen||0);
+    f.cri=Math.max(0,+f.cri||0);
+    f.cct=Math.max(0,+f.cct||0);
+    if(f.lmByCct&&typeof f.lmByCct==='object'&&!Array.isArray(f.lmByCct)){
+      const clean={};
+      Object.keys(f.lmByCct).forEach(k=>{ const kk=+k, v=+f.lmByCct[k];
+        if(kk>=1600&&kk<=8000&&v>0) clean[kk]=v; });
+      if(Object.keys(clean).length) f.lmByCct=clean; else delete f.lmByCct;
+    }else delete f.lmByCct;
+    if(!Array.isArray(f.variants)) delete f.variants;
+    if(!Array.isArray(f.reels)) delete f.reels;
+    f.sheetRev=String(f.sheetRev||'').slice(0,16)||undefined;
+    if(!f.sheetRev) delete f.sheetRev;
+  });
   [['fix',['cost','lm']],['ch',['cost','clipCost','capCost','joinCost']],['psu',['cost']]].forEach(([k,fields])=>{
     P[k].forEach(o=>fields.forEach(f=>{ o[f]=Math.max(0,+o[f]||0); }));
   });
@@ -4534,6 +4560,10 @@ function calc(t){
   const joiners=Math.max(0,pieces-1), caps=stock>0?2:0;
   const tot={len:L*qty,cut:cut*qty,watts:watts*qty,feeds:feeds*qty,clips:clips*qty,pieces:pieces*qty,
     joiners:joiners*qty,caps:caps*qty,units:units*qty,chLen:L*qty};
+  /* lumens per foot depend on the colour temperature chosen, where the sheet
+     publishes a table for it */
+  const cct=+t.cct||+f.cct||3000;
+  const lmFt=(f.lmByCct&&f.lmByCct[cct])||+f.lm||0;
   const lf=clamp((+P.load||80)/100,.4,1), design=tot.watts/lf;
   const psuQty=ps.watts>0?Math.ceil(design/ps.watts-1e-9):0;
   const w=[];
@@ -4546,6 +4576,10 @@ function calc(t){
   if(L>0&&!feedKnown)
     w.push('No maximum run per feed on '+f.name+' — feed points cannot be checked. Read its cutsheet to set one.');
   if(L>0&&!(f.wft>0)) w.push('No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
+  /* a strip has a longest orderable run; past it the run has to be made of pieces */
+  if(+f.maxLen>0&&cut>+f.maxLen)
+    w.push('Longer than '+f.name+' is made: '+fmtLen(cut)+' against a '+fmtLen(f.maxLen)
+      +' maximum. Split it into separate runs, or ask about a reel.');
   orphan.forEach(kind=>w.push('The '+kind+' this treatment named is not in the library — using '
     +(kind==='LED product'?f.name:kind==='channel'?c.name:ps.name)+' instead.'));
   if(f.verified===false) w.push(f.name+' has not been checked against its cutsheet.');
@@ -4567,7 +4601,7 @@ function calc(t){
   if(clipBad) w.push('Clip spacing "'+t.clip+'" could not be read — using '+fmtLen(clipSp)+'.');
   if(clipClamped) w.push('Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
   if(L>0&&clipSp>L) w.push('Clip spacing is longer than the run — only the two end clips are counted.');
-  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,
+  return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,cct,lmFt,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w};
 }
 
@@ -4575,7 +4609,7 @@ function newTreat(annId){
   snap();
   const t={id:uid('t_'),tag:'L-'+pad(P.seq++),type:'',zone:'',name:'New treatment',room:'',docId:V.docId,page:V.page,
     annId:annId||null,manual:0,qty:1,feedOv:0,cutLock:0,fixId:P.fix[0].id,chId:P.ch[0].id,psuId:P.psu[1]?P.psu[1].id:P.psu[0].id,
-    round:'',clip:'',shop:'',detail:'',notes:''};
+    round:'',clip:'',shop:'',detail:'',cct:0,notes:''};
   P.treat.push(t); markDirty(); return t;
 }
 function treatFromAnn(a){
@@ -4657,7 +4691,15 @@ function renderTreatments(){
         +'<div class="f"><label>'+(r.fixed?'Fixtures per run':'Cuts per run')+'</label>'
           +'<input type="text" value="'+esc(r.inc>0?String(r.units):'—')+'" disabled></div>'
       +'</div>'
-      +'<div class="f" style="margin-top:8px"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
+      +'<div class="grid2" style="margin-top:8px">'
+        +'<div class="f"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
+        +'<div class="f"><label>Colour temperature</label>'
+          +(r.f.lmByCct
+            ? '<select data-t="cct">'+Object.keys(r.f.lmByCct).map(k=>'<option value="'+k+'"'
+                +(+k===r.cct?' selected':'')+'>'+k+'K · '+r.f.lmByCct[k]+' lm/ft</option>').join('')+'</select>'
+            : '<input type="number" data-t="cct" min="1600" max="8000" step="100" value="'+r.cct+'">')
+        +'</div>'
+      +'</div>'
       +'<div class="grid2" style="margin-top:8px">'
         +'<div class="f"><label>Channel / mounting</label><select data-t="chId">'+chOpts+'</select></div>'
         +'<div class="f"><label>Clip spacing</label><input type="text" data-t="clip" value="'+(t.clip||'')+'" placeholder="'+esc(fmtLen(r.c.clip))+'"></div>'
@@ -4705,6 +4747,7 @@ function renderTreatments(){
         if(k==='len'){ const v=parseLen(inp.value); t.manual=isFinite(v)?v:0; }
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
+        else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
         else if(k==='type'||k==='zone'||k==='detail'){   /* type, zone and detail refs are capitals */
           const up=inp.value.toUpperCase();
           if(inp.value!==up){ const c=inp.selectionStart; inp.value=up; try{inp.setSelectionRange(c,c)}catch(_){}}
@@ -4823,7 +4866,8 @@ function outHtml(r,t){
     ['Total load',r.tot.watts.toFixed(1)+' W',false],
     ['Feed points',(r.feedKnown||r.feedSet)?(r.tot.feeds+(r.qty>1?' ('+r.feeds+'/run)':'')+(r.feedSet?' · set':' · auto'))
       :'unknown — no feed limit on file',false],
-    ['Light output',r.f.lm>0?Math.round(r.f.lm*r.tot.cut/12).toLocaleString()+' lm total':'—',false],
+    ['Light output',r.lmFt>0?(Math.round(r.lmFt*r.tot.cut/12).toLocaleString()+' lm total  ·  '
+      +r.lmFt+' lm/ft'+(r.cct?' at '+r.cct+'K':'')):'—',false],
     ['Channel length',r.stock||r.c.clip?fmtRun(r.tot.chLen)+' cut to length':'—',false],
     ['Channel pieces',r.stock?r.tot.pieces+' × '+fmtLen(r.stock)+' stock':'—',false],
     ['Off-cut per run',r.stock?(r.remainder>0.05?fmtLen(r.stock-r.remainder)+' waste':'none'):'—',false],
@@ -4972,6 +5016,31 @@ function readSpecs(text){
   else if((m=t.match(/(\d+)\s*diodes?\s*per\s*(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)/i))) out.cut=parseFloat(m[2]);
   else if((m=t.match(/cut(?:table)?\D{0,20}(\d+(?:\.\d+)?)\s*mm/i))) out.cut=num(m)/MM;
   if((m=t.match(/max(?:imum)?\s*(?:run|length|feed)\D{0,24}?(\d+(?:\.\d+)?)\s*(?:'|ft|feet)/i))) out.feed=num(m)*12;
+  /* "DRY: 1"-768" in 1" increments" gives both the cut point and the longest run */
+  if((m=t.match(/1"\s*[-–]\s*(\d{2,4})"\s*in\s*(\d+(?:\.\d+)?)"\s*increments/i))){
+    out.maxLen=parseFloat(m[1]);
+    if(out.cut==null) out.cut=parseFloat(m[2]);
+  }
+  if((m=t.match(/CRI\s*Ra?\D{0,12}(\d{2})/i))) out.cri=num(m);
+  /* the sheet's own revision, so a newer one can be spotted */
+  if((m=t.match(/Rev[-\s]?(\d{1,2}-\d{1,2}-\d{2,4})/i))) out.rev=m[1];
+  /* A CCT / lumens-per-foot table, where the sheet carries it as text rather than
+     as a picture. This has to be anchored to the start of a line: a spec sheet
+     also lists CCT *order codes* as "30 3000K", and reading across that pairs
+     1800K with the code 20 and produces a table of nonsense. Rows are matched on
+     the original text, before whitespace is flattened. */
+  const lmByCct={};
+  String(text||'').split(/[\r\n]+/).forEach(line=>{
+    const m2=/^\s*(\d{4})\s*K\b\s+(\d{2,4})(?:\s|$)/.exec(line.replace(/\u2033|\u201d/g,'"'));
+    if(!m2) return;
+    const k=+m2[1], v=+m2[2];
+    /* a strip below 50 lm/ft is not a thing QTL publishes; codes are two digits */
+    if(k>=1600&&k<=8000&&v>=50&&v<=3000) lmByCct[k]=v;
+  });
+  if(Object.keys(lmByCct).length>=3){
+    out.lmByCct=lmByCct;
+    if(out.lm==null&&lmByCct[3000]) out.lm=lmByCct[3000];
+  }
   if((m=t.match(/(?:stock|standard|supplied|available)\s*(?:in\s*)?lengths?\D{0,24}?(\d+(?:\.\d+)?)\s*(?:'|ft|feet)/i))) out.stock=num(m)*12;
   else if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(?:stock|lengths?)/i))) out.stock=num(m)*12;
   if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:W|watts?)\b(?!\s*(?:\/|per))/i))) out.watts=num(m);
@@ -4981,7 +5050,8 @@ function readSpecs(text){
 /* the fields a given kind of item cares about */
 const SPEC_FIELDS={
   fix:[['volts','Volts'],['wft','Watts per foot'],['cut','Cut increment (in)'],
-       ['feed','Max run per feed (in)'],['lm','Lumens per foot']],
+       ['feed','Max run per feed (in)'],['lm','Lumens per foot'],
+       ['maxLen','Longest single run (in)'],['cri','CRI']],
   ch:[['stock','Stock length (in)'],['clip','Clip spacing (in)']],
   psu:[['volts','Volts'],['watts','Rated watts'],['c2','Class 2']],
 };
@@ -5001,6 +5071,12 @@ async function readSpecsInto(kind,o,after){
   }
   if(!text.trim()){ toast('Nothing to read'); return; }
   const found=readSpecs(text);
+  /* the sheet says which revision it is, so say whether it is the one on file */
+  if(found.rev){
+    if(o.sheetRev&&o.sheetRev!==found.rev)
+      toast('That sheet is Rev-'+found.rev+'; this item was read from Rev-'+o.sheetRev);
+    else if(!o.sheetRev) toast('That sheet is Rev-'+found.rev);
+  }
   const wanted=SPEC_FIELDS[kind]||[];
   const hits=wanted.filter(([k])=>found[k]!=null&&found[k]!==''&&!(k==='c2'&&!found.c2));
   if(!hits.length){ toast('No specs recognised in that text'); return; }
@@ -5012,6 +5088,8 @@ async function readSpecsInto(kind,o,after){
   if(!conf) return;
   snap('Cutsheet specs');
   hits.forEach(([k])=>{ o[k]=k==='c2'?!!conf[k]:(+conf[k]||0); });
+  if(found.lmByCct) o.lmByCct=found.lmByCct;
+  if(found.rev) o.sheetRev=found.rev;
   o.verified=true; o.checked=new Date().toISOString();
   renderLib(); renderTreatments(); renderBom(); stats(); markDirty();
   if(after) after();
@@ -5091,7 +5169,9 @@ function renderLib(){
   const kindLbl={tape:'Tape',fixture:'Fixture',neon:'Neon'};
   order(P.fix).forEach(f=>F.appendChild(libRow(f.name,
     (kindLbl[f.kind||'tape']||'LED')+' · '+f.volts+'V · '+(f.wft?f.wft+' W/ft':'W/ft not set')
-    +(f.lm?' · '+f.lm+' lm/ft':'')
+    +(f.lm?' · '+f.lm+' lm/ft'+(f.lmByCct?' at 3000K, '+Object.keys(f.lmByCct).length+' CCTs':''):'')
+    +(f.maxLen>0?' · runs to '+fmtRun(f.maxLen):'')
+    +(f.sheetRev?' · Rev-'+f.sheetRev:'')
     +' · '+(f.cut>0?('cuts in '+fmtRun(f.cut)+(f.kind==='fixture'?' fixed lengths':' increments')):'cut point not set')
     +' · '+(f.feed>0?'feed max '+fmtRun(f.feed):'feed limit not set')
     +(rateOf(f)?' · <b style="color:var(--amber)">'+esc(money(f.cost))+(f.kind==='fixture'?' ea':'/ft')+'</b>':'')
