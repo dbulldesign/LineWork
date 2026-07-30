@@ -874,7 +874,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.57.1';
+const APP_VER='1.58.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1104,15 +1104,28 @@ const FEEDS=[
   {v:'CLS',t:'CLS — closed end, no feed',feed:false},
   {v:'CON6',t:'CON6 — connector, 6"',feed:true},
   {v:'CON24',t:'CON24 — connector, 24"',feed:true},
+  /* SW24/1.5 codes a closed end CLS; ANYBEND codes the same thing N/A. Which one a
+     product uses is on its own sheet, so it is read from there rather than assumed
+     — and this entry exists so the product's own code survives the filter below. */
+  {v:'N/A',t:'N/A — closed end, no feed',feed:false},
 ];
 const feedLabel=v=>(FEEDS.find(f=>f.v===v)||{t:v}).t;
 /* A run is ordered with a connector at each end, and the order code carries
    both: what feeds it, and what closes or continues the far end. A closed end
    cannot be the feed, so it is only offered as the outgoing one. */
 const feedIsFeed=v=>{ const f=FEEDS.find(x=>x.v===v); return !!(f&&f.feed); };
+/* the code this product closes an end with, where its sheet states one */
+const closedOf=f=>{
+  const c=f&&f.closedCode?String(f.closedCode):'';
+  if(c) return c;
+  const list=(f&&f.feeds)||[];
+  return list.includes('CLS')?'CLS':'';
+};
 const feedTerms=kind=>kind==='fixture'?{in:'Lead in',out:'Lead out'}
   :{in:'Connector in',out:'Connector out'};
 const feedsFor=(f,end)=>{ const list=((f&&f.feeds)||[]).filter(v=>FEEDS.some(x=>x.v===v));
+  const cl=closedOf(f);
+  if(cl&&!list.includes(cl)&&FEEDS.some(x=>x.v===cl)) list.push(cl);
   return end==='in'?list.filter(feedIsFeed):list; };
 /* ---- order codes ----
    A QTL part number is a fixed run of positions, and the sheet prints the
@@ -1219,14 +1232,14 @@ const DEF_FIX=[
 const DEF_CH=[
  /* QTL aluminium extrusions. Stock lengths are not stated on the catalogue pages,
     so they are left unset — the BOM says so rather than guessing. */
- {id:'C_THIN',name:'THIN · thin extrusion',stock:0,clip:0,sheet:QTL+'extrusions-thin/',verified:false,
+ {id:'C_THIN',name:'THIN · thin extrusion',stock:0,clip:0,clipsInc:true,sheet:QTL+'extrusions-thin/',verified:false,
   note:'Stock length and clip spacing from the cutsheet'},
- {id:'C_LATO',name:'LATO · shallow surface or recessed',stock:0,clip:0,sheet:QTL+'extrusions-lato/',verified:false,
+ {id:'C_LATO',name:'LATO · shallow surface or recessed',stock:0,clip:0,clipsInc:true,sheet:QTL+'extrusions-lato/',verified:false,
   note:'Shallow flanged profile'},
- {id:'C_TORQ',name:'TORQ · surface or recessed',stock:0,clip:0,sheet:QTL+'extrusions-torq/',verified:false,note:''},
- {id:'C_EMBD',name:'EMBD · flanged recessed',stock:0,clip:0,sheet:QTL+'extrusions-embd/',verified:false,
+ {id:'C_TORQ',name:'TORQ · surface or recessed',stock:0,clip:0,clipsInc:true,sheet:QTL+'extrusions-torq/',verified:false,note:''},
+ {id:'C_EMBD',name:'EMBD · flanged recessed',stock:0,clip:0,clipsInc:true,sheet:QTL+'extrusions-embd/',verified:false,
   note:'Mud-in flange'},
- {id:'C_WIDE',name:'WIDE · wide profile',stock:0,clip:0,sheet:QTL+'extrusions-wide/',verified:false,note:''},
+ {id:'C_WIDE',name:'WIDE · wide profile',stock:0,clip:0,clipsInc:true,sheet:QTL+'extrusions-wide/',verified:false,note:''},
  /* A placeholder so a fresh project can produce a cut list, nesting and clip
     counts before anyone has read a cutsheet. It says what it is. */
  {id:'C_GEN8',name:'Generic extrusion · 8 ft stock · PLACEHOLDER',stock:96,clip:24,sheet:'',verified:false,
@@ -1756,6 +1769,8 @@ function applyProject(d){
     if(!f.ccts.length) delete f.ccts;
     f.feeds=Array.isArray(f.feeds)?f.feeds.filter(v=>FEEDS.some(x=>x.v===v)):[];
     if(!f.feeds.length) delete f.feeds;
+    /* a closed-end code the app does not know is not a code */
+    if(!(f.closedCode&&FEEDS.some(x=>x.v===f.closedCode&&!x.feed))) delete f.closedCode;
     if(!Array.isArray(f.variants)) delete f.variants;
     /* an order-code format is only useful if it is a string with tokens in it */
     if(f.code&&typeof f.code==='object'&&!Array.isArray(f.code)){
@@ -1784,6 +1799,10 @@ function applyProject(d){
   }));
   /* a feed limit of 1e9 was the old "unknown" — make it say so */
   P.fix.forEach(f=>{ if(+f.feed>=1e8) f.feed=0; });
+  P.ch.forEach(c=>{ c.clipsInc=!!c.clipsInc;
+    c.madeTo=Math.max(0,+c.madeTo||0); c.chCut=Math.max(0,+c.chCut||0); });
+  /* how tape is bought: to length, or by the reel it comes on */
+  if(P.buyBy!=='reel') P.buyBy='cut';
   /* a treatment naming a product that is not in this file gets the first one */
   const fixIds=new Set(P.fix.map(x=>x.id)),chIds=new Set(P.ch.map(x=>x.id)),psuIds=new Set(P.psu.map(x=>x.id));
   P.treat.forEach(t=>{
@@ -6876,6 +6895,7 @@ const WARN_KINDS=[
   {c:'class2',t:'Class 2 output over 96 W'},
   {c:'nostock',t:'No stock length on the channel'},
   {c:'undermin',t:'Run shorter than the minimum the fixture is made in'},
+  {c:'overreel',t:'Run longer than the reel it would be cut from'},
   {c:'psvolt',t:'Supply voltage does not match the product'},
   {c:'psfit',t:'Supply does not list this product'},
   {c:'chfit',t:'Product and channel are not listed as fitting each other'},
@@ -7501,11 +7521,20 @@ function calc(t){
   const madeTo=+c.madeTo||0;
   const perPiece=madeTo>0?madeTo:stock;
   const clips=clipKnown&&(perPiece>0||c.clip)? Math.max(2,Math.ceil(L/clipSp+1e-9)+1):0;
+  /* QTL supplies clips with the extrusion, and extras are ordered separately. So the
+     clips a run needs at the product's own spacing come free; only a tighter spacing
+     than the profile provides has to be bought. Counting all of them as a purchase
+     was charging twice for the ones already in the box. */
+  const clipsInc=!!c.clipsInc;
+  const clipProv=(clipsInc&&+c.clip>0&&clips)?Math.max(2,Math.ceil(L/(+c.clip)+1e-9)+1):0;
+  const clipFree=Math.min(clips,clipProv);
+  const clipBuy=Math.max(0,clips-clipFree);
   const pieces=perPiece>0?Math.ceil(L/perPiece-1e-6):0;
   const full=stock>0?Math.floor(L/stock+1e-9):0;
   const remainder=stock>0?Math.max(0,L-full*stock):0;
   const joiners=Math.max(0,pieces-1), caps=perPiece>0?2:0;
-  const tot={len:L*qty,cut:cut*qty,watts:watts*qty,feeds:feeds*qty,clips:clips*qty,pieces:pieces*qty,
+  const tot={len:L*qty,cut:cut*qty,watts:watts*qty,feeds:feeds*qty,clips:clips*qty,
+    clipFree:clipFree*qty,clipBuy:clipBuy*qty,pieces:pieces*qty,
     joiners:joiners*qty,caps:caps*qty,units:units*qty,chLen:L*qty};
   /* lumens per foot depend on the colour temperature chosen, where the sheet
      publishes a table for it */
@@ -7562,6 +7591,11 @@ function calc(t){
   if(L>0&&!feedKnown)
     warn('nomax','No maximum length on '+f.name+' — that is also the run one feed will carry, so feed points cannot be checked. Read its cutsheet to set it.');
   if(L>0&&!(f.wft>0)) warn('nowft','No watts per foot on '+f.name+' — the load and the supply count are meaningless until it is set.');
+  if(buyReels()&&reelable(f)){
+    const reel=reelsOf(f)[reelsOf(f).length-1];
+    if(cut>reel+1e-6) warn('overreel',fmtRun(cut)+' is longer than the '+fmtRun(reel)
+      +' reel '+f.name+' is wound on — it cannot be cut from one.');
+  }
   if(shortPc) warn('undermin',fmtRun(cut)+' is shorter than the '+fmtRun(minLen)
     +' minimum '+f.name+' is made in — it cannot be ordered at that length.');
   /* what the sheets say fits what. Silence where nothing is stated: an incomplete
@@ -7635,7 +7669,8 @@ function calc(t){
     fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,placed,
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     dim,psDims,dimKnown,dimBad,
-    clips,clipSp,stock,madeTo,perPiece,chCut:+c.chCut||0,minLen,shortPc,sp:specOf(t.specId),fit,
+    clips,clipSp,clipsInc,clipFree,clipBuy,stock,madeTo,perPiece,chCut:+c.chCut||0,
+    minLen,shortPc,sp:specOf(t.specId),fit,
     pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w,warnAll:wAll};
 }
 
@@ -8642,8 +8677,14 @@ function readSpecs(text,kind){
       /* only worth carrying where a code is not simply the first two digits */
       if(out.ccts.some(k=>codes[k]!==String(k).slice(0,2))) out.cctCodes=codes;
     }
-    /* the connector/wire column */
-    const feeds=FEEDS.map(f=>f.v).filter(v=>new RegExp('\\b'+v.replace('/','\\/')+'\\b').test(t));
+    /* The connector column. N/A is deliberately not scanned for here: it appears on
+       every sheet as the wire colour and wire type for a barrel, so looking for it
+       generally would put a closed end on products that do not offer one. */
+    const feeds=FEEDS.map(f=>f.v).filter(v=>v!=='N/A'&&new RegExp('\\b'+v+'\\b').test(t));
+    /* which code this product closes an end with, from the words next to it */
+    const cm=/\b(CLS|N\/A)\s*(?:\u2014|-|:)?\s*Closed\s*End/i.exec(t);
+    if(cm){ out.closedCode=cm[1].toUpperCase();
+      if(!feeds.includes(out.closedCode)) feeds.push(out.closedCode); }
     if(feeds.length) out.feeds=feeds;
     /* reels, which are a purchase length and not a run length */
     const reels=[];
@@ -8684,6 +8725,9 @@ function readSpecs(text,kind){
     else if((m=t.match(/clips?\D{0,28}?(\d+(?:\.\d+)?)\s*(?:"|in\b|inch)\s*(?:o\.?c\.?|on\s*cent(?:re|er)s?|apart)/i))) out.clip=num(m);
     /* "One MG provided per foot" is a clip every 12", said the other way round */
     else if(/\bone\s+[A-Z0-9-]{1,8}\s+provided\s+per\s+foot\b/i.test(t)) out.clip=12;
+    /* QTL supplies clips with the extrusion and sells extras separately, and the
+       sheets say so in the mounting section */
+    if(/clips?\s+(?:are\s+)?provided|provided\s+per\s+foot|provided\s+with\s+each/i.test(t)) out.clipsInc=true;
     if((m=t.match(/(?:stock|standard|supplied|available)\s*(?:in\s*)?lengths?\D{0,24}?(\d+(?:\.\d+)?)\s*(?:'|ft|feet)/i))) out.stock=num(m)*12;
     else if((m=t.match(/(\d+(?:\.\d+)?)\s*(?:'|ft|feet)\s*(?:stock|lengths?)/i))) out.stock=num(m)*12;
     /* Made to length: "1" increments from 1" - 98.43"". An extrusion ordered this
@@ -8722,12 +8766,14 @@ function readSpecs(text,kind){
   return out;
 }
 /* the fields a given kind of item cares about */
+const SPEC_BOOL=new Set(['c2','clipsInc']);
 const SPEC_FIELDS={
   fix:[['volts','Volts'],['wft','Watts per foot'],['cut','Cut increment (in)'],
        ['maxLen','Maximum length, and run per feed (in)'],['minLen','Minimum length made (in)'],
        ['lm','Lumens per foot'],['cri','CRI']],
   ch:[['stock','Stock length (in)'],['clip','Clip spacing (in)'],
-      ['madeTo','Made to length, longest piece (in)'],['chCut','Length increment (in)']],
+      ['madeTo','Made to length, longest piece (in)'],['chCut','Length increment (in)'],
+      ['clipsInc','Clips come with it']],
   psu:[['volts','Volts'],['watts','Rated watts'],['c2','Class 2']],
 };
 async function readSpecsInto(kind,o,after){
@@ -8753,14 +8799,14 @@ async function readSpecsInto(kind,o,after){
     else if(!o.sheetRev) toast('That sheet is Rev-'+found.rev);
   }
   const wanted=SPEC_FIELDS[kind]||[];
-  const hits=wanted.filter(([k])=>found[k]!=null&&found[k]!==''&&!(k==='c2'&&!found.c2));
+  const hits=wanted.filter(([k])=>found[k]!=null&&found[k]!==''&&!(SPEC_BOOL.has(k)&&!found[k]));
   /* the lists are applied wholesale rather than field by field, so say so */
   const extras=[found.ccts&&kind==='fix'?found.ccts.length+' colour temperatures':'',
     found.feeds&&kind==='fix'?found.feeds.length+' connector options':'',
     found.lmByCct?'a lumens table':''].filter(Boolean);
   if(!hits.length){ toast('No specs recognised in that text'); return; }
-  const fields=hits.map(([k,label])=>k==='c2'
-    ? {k,type:'check',cap:'Class 2 output',val:!!found[k]}
+  const fields=hits.map(([k,label])=>SPEC_BOOL.has(k)
+    ? {k,type:'check',cap:k==='c2'?'Class 2 output':label,val:!!found[k]}
     : {k,type:'num',label:label+'  —  now '+(o[k]||o[k]===0?String(o[k]):'unset'),val:found[k],step:0.01});
   const conf=await dlg({title:'Found in that cutsheet',fields,ok:'Apply',
     note:(extras.length?'Also found: '+extras.join(', ')+'. ':'')
@@ -8783,15 +8829,16 @@ function writeSpecs(kind,o,found,vals,overwrite){
   const has=k=>o[k]!=null&&o[k]!==''&&o[k]!==0&&o[k]!==false;
   (SPEC_FIELDS[kind]||[]).forEach(([k])=>{
     const v=(vals&&vals[k]!=null)?vals[k]:found[k];
-    if(v==null||v===''||(k==='c2'&&!v)) return;
+    if(v==null||v===''||(SPEC_BOOL.has(k)&&!v)) return;
     if(has(k)&&!overwrite) return;
-    o[k]=k==='c2'?!!v:(+v||0);
+    o[k]=SPEC_BOOL.has(k)?!!v:(+v||0);
     wrote.push(k);
   });
   if(found.maxLen>0&&(overwrite||!o.feed)) o.feed=found.maxLen;   /* the same limit under its old name */
   if(kind==='fix'){
     if(found.ccts&&(overwrite||!(o.ccts&&o.ccts.length))){ o.ccts=found.ccts.slice(); wrote.push('ccts'); }
     if(found.feeds&&(overwrite||!(o.feeds&&o.feeds.length))){ o.feeds=found.feeds.slice(); wrote.push('feeds'); }
+    if(found.closedCode&&(overwrite||!o.closedCode)){ o.closedCode=found.closedCode; wrote.push('closedCode'); }
     if(found.lmByCct&&(overwrite||!o.lmByCct)){ o.lmByCct=Object.assign({},found.lmByCct); wrote.push('lmByCct'); }
   }
   if(found.rev) o.sheetRev=found.rev;
@@ -8861,9 +8908,9 @@ function wattOptions(kind,found){
 /* the parse in one line, so a wrong match is obvious before it is applied */
 function foundSummary(kind,found){
   const bits=(SPEC_FIELDS[kind]||[])
-    .filter(([k])=>found[k]!=null&&found[k]!==''&&!(k==='c2'&&!found.c2))
+    .filter(([k])=>found[k]!=null&&found[k]!==''&&!(SPEC_BOOL.has(k)&&!found[k]))
     .map(([k,l])=>l.replace(/\s*\(in\)$/,'').replace(/, and run per feed/,'')
-      +' '+(k==='c2'?'yes':found[k]));
+      +' '+(SPEC_BOOL.has(k)?'yes':found[k]));
   if(found.ccts) bits.push(found.ccts.length+' CCTs');
   if(found.feeds) bits.push(found.feeds.length+' connectors');
   if(found.lmByCct) bits.push('lumens table');
@@ -9094,7 +9141,8 @@ function renderLib(){
     +(f.lm?' · '+f.lm+' lm/ft at 3000K':'')
     +(codeFmtOf(f)?' · order code '+esc((f.code&&f.code.sample)||codeFmtOf(f)):' · no order-code format')
     +(varList(f).length?' · '+varList(f).map(v=>v.c+(v.ip?'/'+v.ip:'')).join(', '):'')
-    +(f.feeds&&f.feeds.length?' · connectors '+f.feeds.join('/')+' either end':'')
+    +(f.feeds&&f.feeds.length?' · connectors '+f.feeds.join('/')+' either end'
+      +(closedOf(f)?' · closed end '+closedOf(f):''):'')
     +(f.sheetRev?' · Rev-'+f.sheetRev:'')
     +(rateOf(f)?' · <b style="color:var(--amber)">'+esc(money(f.cost))+(f.kind==='fixture'?' ea':'/ft')+'</b>':'')
     +usedBy('fixId',f.id),
@@ -9267,7 +9315,8 @@ async function editCh(c){
     {k:'name',label:'Channel name',val:c.name,ph:'Recessed extrusion · 2 m'},
     {k:'r1',type:'row'},
     {k:'stock',label:'Stock length bought',val:fmtLen(c.stock),row:'r1',hint:unitHint()},
-    {k:'clip',label:'Clip spacing o.c.',val:fmtLen(c.clip),row:'r1'},
+    {k:'clip',label:'Clip spacing o.c.',val:fmtLen(c.clip),row:'r1',
+      hint:'What the extrusion itself provides.'},
     {k:'r1b',type:'row'},
     {k:'madeTo',label:'Made to length — longest piece',val:fmtLen(c.madeTo||0),row:'r1b',
       hint:'Leave at 0 for bar stock you cut from.'},
@@ -9278,6 +9327,8 @@ async function editCh(c){
     {k:'r3',type:'row'},
     {k:'capCost',type:'num',label:'Rate per end cap',val:c.capCost||0,step:0.01,row:'r3'},
     {k:'joinCost',type:'num',label:'Rate per splice plate',val:c.joinCost||0,step:0.01,row:'r3'},
+    {k:'clipsInc',type:'check',cap:'Clips come with the extrusion — only closer spacing is bought',
+      val:c.clipsInc!==false&&!!c.clipsInc},
     {k:'note',label:'Note',val:c.note}
   ].concat(sheetFields(c)),
     note:'Channel is always cut to length on site — the stock length only says how it is bought, it never rounds the run. '
@@ -9285,7 +9336,7 @@ async function editCh(c){
       +'and the increment, and each piece is ordered at the length wanted.'});
   if(!r) return;
   Object.assign(c,{name:r.name||'Unnamed',stock:parseLen(r.stock)||0,clip:parseLen(r.clip)||0,
-    madeTo:parseLen(r.madeTo)||0,chCut:parseLen(r.chCut)||0,
+    madeTo:parseLen(r.madeTo)||0,chCut:parseLen(r.chCut)||0,clipsInc:!!r.clipsInc,
     cost:Math.max(0,+r.cost||0),clipCost:Math.max(0,+r.clipCost||0),
     capCost:Math.max(0,+r.capCost||0),joinCost:Math.max(0,+r.joinCost||0),note:r.note,
     sheet:String(r.sheet||'').trim(),verified:!!r.verified});
@@ -9347,7 +9398,7 @@ function pieceData(){
           /* the code is per piece because the length is one of its positions */
           const oc=orderCode(r.f,r.codeParts,len);
           rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
-            item:r.f.name,len,
+            item:r.f.name,fixId:r.f.id,len,
             note:cuts.length>1?('piece '+(i+1)+' of '+cuts.length+' — spliced on the drawing')
               :(r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length'),
             locked:r.locked,chId:null,detail:t.detail||'',code:oc.code,codeMiss:oc.miss});
@@ -9411,6 +9462,47 @@ function nestPieces(pieces,stock,minOff){
   });
   return bins;
 }
+/* ---- reels ----
+   A cuttable tape is sold two ways: to length, or on the reel it is wound on —
+   SW24/1.5 comes on 64 ft (Class 2) and 100 ft reels. Which you buy is a purchase
+   decision for the job, not a property of the product, so it is a setting.
+
+   Buying by the reel is the same problem as nesting off-cuts into bar stock: every
+   run is cut out of a continuous length, so the pieces are nested into reels and the
+   answer is how many reels and what is left on the last one. Nothing here is a
+   guess — a product whose sheet lists no reels is never reeled, and a piece longer
+   than the longest reel is reported rather than quietly split. */
+const BUY_BY=[{v:'cut',t:'Ordered to length'},{v:'reel',t:'By the reel, where it comes on one'}];
+const reelsOf=f=>{ const l=(f&&f.reels);
+  return Array.isArray(l)?l.map(Number).filter(x=>x>0).sort((a,b)=>a-b):[]; };
+/* only a cuttable tape comes on a reel; a made-to-length fixture does not */
+const reelable=f=>!!f&&(f.kind||'tape')!=='fixture'&&reelsOf(f).length>0;
+const buyReels=()=>P.buyBy==='reel';
+function reelPlan(){
+  if(!buyReels()) return [];
+  const by={};
+  pieceData().filter(r=>r.fixId&&r.kind!=='channel').forEach(r=>{
+    const f=P.fix.find(x=>x.id===r.fixId);
+    if(!reelable(f)) return;
+    by[f.id]=by[f.id]||{id:f.id,name:f.name,reels:reelsOf(f),pieces:[]};
+    by[f.id].pieces.push(r.len);
+  });
+  const minOff=Math.max(0,+P.minOff||0);
+  return Object.values(by).map(g=>{
+    const reel=g.reels[g.reels.length-1];          /* the longest it is wound on */
+    const over=g.pieces.filter(p=>p>reel+1e-6);
+    const fit=g.pieces.filter(p=>p<=reel+1e-6);
+    const bins=nestPieces(fit,reel,minOff);
+    const used=fit.reduce((a,b)=>a+b,0), bought=bins.length*reel;
+    /* every reel has a remainder, not just the last one, so the total left over is
+       the honest figure — and the longest single remainder is the one that could
+       actually be used on something else */
+    const left=bins.reduce((a,b)=>a+b.left,0);
+    const bestOff=bins.reduce((m,b)=>Math.max(m,b.left),0);
+    return {id:g.id,name:g.name,reel,reels:g.reels,n:bins.length,bins,used,bought,
+      left,bestOff,over,yield:bought?used/bought:0,waste:bought-used};
+  }).sort((a,b)=>String(a.name).localeCompare(String(b.name)));
+}
 /* Nesting has always run job-wide, across every treatment sharing a channel.
    Some shops cut per floor or per treatment instead, so the scope is a choice —
    and the yield report now separates an off-cut worth keeping from scrap. */
@@ -9463,7 +9555,9 @@ function bomAgg(){
     if(r.stock>0){ const kc=r.c.id; chn[kc]=chn[kc]||{id:kc,n:r.c.name,pc:0,ft:0,stock:r.stock}; chn[kc].pc+=r.tot.pieces; chn[kc].ft+=r.tot.chLen/12;
       cap[kc]=cap[kc]||{id:kc,n:r.c.name,q:0}; cap[kc].q+=r.tot.caps;
       join[kc]=join[kc]||{id:kc,n:r.c.name,q:0}; join[kc].q+=r.tot.joiners; }
-    if(r.clips){ const kc=r.c.id; clip[kc]=clip[kc]||{id:kc,n:r.c.name,q:0}; clip[kc].q+=r.tot.clips; }
+    if(r.clips){ const kc=r.c.id;
+      clip[kc]=clip[kc]||{id:kc,n:r.c.name,q:0,free:0,buy:0,inc:r.clipsInc};
+      clip[kc].q+=r.tot.clips; clip[kc].free+=r.tot.clipFree; clip[kc].buy+=r.tot.clipBuy; }
     if(r.psuQty){ const kp=r.ps.id; pw[kp]=pw[kp]||{id:kp,n:r.ps.name,q:0,w:0}; pw[kp].q+=r.psuQty; pw[kp].w+=r.tot.watts; }
   });
   return {led,chn,clip,cap,join,pw};
@@ -9472,9 +9566,23 @@ function bomData(){
   const waste=1+clamp((+P.waste||0)/100,0,.5);
   const {led,chn,clip,cap,join,pw}=bomAgg();
   const rows=[];
-  Object.values(led).forEach(v=>rows.push(['LED',v.n,P.units==='metric'?'m':'ft',
-    P.units==='metric'?(v.ft*0.3048*waste).toFixed(2):(v.ft*waste).toFixed(2),
-    v.runs+(v.runs===1?' run · ':' runs · ')+v.w.toFixed(0)+' W'+(waste>1?' · incl '+P.waste+'% waste':'')]));
+  const rp={}; reelPlan().forEach(x=>{ rp[x.id]=x; });
+  Object.values(led).forEach(v=>{
+    const need=P.units==='metric'?(v.ft*0.3048*waste).toFixed(2):(v.ft*waste).toFixed(2);
+    const note=v.runs+(v.runs===1?' run · ':' runs · ')+v.w.toFixed(0)+' W'
+      +(waste>1?' · incl '+P.waste+'% waste':'');
+    const r=rp[v.id];
+    if(r&&r.n){
+      rows.push(['LED',v.n+' — reels','ea',r.n,
+        'bought on '+fmtRun(r.reel)+' reels · '+fmtRun(r.used)+' cut from '+fmtRun(r.bought)
+        +' · '+fmtRun(r.left)+' left over'+(r.n>1&&r.bestOff>0?', longest piece '+fmtRun(r.bestOff):'')
+        +(r.over.length?' · '+r.over.length+' run'+(r.over.length===1?'':'s')
+          +' longer than a reel, not covered by these':'')]);
+      rows.push(['LED',v.n,P.units==='metric'?'m':'ft',need,note
+        +(r.over.length?' · the reels above cover all but the runs too long for one'
+          :' · cut from the reels above')]);
+    }else rows.push(['LED',v.n,P.units==='metric'?'m':'ft',need,note]);
+  });
   /* channel is cut to length, so the length needed is the real quantity and the
      stock pieces are just how it is bought */
   Object.values(chn).forEach(v=>{
@@ -9484,7 +9592,12 @@ function bomData(){
     rows.push(['Channel',v.n+' — stock lengths','ea',Math.ceil(v.pc*waste),
       'buy as '+fmtLen(v.stock)+' pieces']);
   });
-  Object.values(clip).forEach(v=>rows.push(['Mounting','Clips — '+v.n,'ea',v.q,'']));
+  Object.values(clip).forEach(v=>{
+    if(v.free>0) rows.push(['Mounting','Clips — '+v.n+' (with the extrusion)','ea',v.free,
+      'supplied with the extrusion — not ordered']);
+    if(v.buy>0||!v.free) rows.push(['Mounting','Clips — '+v.n+(v.free>0?' (extra)':''),'ea',
+      v.free>0?v.buy:v.q, v.free>0?'closer spacing than the extrusion provides':'']);
+  });
   Object.values(cap).forEach(v=>rows.push(['Mounting','End caps — '+v.n,'ea',v.q,'2 per run']));
   Object.values(join).filter(v=>v.q).forEach(v=>rows.push(['Mounting','Splice plates — '+v.n,'ea',v.q,'']));
   Object.values(pw).forEach(v=>rows.push(['Power',v.n,'ea',v.q,v.w.toFixed(0)+' W connected @ '+Math.round(P.load)+'% ceiling']));
@@ -9520,10 +9633,15 @@ function costRows(){
     if(!(qty>0)) return;
     rows.push({cat,item,qty,unit,rate,total:rate*qty,unpriced:!(rate>0),note:note||''});
   };
+  const rpc={}; reelPlan().forEach(x=>{ rpc[x.id]=x; });
   Object.values(led).forEach(v=>{
     const f=P.fix.find(x=>x.id===v.id)||{};
+    const r=rpc[v.id];
     /* fixtures are priced each, tape and neon by the foot */
     if(v.kind==='fixture') add('LED',v.n,Math.ceil(v.units*waste),'ea',rateOf(f),'incl waste');
+    /* bought on the reel, the whole reel is paid for whether it is all used or not */
+    else if(r&&r.n) add('LED',v.n,r.bought/12,'ft',rateOf(f),
+      r.n+' × '+fmtRun(r.reel)+' reel'+(r.n===1?'':'s')+' — the whole reel is bought');
     else add('LED',v.n,v.ft*waste,'ft',rateOf(f),'incl waste');
   });
   Object.values(chn).forEach(v=>{
@@ -9532,7 +9650,9 @@ function costRows(){
     else add('Channel',v.n,v.ft*waste,'ft',rateOf(c));
   });
   Object.values(clip).forEach(v=>{ const c=P.ch.find(x=>x.id===v.id)||{};
-    add('Mounting','Clips — '+v.n,v.q,'ea',rateOf(c,'clipCost')); });
+    /* the ones in the box with the extrusion are not a purchase */
+    const q=v.free>0?v.buy:v.q;
+    if(q>0) add('Mounting','Clips — '+v.n+(v.free>0?' (extra)':''),q,'ea',rateOf(c,'clipCost')); });
   Object.values(cap).forEach(v=>{ const c=P.ch.find(x=>x.id===v.id)||{};
     add('Mounting','End caps — '+v.n,v.q,'ea',rateOf(c,'capCost')); });
   Object.values(join).forEach(v=>{ const c=P.ch.find(x=>x.id===v.id)||{};
@@ -11313,7 +11433,7 @@ $('#btnCsvZone').onclick=()=>{
    optionally the product library with them — as one file to start from. */
 const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt','labFeed','labEa',
   'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblSize','snap',
-  'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','keepPdf',
+  'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','buyBy','keepPdf',
   'hideTool','pals','toolMode'];
 function presetText(withLib){
   const set={};
@@ -12015,6 +12135,8 @@ function manualSections(){
       ['Dimming','A run is specified to dim a particular way and a supply either does that or it does not, so the protocols live on the supply and the run names the one it needs. A mismatch is flagged on the treatment and on the driver. Where a catalogue page does not state the protocols the list is left unset and the calculator says compatibility cannot be checked, rather than assuming it is fine. A driver carrying runs that want two different protocols is flagged too \u2014 one driver dims one way.'],
       ['Order codes','A part number is a fixed run of positions, and each product carries the format its own cutsheet prints — so a product without one gets no code rather than a guessed one. The positions are filled from the choices already made: build, colour temperature, both connectors, wire colour and type, and the piece\u2019s own cut length. Every physical piece therefore gets its own orderable code, on the Pieces tab and in both exports. A position that is not filled in comes out as ? and is named, so an incomplete code reads as incomplete instead of plausible. Rules the sheet states are enforced: CL2P only with bare-wire leads, and a barrel takes N/A for wire colour.'],
       ['Builds','Where a product comes in dry, damp and wet-location builds, the run picks one — and the wet build is a different product for takeoff: it runs shorter and it is dimmer, so it overrides the maximum length and the lumens. Leave it unspecified and the base figures are used, with the calculator saying so.'],
+      ['Reels','A cuttable tape is sold two ways: to length, or on the reel it is wound on — SW24/1.5 comes on 64 ft and 100 ft reels. Which you buy is a decision for the job, in Settings › Estimate › Buying, and only a product whose own sheet lists reels is ever reeled. Buying by the reel is the same problem as nesting off-cuts into bar stock, so the runs are nested into reels: the BOM says how many reels, how much is cut from them and what is left on the last one. A reel is bought whole, so the cost is the whole reel and not the footage used. A run longer than the reel it would come off is reported rather than quietly split.'],
+      ['Clips','QTL supplies clips with the extrusion and sells extras separately, so the clips a run needs at the profile\u2019s own spacing are listed but not ordered, and only a spacing closer than the extrusion provides becomes a line to buy. Counting all of them was charging twice for the ones already in the box. The switch is on the channel, since it is not true of every manufacturer.'],
       ['Connectors','A run is ordered with a connector at each end. The product carries the codes it can be had with — which differ from one product to the next — and a treatment picks one for the feed end and one for the far end. A closed end is only offered as the outgoing one, because it cannot feed anything. Leave an end unset and the calculator says the order line is incomplete rather than choosing for you.'],
       ['check','Confirms a cutsheet link still resolves, and dates it. A response a browser is not allowed to read is reported as exactly that, not as good.'],
       ['read specs','Paste the cutsheet text or hand it the PDF: volts, watts and lumens per foot, the cut point, the maximum length and stock lengths are pulled out for you to confirm.'],
@@ -12186,6 +12308,10 @@ function settingsHtml(){
   if(setTab==='est') return '<div class="setgrp"><h4>Allowances</h4>'
     +setRow('Material waste','Added to ordered quantities in the BOM.',setNum('waste',P.waste??5,0,50,1,'%'))
     +setRow('Supply load ceiling','Never load a driver past this share of its rating.',setNum('load',P.load??80,40,100,5,'%'))
+    +'</div><div class="setgrp"><h4>Buying</h4>'
+    +setRow('Tape','To length, or on the reel it is wound on. Only products whose sheet lists reels are reeled; '
+      +'a reel is bought whole, so what is left on the last one is paid for.',
+      setSel('buyBy',BUY_BY,P.buyBy||'cut'))
     +'</div><div class="setgrp"><h4>Nesting</h4>'
     +setRow('Nest off-cuts across','Whether a length bought for one zone may be cut for another.',
       setSel('nestBy',NEST_SCOPES,P.nestBy||'job'))
@@ -12363,6 +12489,7 @@ function applySetting(el){
       drawOverlay(); renderBom(); break; }
     case 'prec': P.prec=Math.max(0,+val||0); boot(true); break;
     case 'nestBy': P.nestBy=val; renderBom(); break;
+    case 'buyBy': P.buyBy=(val==='reel'?'reel':'cut'); renderTreatments(); renderBom(); stats(); break;
     case 'tiles': P.tiles=val; if(!val) tileClear(); renderSettings(); break;
     case 'gpu': P.gpu=val; tileClear(); scheduleRepaint(true); renderSettings(); break;
     case 'rowCap': P.rowCap=clamp(+val||250,10,1e6);
@@ -12528,6 +12655,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
   fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboOn,comboMatch,libHayFor,
   pickScale,parseScale,scales:SCALES,paperName,pageInches,delDoc,docCost,
+  reelPlan,reelsOf,reelable,closedOf,buyBy:BUY_BY,feedCodes:FEEDS.map(x=>x.v),
+
 
 
   defaultLib,libKey:LIBKEY,blank:BLANK,progOpen,progStep,progClose,prog:PROG,

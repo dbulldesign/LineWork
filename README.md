@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.57.1**
+**Version 1.58.0**
 
 ## What it does
 
@@ -79,6 +79,32 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   About. An installed copy opens from its own cache, so it also checks what is on
   the server: the chip turns amber with an arrow when a newer build is waiting,
   and the answer is always to close the app fully and reopen it.
+
+## How things are actually bought
+
+**Reels.** A cuttable tape is sold two ways: to length, or on the reel it is wound
+on — SW24/1.5 comes on 64 ft and 100 ft reels. Which you buy is a decision for the
+job (Settings › Estimate › Buying), and only a product whose own sheet lists reels
+is ever reeled; a made-to-length fixture never is. Buying by the reel is the same
+problem as nesting off-cuts into bar stock, so the runs are **nested into reels**:
+the BOM says how many reels, how much is cut from them, how much is left over and
+what the longest single remainder is. **A reel is bought whole**, so the cost is the
+whole reel, not the footage used. A run longer than the reel it would come off is
+reported rather than quietly split.
+
+**Clips come with the extrusion.** QTL supplies them with the profile and sells
+extras separately, so the clips a run needs at the profile's own spacing are
+**listed but not ordered**, and only a spacing closer than the extrusion provides
+becomes a line to buy. Counting all of them was charging twice for the ones already
+in the box. The switch is on the channel, because it is not true of every
+manufacturer.
+
+**A closed end is coded differently by different products.** SW24/1.5 closes an end
+with `CLS`; ANYBEND closes the same thing with `N/A`. Which code a product uses is
+read off its own sheet, so ANYBEND can now be ordered with a closed far end at all —
+before, its only option was to leave the order line incomplete. `N/A` is
+deliberately not scanned for generally, since it appears on every sheet as the wire
+colour and type for a barrel.
 
 ## Setting the scale, and deleting a sheet
 
