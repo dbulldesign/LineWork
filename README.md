@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.40.0**
+**Version 1.41.0**
 
 ## What it does
 
@@ -184,6 +184,31 @@ red **REV** badge, warns in the Calculated panel, is searchable, and appears in 
 cut list, the workbook and a section of the printed report. Approving a run clears
 the flag, because approving *is* the re-measure the flag asked for. Runs on other
 sheets are set aside rather than reported clear.
+
+**Curved segments.** A cove that turns a corner on a radius is not two straight
+legs, and measuring it as a chord loses real feet. Right-click any segment of a
+run — or press the **arc** button beside it in the inspector's segment list — and
+give it an **included angle** or a **radius**. 90° is the usual cove corner; give
+one and the other follows. A radius too tight to reach across the chord is refused,
+and it tells you the smallest that fits.
+
+The length then follows the curve everywhere it matters: the segment readout, the
+run total, the treatment, the cut list, the piece list, the order code, feed-point
+positions and the wire schedule. On a 4'-8" chord across a corner, a 90° arc reads
+5'-3" — the six inches a chord would have lost.
+
+The curve is stored the way a CAD polyline stores one, as a bulge on that one
+segment, so it stays **one segment with two ends you can drag**, the label sits on
+the arc where the length is, and the bounding box grows to hold the bow. A new arc
+bows *away from the rest of the run* — the side the wall is on when you have cut a
+corner off — and can be flipped.
+
+Editing around a curve is refused rather than fudged: adding or removing a vertex
+inside an arc, and halving one, all say what they will not do. Deleting a vertex
+that owned an arc says the arc went with it. Splitting a run in half still works
+with curves in it — the halves are measured by true length and each curve goes to
+the half it belongs to — unless the halfway point lands *inside* an arc, which is
+reported with the segment named.
 
 **Split in half (S).** Two different things, and they are not the same.
 
