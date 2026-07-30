@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.46.0**
+**Version 1.47.0**
 
 ## What it does
 
@@ -228,6 +228,25 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## The markups list
+
+Every markup in the job as rows — sheet and page, kind, subject, what it measures,
+a status, and any columns you add. Click a row to jump to the markup. Filter across
+every field at once, show **this page**, **this sheet** or **the whole job**, and
+export what is showing. The value column **totals by unit**, so feet and degrees
+are never added together.
+
+**Statuses** — one per markup, from a set you can rewrite to match how the office
+tracks work; the standard set is Open, In review, Closed, Accepted, Rejected.
+Setting one records the time with it. A status decided before the set changed is
+kept, still shown, and marked *off the set* — changing the set never quietly
+rewrites a decision.
+
+**Custom columns** — text, number, choice or date against any markup: a cost code,
+a trade, a room, a due date. This is how a takeoff becomes priced data. Columns are
+part of the job and export with it. A duplicate name and a choice column with no
+choices are refused; removing a column drops the values in it and says so.
 
 ## Find a symbol (I)
 

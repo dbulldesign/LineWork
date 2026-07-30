@@ -634,6 +634,7 @@ body.haspen #penFlag{display:inline}
     <button class="tab" data-pane="pLib">Library</button>
     <button class="tab" data-pane="pBom">Cut list &amp; BOM</button>
     <button class="tab" data-pane="pCuts">Pieces</button>
+    <button class="tab" data-pane="pMarks">Markups <span class="c" id="cMark">0</span></button>
     <button class="tab" data-pane="pIssues">Issues <span class="c" id="cIss">0</span></button>
   </div>
   <div class="pane on" id="pTreat">
@@ -733,6 +734,20 @@ body.haspen #penFlag{display:inline}
       <div class="hint" style="margin-top:4px">Every change auto-saves in this browser. Save to a file once and auto-save writes to that file too, so the copy on disk stays current — a <b>.json</b> after every change, a <b>.linework.zip</b> every 15 seconds and whenever you leave the tab, since it is rewritten whole.</div>
     </div></div>
   </div>
+  <div class="pane" id="pMarks">
+    <div class="sec"><div class="body" style="padding-bottom:6px">
+      <input type="search" id="markFind" placeholder="Filter by sheet, kind, subject, status, any column…" style="width:100%">
+      <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <select id="markScope" style="flex:1 1 120px"></select>
+        <button class="btn sm" id="btnMarkCols">Columns…</button>
+        <button class="btn sm" id="btnMarkStat">Statuses…</button>
+        <button class="btn sm" id="btnMarkCsv">Export</button>
+      </div>
+      <div class="hint" id="markHint" style="margin-top:5px"></div>
+    </div></div>
+    <div class="sec"><div class="body" style="padding:0"><div class="tw"><table id="markTbl"></table></div></div></div>
+    <div class="empty" id="markEmpty">Nothing marked up yet. Every markup lands here with its measurement, a status you can set, and any columns you add.</div>
+  </div>
   <div class="pane" id="pIssues">
     <div class="sec"><div class="body" style="padding-bottom:6px">
       <div class="hint">Everything the calculator has to say about this job, in one place. Click a run to open it.</div>
@@ -809,7 +824,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.46.0';
+const APP_VER='1.47.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1383,6 +1398,30 @@ function applyProject(d){
   P.ann.forEach(a=>{ if(a&&a.stated!=null){ const v=+a.stated; if(v>0) a.stated=v; else delete a.stated; } });
   /* a feed point or splice only means something attached to a run */
   P.ann.forEach(a=>{ if(a&&(a.type==='feed'||a.type==='splice')) a.at=clamp(+a.at||0,0,1); });
+  /* the markups list: its columns, its statuses, and what it is showing */
+  if(!MARK_SCOPES.some(x=>x.v===P.markScope)) P.markScope='doc';
+  if(!Array.isArray(P.statuses)) delete P.statuses;
+  else{
+    P.statuses=P.statuses.map(x=>String(x||'').trim()).filter(Boolean)
+      .filter((v,i,a)=>a.indexOf(v)===i).slice(0,24);
+    if(!P.statuses.length) delete P.statuses;
+  }
+  P.cols=Array.isArray(P.cols)?P.cols.filter(c=>c&&typeof c==='object'&&String(c.name||'').trim())
+    .map(c=>({id:String(c.id||uid('col_')),name:String(c.name).trim(),
+      type:COL_TYPES.some(x=>x.v===c.type)?c.type:'text',
+      opts:Array.isArray(c.opts)?c.opts.map(String).filter(Boolean):undefined})):[];
+  /* a value against a column that is gone is dropped, and a status is free text
+     so a set that changed does not rewrite what was already decided */
+  {
+    const ids=new Set(P.cols.map(c=>c.id));
+    P.ann.forEach(a=>{
+      if(a.status!=null){ const v=String(a.status).trim(); if(v) a.status=v; else { delete a.status; delete a.statusAt; } }
+      if(a.col&&typeof a.col==='object'&&!Array.isArray(a.col)){
+        Object.keys(a.col).forEach(k=>{ if(!ids.has(k)) delete a.col[k]; });
+        if(!Object.keys(a.col).length) delete a.col;
+      } else delete a.col;
+    });
+  }
   /* a legend has to list something it knows how to list */
   P.ann.forEach(a=>{ if(a&&a.type==='legend'){
     if(!LEG_BY.some(x=>x.v===a.by)) a.by='type';
@@ -6449,6 +6488,64 @@ function renderSheets(){
     h.appendChild(el);
   });
 }
+/* ---- the markups list ----
+   Every markup in the job as rows: page, kind, what it measures, a status, and
+   whatever columns this office needs. This is where markup stops being drawing and
+   becomes data — which is the whole point of the Markups List in Revu. */
+const STATUS_DEF=['Open','In review','Closed','Accepted','Rejected'];
+const statusList=()=>Array.isArray(P.statuses)&&P.statuses.length?P.statuses:STATUS_DEF;
+const COL_TYPES=[{v:'text',t:'Text'},{v:'num',t:'Number'},{v:'choice',t:'Choice'},{v:'date',t:'Date'}];
+const colDefs=()=>Array.isArray(P.cols)?P.cols:[];
+const colVal=(a,id)=>{ const c=a&&a.col; return (c&&c[id]!=null)?c[id]:''; };
+function setColVal(a,id,v){
+  a.col=a.col||{};
+  if(v===''||v==null) delete a.col[id]; else a.col[id]=v;
+  if(!Object.keys(a.col).length) delete a.col;
+}
+/* what a markup is worth, for the value column and its total */
+function markValue(a){
+  if(a.type==='line'||a.type==='arc'||a.type==='ell') return {n:annLen(a),unit:'len'};
+  if(a.type==='area'){ const m=areaMetrics(a); return m?{n:m.area,unit:'area'}:{n:null,unit:''}; }
+  if(a.type==='rad'){ const g=arcOf(a),k=inPerPt(); return {n:(g&&k)?g.r*k:null,unit:'len'}; }
+  if(a.type==='ang'){ const g=angOf(a); return {n:g?g.deg:null,unit:'deg'}; }
+  if(a.type==='count') return {n:1,unit:'ea'};
+  return {n:null,unit:''};
+}
+const markValueText=v=>v.n==null?'—'
+  :v.unit==='len'?fmtLen(v.n):v.unit==='area'?fmtArea(v.n)
+  :v.unit==='deg'?v.n.toFixed(1)+'\u00b0':String(v.n);
+function markSubject(a){
+  const t=a.treat&&P.treat.find(x=>x.id===a.treat);
+  if(t) return tagOf(t)+(t.name?' \u00b7 '+t.name:'');
+  if(a.type==='count') return (a.grp||'COUNT')+' '+countIndex(a);
+  if(a.type==='cloud') return 'rev '+(a.rev||'1');
+  if(a.type==='legend') return a.text||legByLabel(a.by||'type');
+  return a.text?String(a.text).slice(0,40):(ANN_NAMES[a.type]||a.type);
+}
+function markRows(){
+  const scope=P.markScope||'doc';
+  const list=P.ann.filter(a=>{
+    if(a.type==='cal') return false;
+    if(scope==='job') return true;
+    if(scope==='page') return a.doc===V.docId&&(a.page||1)===(V.page||1);
+    return a.doc===V.docId;
+  });
+  return list.map(a=>{
+    const d=P.docs.find(x=>x.id===a.doc);
+    const v=markValue(a);
+    return {a,id:a.id,
+      sheet:(d?d.name.replace(/\.pdf$/i,''):'\u2014'),page:a.page||1,
+      kind:(a.type==='line'&&a.poly)?'Poly length':(ANN_NAMES[a.type]||a.type),
+      subject:markSubject(a),val:v,valText:markValueText(v),
+      status:a.status||'',cols:colDefs().map(c=>colVal(a,c.id))};
+  });
+}
+function markMatch(r,q){
+  if(!q) return true;
+  const hay=[r.sheet,'p'+r.page,r.kind,r.subject,r.valText,r.status]
+    .concat(r.cols.map(String)).join(' ').toLowerCase();
+  return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
+}
 function renderAnnList(){
   renderLayers();
   const h=$('#annList'); h.innerHTML='';
@@ -8165,7 +8262,7 @@ function renderWhips(){
     +'<td class="n">'+fmtRun(w.total)+'</td><td></td></tr>';
 }
 function renderRollups(){
-  renderIssues();
+  renderMarks(); renderIssues();
   renderDrivers(); renderWhips();
   rollTable($('#zoneTbl'),'Zone',rollup(t=>t.zone||'(no zone)'));
   rollTable($('#sheetTbl'),'Sheet',rollup(t=>t.docId||'(none)',
@@ -8187,6 +8284,132 @@ function issueData(){
   const order=WARN_KINDS.map(k=>k.c);
   return Object.values(by).sort((a,b)=>
     (a.muted-b.muted)||(order.indexOf(a.c)-order.indexOf(b.c)));
+}
+const MARK_SCOPES=[{v:'page',t:'This page'},{v:'doc',t:'This sheet'},{v:'job',t:'The whole job'}];
+function renderMarks(){
+  const el=$('#markTbl'); if(!el) return;
+  const sc=$('#markScope');
+  if(sc&&!sc.options.length){
+    sc.innerHTML=MARK_SCOPES.map(x=>'<option value="'+x.v+'">'+esc(x.t)+'</option>').join('');
+  }
+  if(sc) sc.value=P.markScope||'doc';
+  const q=(($('#markFind')||{}).value||'').trim();
+  const all=markRows();
+  const rows=all.filter(r=>markMatch(r,q));
+  const c=$('#cMark'); if(c) c.textContent=q?rows.length+'/'+all.length:all.length;
+  const em=$('#markEmpty'); if(em) em.style.display=all.length?'none':'';
+  const hint=$('#markHint');
+  const cols=colDefs();
+  /* the value column only totals what shares a unit, so feet and degrees are
+     never added together */
+  const units={};
+  rows.forEach(r=>{ if(r.val.n!=null&&r.val.unit) units[r.val.unit]=(units[r.val.unit]||0)+r.val.n; });
+  const totals=Object.keys(units).map(u=>markValueText({n:units[u],unit:u})).join('  ·  ');
+  if(hint) hint.textContent=all.length
+    ?(rows.length+' of '+all.length+(totals?'  ·  '+totals:'')
+      +(cols.length?'  ·  '+cols.length+' custom column'+(cols.length===1?'':'s'):''))
+    :'';
+  const st=statusList();
+  el.innerHTML='<tr><th>Sheet</th><th>Kind</th><th>Subject</th><th class="n">Value</th><th>Status</th>'
+    +cols.map(c2=>'<th>'+esc(c2.name)+'</th>').join('')+'</tr>'
+    +rows.map(r=>'<tr data-mark="'+r.id+'">'
+      +'<td class="hint">'+esc(r.sheet)+' p'+r.page+'</td>'
+      +'<td>'+esc(r.kind)+'</td>'
+      +'<td>'+esc(r.subject)+'</td>'
+      +'<td class="n" style="color:var(--amber)">'+esc(r.valText)+'</td>'
+      +'<td><select data-mstat="'+r.id+'"><option value="">—</option>'
+        +st.map(x=>'<option value="'+esc(x)+'"'+(r.status===x?' selected':'')+'>'+esc(x)+'</option>').join('')
+        /* a status decided before the set changed is still shown, and marked, so
+           it can be seen and kept rather than reading as blank */
+        +((r.status&&!st.includes(r.status))
+          ?'<option value="'+esc(r.status)+'" selected>'+esc(r.status)+' — off the set</option>':'')
+        +'</select></td>'
+      +cols.map((c2,i)=>'<td>'+markCell(r,c2,i)+'</td>').join('')
+      +'</tr>').join('')
+    +capNote('markTbl',{shown:rows,all:rows,cut:0},5+cols.length);
+  $$('[data-mark]',el).forEach(tr=>tr.onclick=e=>{
+    if(e.target.tagName==='SELECT'||e.target.tagName==='INPUT') return;
+    const a=P.ann.find(x=>x.id===tr.dataset.mark);
+    if(a) goToAnn(a);
+  });
+  $$('[data-mstat]',el).forEach(sel=>sel.onchange=()=>{
+    const a=P.ann.find(x=>x.id===sel.dataset.mstat); if(!a) return;
+    snap('Status');
+    if(sel.value){ a.status=sel.value; a.statusAt=new Date().toISOString(); }
+    else { delete a.status; delete a.statusAt; }
+    renderMarks(); markDirty();
+  });
+  $$('[data-mcol]',el).forEach(inp=>{
+    const go=()=>{
+      const a=P.ann.find(x=>x.id===inp.dataset.mcol); if(!a) return;
+      const c2=cols.find(x=>x.id===inp.dataset.mcolid); if(!c2) return;
+      snap('Column value');
+      setColVal(a,c2.id,c2.type==='num'?(inp.value===''?'':(+inp.value||0)):inp.value);
+      renderMarks(); markDirty();
+    };
+    if(inp.tagName==='SELECT') inp.onchange=go; else inp.onchange=go;
+  });
+}
+function markCell(r,c,i){
+  const v=r.cols[i];
+  const base='data-mcol="'+r.id+'" data-mcolid="'+c.id+'"';
+  if(c.type==='choice'){
+    const opts=(c.opts||[]);
+    return '<select '+base+'><option value="">—</option>'
+      +opts.map(o=>'<option value="'+esc(o)+'"'+(String(v)===String(o)?' selected':'')+'>'+esc(o)+'</option>').join('')
+      +(v!==''&&!opts.includes(String(v))?'<option value="'+esc(v)+'" selected>'+esc(v)+' — not a choice</option>':'')
+      +'</select>';
+  }
+  const t=c.type==='num'?'number':c.type==='date'?'date':'text';
+  return '<input type="'+t+'" '+base+' value="'+esc(v)+'"'+(c.type==='num'?' step="any"':'')+'>';
+}
+async function manageCols(){
+  const cols=colDefs();
+  const r=await dlg({title:'Columns on the markups list',fields:[
+    {k:'name',label:'Add a column',val:'',ph:'Cost code'},
+    {k:'type',type:'select',label:'Holding',opts:COL_TYPES,val:'text'},
+    {k:'opts',label:'Choices, comma separated',val:'',ph:'only for a Choice column'},
+    ...(cols.length?[{k:'del',type:'select',label:'Or remove one',
+      opts:[{v:'',t:'— keep them all —'}].concat(cols.map(c=>({v:c.id,t:c.name+' ('+c.type+')'}))),val:''}]:[])
+  ],ok:'Apply',
+    note:(cols.length?'On now: '+cols.map(c=>c.name).join(', ')+'. ':'')
+      +'Columns are part of the job, and they export with it. Removing one drops the values in it.'});
+  if(!r) return;
+  snap('Columns');
+  if(r.del){
+    const c=cols.find(x=>x.id===r.del);
+    P.cols=cols.filter(x=>x.id!==r.del);
+    P.ann.forEach(a=>{ if(a.col) setColVal(a,r.del,''); });
+    renderMarks(); markDirty();
+    toast('“'+(c?c.name:'That column')+'” removed, with what was in it');
+    return;
+  }
+  const name=String(r.name||'').trim();
+  if(!name){ toast('Give the column a name'); return; }
+  if(cols.some(c=>c.name.toLowerCase()===name.toLowerCase())){ toast('There is already a column called that'); return; }
+  const type=COL_TYPES.some(x=>x.v===r.type)?r.type:'text';
+  const opts=String(r.opts||'').split(',').map(x=>x.trim()).filter(Boolean);
+  if(type==='choice'&&!opts.length){ toast('A choice column needs some choices'); return; }
+  P.cols=cols.concat([{id:uid('col_'),name,type,opts:type==='choice'?opts:undefined}]);
+  renderMarks(); markDirty();
+  toast('“'+name+'” added');
+}
+async function manageStatuses(){
+  const cur=statusList();
+  const r=await dlg({title:'Statuses',fields:[
+    {k:'list',type:'textarea',label:'One per line',val:cur.join('\n')},
+    {k:'reset',type:'check',cap:'Put the standard set back',val:false}
+  ],ok:'Apply',
+    note:'A status set matches how an office actually tracks work. A status already set on a markup is kept even if it leaves this list, so nothing is quietly rewritten.'});
+  if(!r) return;
+  snap('Statuses');
+  if(r.reset){ delete P.statuses; renderMarks(); markDirty(); toast('Standard statuses'); return; }
+  const list=String(r.list||'').split('\n').map(x=>x.trim()).filter(Boolean)
+    .filter((v,i,arr)=>arr.indexOf(v)===i).slice(0,24);
+  if(!list.length){ toast('A set needs at least one status'); return; }
+  P.statuses=list;
+  renderMarks(); markDirty();
+  toast(list.length+' statuses');
 }
 function renderIssues(){
   const el=$('#issList'); if(!el) return;
@@ -9595,6 +9818,23 @@ $('#btnCsvDrv').onclick=()=>{
     r.warn.join(' | ')]));
   exportBox(slug(P.name)+'-drivers.csv',csv(rows));
 };
+$('#btnMarkCols').onclick=manageCols;
+$('#btnMarkStat').onclick=manageStatuses;
+$('#markFind').oninput=()=>renderMarks();
+$('#markFind').onsearch=()=>renderMarks();
+$('#markScope').onchange=e=>{ P.markScope=e.target.value; renderMarks(); markDirty(); };
+$('#btnMarkCsv').onclick=()=>{
+  const cols=colDefs();
+  const rows=[['Sheet','Page','Kind','Subject','Value','Unit','Status','Status set at']
+    .concat(cols.map(c=>c.name))];
+  const q=(($('#markFind')||{}).value||'').trim();
+  markRows().filter(r=>markMatch(r,q)).forEach(r=>rows.push([
+    r.sheet,r.page,r.kind,r.subject,
+    r.val.n==null?'':(r.val.unit==='len'||r.val.unit==='area')?(r.val.n/12).toFixed(3):r.val.n,
+    r.val.unit==='len'?'ft':r.val.unit==='area'?'sq in/12':r.val.unit,
+    r.status||'',r.a.statusAt||''].concat(r.cols)));
+  exportBox(slug(P.name)+'-markups.csv',csv(rows));
+};
 $('#btnIssCsv').onclick=()=>{
   const rows=[['Kind','Quieted','Tag','Run','Message']];
   issueData().forEach(g=>g.runs.forEach(r=>rows.push([g.label,g.muted?'yes':'no',r.tag,r.name,r.msg])));
@@ -10304,6 +10544,9 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Markups list','Every markup in the job as rows \u2014 sheet and page, kind, subject, what it measures, a status, and any columns you add. Click a row to jump to the markup. Filter across every field at once, show this page, this sheet or the whole job, and export what is showing. The value column totals by unit, so feet and degrees are never added together.'],
+      ['Statuses','A status per markup, from a set you can rewrite to match how the office tracks work \u2014 the standard set is Open, In review, Closed, Accepted, Rejected. When a status is set the time is recorded with it. A status already on a markup is kept even if it leaves the set, so changing the set never quietly rewrites a decision.'],
+      ['Custom columns','Text, number, choice or date columns against any markup \u2014 a cost code, a trade, a room, a due date. This is how a takeoff becomes priced data. Columns are part of the job and export with it; removing one drops the values in it, and says so.'],
       ['Find a symbol (I)','Drawings repeat a symbol, and counting them by hand is where an evening goes. Box one and this finds the rest: the page is rendered, both the symbol and the page are reduced to ink-or-paper, and every window the symbol\u2019s size is scored on how much of its ink lands on ink. Search this page, every page of this sheet, or every sheet that is open. Nothing is stamped until you have seen how many it found and how well they scored; then it puts a count on each, and can leave out any that already carry one so a second pass does not double the tally. It matches the symbol as drawn \u2014 same size, same rotation \u2014 because a drawing repeats a block rather than a variation of one, and a sheet that is not open cannot be searched. Two sliders: how close a match must be, and what counts as ink.'],
       ['Legend','A key placed on the sheet itself, so a colour-coded takeoff reads without the panels. It lists runs by TYPE, by zone or by status, counted items, or markups by kind \u2014 with a swatch, a count and the LED total per row, and a total line. It counts this page, this sheet or the whole job, and it is generated from the markups every time it is drawn, so it cannot fall out of step with them. Change what it lists in the inspector rather than placing a new one.'],
       ['Palettes: pinned, folded, hidden','A palette has three states, like any panel. <b>Pinned</b> stays open. <b>Unpinned</b> folds back to its bar the moment you take a tool off it, so it stops covering the drawing \u2014 press the triangle to open it again. <b>Hidden</b> is off screen but kept, and Settings \u203a Tools shows it back. Drag it by its bar; where it sits is part of the job.'],
@@ -10774,6 +11017,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   palTools,noteRecent,recentMax:RECENT_MAX,
   ellOf,ellPts,angOf,radOf,tapThree,
   legendRows,legendBox,placeLegend,legendBy:LEG_BY,legendScopes:LEG_SCOPE,
+  markRows,markMatch,markValue,markSubject,renderMarks,manageCols,manageStatuses,
+  statusList,colDefs,colVal,setColVal,colTypes:COL_TYPES,markScopes:MARK_SCOPES,
   visualSearch,runVisualSearch,inkOf,integral,boxSum,matchOn,suppress,vsPages,vsScale:VS_SCALE,
   annPath,annPathSeg,segArcOf,segArcPts,hasBulge,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
