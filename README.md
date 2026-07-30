@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.32.0**
+**Version 1.33.0**
 
 ## What it does
 
@@ -125,6 +125,19 @@ The longest single run a product is made in is also the most one feed will carry
 so that is **one figure, not two** — feed points are worked out from it. A
 treatment then picks one colour temperature, and a connector for **each end**,
 from what that product actually offers; the light output follows the CCT.
+
+**Home-run wire.** A placed driver knows how far it is from each run it feeds, so
+that distance is measured off the sheet and multiplied by the whips the run needs
+— one per feed point, per identical run. **Slack per whip**, a **spare
+percentage** and a **rate per foot** are in Settings › Drivers; the schedule sits
+under the drivers table and the total lands in the BOM, the cost, the report, its
+own CSV and a **Wire** sheet in the workbook.
+
+Two things it will not fake. Where a run has several feed points, only the nearest
+is measurable, so the extra whips are taken at that same distance and the row says
+so — the assumption is on screen, not buried. And a run on a different sheet from
+its driver is *counted* but contributes no length, reported as **not measured**
+rather than estimated.
 
 **Dimming.** A run is specified to dim a particular way and a supply either does
 that or it does not, so the protocols live on the supply and the run names the one

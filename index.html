@@ -655,11 +655,14 @@ body.haspen #penFlag{display:inline}
       <div class="tw"><table id="baseTbl"></table></div></div>
     <div class="sec"><h3>Drivers placed <span class="c" id="cDrv">0</span></h3>
       <div class="body"><div class="hint">Power supplies placed on the drawing, with what each one feeds, its load against its usable capacity, and the longest home run to a run it serves.</div></div>
-      <div class="tw"><table id="drvTbl"></table></div></div>
+      <div class="tw"><table id="drvTbl"></table></div>
+      <div class="hint" style="margin-top:8px">Home-run wire, one whip per feed point. Slack, spare and rate are in Settings › Drivers.</div>
+      <div class="tw" style="margin-top:4px"><table id="whipTbl"></table></div></div>
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
       <button class="btn" id="btnCsvCut">Export cut list</button>
       <button class="btn" id="btnCsvZone">Export zone rollup</button>
       <button class="btn" id="btnCsvDrv">Export driver schedule</button>
+      <button class="btn" id="btnCsvWhip">Export wire schedule</button>
       <button class="btn" id="btnCsvBom">Export BOM</button>
       <button class="btn" id="btnCsvCost">Export cost</button>
       <button class="btn pri" id="btnXlsx">Export workbook (.xlsx)</button>
@@ -739,7 +742,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.32.0';
+const APP_VER='1.33.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1376,6 +1379,9 @@ function applyProject(d){
   const tids=new Set(P.treat.map(t=>t.id));
   P.ann.forEach(a=>{ if(a.type==='driver') a.serves=a.serves.filter(id=>tids.has(id)); });
   P.maxHome=Math.max(0,+P.maxHome||0)||240;
+  P.whipSlack=Math.max(0,+P.whipSlack||0);
+  P.whipSpare=clamp(+P.whipSpare||0,0,100);
+  P.wireRate=Math.max(0,+P.wireRate||0);
   /* costs, added in 1.17 */
   ['rate','matUp','labFt','labFeed','labEa'].forEach(k=>{ P[k]=Math.max(0,+P[k]||0); });
   P.cur=String(P.cur||'$').slice(0,3);
@@ -4195,6 +4201,44 @@ async function placeDriver(p){
   drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty();
   if(!r.keep) setTool('pan');
 }
+/* ---- wire schedule ----
+   The one geometric fact the drawing gives is how far a placed driver is from
+   each run it feeds, so that is what gets measured: one whip per feed point, at
+   that distance, plus whatever slack is set in Settings. A run with more than one
+   feed point needs more than one whip and the app cannot know where the others
+   land — they are taken at the same measured distance and the row says so, so the
+   assumption is visible instead of buried. */
+function whipData(){
+  const slack=Math.max(0,+P.whipSlack||0);
+  const spare=1+Math.max(0,+P.whipSpare||0)/100;
+  const rows=[];
+  P.ann.filter(a=>a.type==='driver').forEach(a=>{
+    const d=driverLoad(a), doc=P.docs.find(x=>x.id===a.doc);
+    const sheet=(doc?doc.name.replace(/\.pdf$/i,''):'—')+' p'+a.page;
+    (Array.isArray(a.serves)?a.serves:[]).forEach(id=>{
+      const t=P.treat.find(x=>x.id===id); if(!t) return;
+      const r=calc(t);
+      const link=d.links.find(l=>l.tag===tagOf(t));
+      const each=link?link.len:0;
+      const whips=Math.max(1,r.feeds)*Math.max(1,r.qty);
+      const per=each>0?each+slack:0;
+      rows.push({drv:a.name||'PS',supply:d.ps.name,sheet,tag:tagOf(t),tid:t.id,
+        runs:r.qty,feeds:r.feeds,whips,each,per,
+        total:per*whips,measured:!!link,
+        assumed:!!(link&&r.feeds>1),
+        over:!!(each>0&&each>d.maxHome),
+        note:!link?'on another sheet — not measured'
+          :(r.feeds>1?r.feeds+' feed points per run, all taken at the measured distance'
+            :(r.qty>1?r.qty+' runs at the measured distance':''))});
+    });
+  });
+  const measured=rows.filter(r=>r.measured);
+  const raw=measured.reduce((s,r)=>s+r.total,0);
+  return {rows,slack,spare,
+    whips:rows.reduce((s,r)=>s+r.whips,0),
+    unmeasured:rows.filter(r=>!r.measured).reduce((s,r)=>s+r.whips,0),
+    raw,total:raw*spare};
+}
 function driverRows(){
   return P.ann.filter(a=>a.type==='driver').map(a=>{
     const d=driverLoad(a), doc=P.docs.find(x=>x.id===a.doc);
@@ -5835,6 +5879,16 @@ function bomData(){
   Object.values(cap).forEach(v=>rows.push(['Mounting','End caps — '+v.n,'ea',v.q,'2 per run']));
   Object.values(join).filter(v=>v.q).forEach(v=>rows.push(['Mounting','Splice plates — '+v.n,'ea',v.q,'']));
   Object.values(pw).forEach(v=>rows.push(['Power',v.n,'ea',v.q,v.w.toFixed(0)+' W connected @ '+Math.round(P.load)+'% ceiling']));
+  /* home-run wire is a material quantity like any other */
+  const wr=whipData();
+  if(wr.total>0){
+    const ft=P.units==='metric'?(wr.total/12*0.3048):(wr.total/12);
+    rows.push(['Power','Home-run wire',P.units==='metric'?'m':'ft',ft.toFixed(2),
+      wr.whips+' whip'+(wr.whips===1?'':'s')
+      +(wr.slack>0?' · incl '+fmtLen(wr.slack)+' slack each':'')
+      +(wr.spare>1?' · incl '+Math.round((wr.spare-1)*100)+'% spare':'')
+      +(wr.unmeasured?' · '+wr.unmeasured+' whip'+(wr.unmeasured===1?'':'s')+' on another sheet, not measured':'')]);
+  }
   /* counted items are quantities like any other — they belong in the same list */
   countTotals().forEach(c=>rows.push(['Count',c.sym+'  '+c.grp,'ea',c.n,c.sheets]));
   return rows;
@@ -5876,6 +5930,9 @@ function costRows(){
     add('Mounting','Splice plates — '+v.n,v.q,'ea',rateOf(c,'joinCost')); });
   Object.values(pw).forEach(v=>{ const p=P.psu.find(x=>x.id===v.id)||{};
     add('Power',v.n,v.q,'ea',rateOf(p)); });
+  const wr=whipData();
+  if(wr.total>0) add('Power','Home-run wire',wr.total/12,'ft',Math.max(0,+P.wireRate||0),
+    wr.whips+' whip'+(wr.whips===1?'':'s'));
   countTotals().forEach(c=>add('Count',c.sym+'  '+c.grp,c.n,'ea',+((P.cntRate||{})[c.grp])||0));
   return rows;
 }
@@ -6005,8 +6062,25 @@ function renderDrivers(){
     +'<tr class="tot"><td colspan="2">'+rows.length+' placed · takeoff calls for '+need+'</td>'
     +'<td class="n">'+rows.reduce((s,r)=>s+r.watts,0).toFixed(0)+' W</td><td colspan="5"></td></tr>';
 }
+function renderWhips(){
+  const el=$('#whipTbl'); if(!el) return;
+  const w=whipData();
+  if(!w.rows.length){ el.innerHTML='<tr><td class="hint" style="padding:12px">'
+    +'No wire yet — assign runs to a placed driver and the home runs are measured off the sheet.</td></tr>'; return; }
+  el.innerHTML='<tr><th>Driver</th><th>Run</th><th class="n">Whips</th><th class="n">Each</th>'
+    +'<th class="n">Wire</th><th>Note</th></tr>'
+    +w.rows.map(r=>'<tr><td><span class="tag">'+esc(r.drv)+'</span></td><td>'+esc(r.tag)+'</td>'
+      +'<td class="n">'+r.whips+'</td>'
+      +'<td class="n"'+(r.over?' style="color:var(--flag)"':'')+'>'+(r.per>0?fmtLen(r.per):'—')+'</td>'
+      +'<td class="n" style="color:var(--amber)">'+(r.total>0?fmtRun(r.total):'—')+'</td>'
+      +'<td class="hint">'+esc(r.note)+'</td></tr>').join('')
+    +'<tr class="tot"><td colspan="2">'+w.whips+' whip'+(w.whips===1?'':'s')
+    +(w.unmeasured?' · '+w.unmeasured+' not measured':'')+'</td>'
+    +'<td class="n"></td><td class="n">'+(w.spare>1?'+'+Math.round((w.spare-1)*100)+'%':'')+'</td>'
+    +'<td class="n">'+fmtRun(w.total)+'</td><td></td></tr>';
+}
 function renderRollups(){
-  renderDrivers();
+  renderDrivers(); renderWhips();
   rollTable($('#zoneTbl'),'Zone',rollup(t=>t.zone||'(no zone)'));
   rollTable($('#sheetTbl'),'Sheet',rollup(t=>t.docId||'(none)',
     t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)').replace(/\.pdf$/i,'')));
@@ -6310,6 +6384,12 @@ async function reportHtml(opts){
   if(cnt.length) h+='<h2>Counts</h2>'+rTable(['Group','Symbol',{t:'Count',n:1},{t:'Rate',n:1},{t:'Total',n:1},'Sheets'],
     cnt.map(x=>{ const rate=+((P.cntRate||{})[x.grp])||0;
       return [x.grp,x.sym,x.n,rate?money(rate):'—',rate?money(rate*x.n):'—',x.sheets]; }));
+  const wsc=whipData();
+  if(wsc.rows.length) h+='<h2>Home-run wire</h2>'+rTable(['Driver','Run',{t:'Whips',n:1},{t:'Each',n:1},{t:'Wire',n:1},'Note'],
+    wsc.rows.map(r=>[r.drv,r.tag,r.whips,r.per>0?fmtLen(r.per):'—',r.total>0?fmtRun(r.total):'—',r.note]))
+    +'<p class="hint">'+wsc.whips+' whip'+(wsc.whips===1?'':'s')+', '+fmtRun(wsc.total)+' of wire'
+    +(wsc.spare>1?' including '+Math.round((wsc.spare-1)*100)+'% spare':'')
+    +(wsc.unmeasured?'. '+wsc.unmeasured+' whip'+(wsc.unmeasured===1?' is':'s are')+' on another sheet and not measured.':'.')+'</p>';
   if(drv.length) h+='<h2>Drivers</h2>'+rTable(['Mark','Supply','Sheet',{t:'Load',n:1},{t:'Usable',n:1},{t:'Home run',n:1},{t:'Runs',n:1},'Flags'],
     drv.map(r=>[r.name,r.supply,r.sheet,r.watts.toFixed(0)+' W',r.cap>0?Math.round(r.cap)+' W':'—',
       r.home>0?fmtRun(r.home):'—',r.serves,r.warn.join(' ')]));
@@ -6787,6 +6867,13 @@ function workbookSheets(){
     .concat(cnt.map(x=>{ const rate=+((P.cntRate||{})[x.grp])||0;
       return [x.grp,x.sym,x.n,rate||'',rate?+(rate*x.n).toFixed(2):'',x.sheets]; }))});
   const drv=driverRows();
+  const wsch=whipData();
+  if(wsch.rows.length) S.push({name:'Wire',rows:[['Driver','Supply','Sheet','Run','Runs','Feeds/run','Whips',
+      'Each ft','Wire ft','Measured','Note']]
+    .concat(wsch.rows.map(r=>[r.drv,r.supply,r.sheet,r.tag,r.runs,r.feeds,r.whips,
+      r.per>0?+(r.per/12).toFixed(2):'',r.total>0?+(r.total/12).toFixed(2):'',r.measured?'yes':'no',r.note]))
+    .concat([['','','','','','',wsch.whips,'',+(wsch.total/12).toFixed(2),'',
+      wsch.spare>1?('incl '+Math.round((wsch.spare-1)*100)+'% spare'):'total']])});
   if(drv.length) S.push({name:'Drivers',rows:[['Mark','Supply','Sheet','Connected W','Usable W','% used','Home run ft','Runs','Flags']]
     .concat(drv.map(r=>[r.name,r.supply,r.sheet,+r.watts.toFixed(1),+r.cap.toFixed(1),
       +(r.pct*100).toFixed(0),+(r.home/12).toFixed(2),r.serves,r.warn.join(' | ')]))});
@@ -7141,6 +7228,18 @@ $('#btnCsvDrv').onclick=()=>{
     (r.a.serves||[]).map(id=>{const t=P.treat.find(x=>x.id===id);return t?tagOf(t):'?'}).join(' + '),
     r.warn.join(' | ')]));
   exportBox(slug(P.name)+'-drivers.csv',csv(rows));
+};
+$('#btnCsvWhip').onclick=()=>{
+  const w=whipData();
+  const rows=[['Driver','Supply','Sheet','Run','Runs','Feed points/run','Whips',
+    'Each (ft)','Wire (ft)','Measured','Note']];
+  w.rows.forEach(r=>rows.push([r.drv,r.supply,r.sheet,r.tag,r.runs,r.feeds,r.whips,
+    r.per>0?(r.per/12).toFixed(2):'',r.total>0?(r.total/12).toFixed(2):'',
+    r.measured?'yes':'no',r.note]));
+  rows.push(['','','','','','',w.whips,'',(w.raw/12).toFixed(2),'','measured subtotal']);
+  rows.push(['','','','','','','','',(w.total/12).toFixed(2),'',
+    w.spare>1?('incl '+Math.round((w.spare-1)*100)+'% spare'):'total']);
+  exportBox(slug(P.name)+'-wire.csv',csv(rows));
 };
 $('#btnCsvZone').onclick=()=>{
   const rows=[['Grouping','Key','Runs','LED (ft)','Channel (ft)','Watts','Feed points','Supplies']];
@@ -7597,6 +7696,7 @@ function manualSections(){
   {id:'library',t:'The product library',blocks:[
     {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
     {rows:[
+      ['Home-run wire','A placed driver knows how far it is from each run it feeds, so that distance is measured off the sheet and multiplied by the whips that run needs \u2014 one per feed point, per identical run. Slack per whip, a spare percentage and a rate per foot are in Settings \u203a Drivers, and the total lands in the BOM and the cost. Where a run has several feed points the extra whips are taken at the same measured distance, and the row says so; a run on another sheet from its driver is counted but reported as not measured, never guessed.'],
       ['Dimming','A run is specified to dim a particular way and a supply either does that or it does not, so the protocols live on the supply and the run names the one it needs. A mismatch is flagged on the treatment and on the driver. Where a catalogue page does not state the protocols the list is left unset and the calculator says compatibility cannot be checked, rather than assuming it is fine. A driver carrying runs that want two different protocols is flagged too \u2014 one driver dims one way.'],
       ['Order codes','A part number is a fixed run of positions, and each product carries the format its own cutsheet prints — so a product without one gets no code rather than a guessed one. The positions are filled from the choices already made: build, colour temperature, both connectors, wire colour and type, and the piece\u2019s own cut length. Every physical piece therefore gets its own orderable code, on the Pieces tab and in both exports. A position that is not filled in comes out as ? and is named, so an incomplete code reads as incomplete instead of plausible. Rules the sheet states are enforced: CL2P only with bare-wire leads, and a barrel takes N/A for wire colour.'],
       ['Builds','Where a product comes in dry, damp and wet-location builds, the run picks one — and the wet build is a different product for takeoff: it runs shorter and it is dimmer, so it overrides the maximum length and the lumens. Leave it unspecified and the base figures are used, with the calculator saying so.'],
@@ -7737,6 +7837,11 @@ function settingsHtml(){
     +'</div><div class="setgrp"><h4>Drivers</h4>'
     +setRow('Longest home run','A placed driver further than this from what it feeds is flagged.',
       '<input type="text" data-set="maxHome" value="'+esc(fmtLen(+P.maxHome||240))+'">')
+    +setRow('Slack per whip','Added to every home run for terminations and dressing.',
+      '<input type="text" data-set="whipSlack" value="'+esc(fmtLen(+P.whipSlack||0))+'">')
+    +setRow('Spare wire','A percentage on the whole schedule.',setNum('whipSpare',P.whipSpare||0,0,100,1,'%'))
+    +setRow('Wire rate','Per foot of home-run wire. Leave at 0 and it shows as unpriced.',
+      setNum('wireRate',P.wireRate||0,0,100,0.01,P.cur||'$'))
     +'</div>';
   if(setTab==='input') return '<div class="setgrp"><h4>Pointer</h4>'
     +setRow('Scroll wheel','Zoom at the cursor, or scroll the sheet.',
@@ -7828,6 +7933,10 @@ function applySetting(el){
     case 'cntLabels': P.cntLabels=val; drawOverlay(); break;
     case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
+    case 'whipSlack': { const v=parseLen(val); P.whipSlack=(isFinite(v)&&v>0)?v:0;
+      renderDrivers(); renderBom(); renderSettings(); markDirty(); break; }
+    case 'whipSpare': P.whipSpare=clamp(+val||0,0,100); renderDrivers(); renderBom(); markDirty(); break;
+    case 'wireRate': P.wireRate=Math.max(0,+val||0); renderBom(); renderCost(); markDirty(); break;
     case 'maxHome': { const v=parseLen(val); P.maxHome=(isFinite(v)&&v>0)?v:240;
       drawOverlay(); renderBom(); break; }
     case 'prec': P.prec=Math.max(0,+val||0); boot(true); break;
@@ -7977,7 +8086,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,
   orderCode,cctCode,codeFmtOf,wireColours:WIRE_COLS,wireTypes:WIRE_TYPES,
-  dimOptions:DIMS,dimLabel,dimsOf,driverLoad,
+  dimOptions:DIMS,dimLabel,dimsOf,driverLoad,whipData,
   withAlt,altSummary,altRows,altLabel,editAlt,applyAlt,renderAlts,
   setBaseline,baseDiff,renderBase,xlsx,zipStore,crc32,sheetXml,colName,workbookSheets,exportWorkbook,
   reportHtml,openReport,reportCss,
