@@ -686,6 +686,7 @@ body.haspen #penFlag{display:inline}
       <div class="body" style="padding-top:0"><div class="hint">Rates live on the library items — open an LED product, channel or supply to price it. Anything unpriced is left out of the total rather than counted as free.</div></div>
       <div class="tw"><table id="costTbl"></table></div></div>
     <div class="sec"><h3>By zone</h3><div class="tw"><table id="zoneTbl"></table></div></div>
+    <div class="sec"><h3>By space</h3><div class="tw"><table id="spaceTbl"></table></div></div>
     <div class="sec"><h3>By sheet</h3><div class="tw"><table id="sheetTbl"></table></div></div>
     <div class="sec"><h3>Alternates <span class="c" id="cAlt">0</span></h3>
       <div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
@@ -824,7 +825,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.47.0';
+const APP_VER='1.48.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1398,6 +1399,9 @@ function applyProject(d){
   P.ann.forEach(a=>{ if(a&&a.stated!=null){ const v=+a.stated; if(v>0) a.stated=v; else delete a.stated; } });
   /* a feed point or splice only means something attached to a run */
   P.ann.forEach(a=>{ if(a&&(a.type==='feed'||a.type==='splice')) a.at=clamp(+a.at||0,0,1); });
+  /* a space without a name attributes nothing, so it is not kept */
+  P.ann=P.ann.filter(a=>!(a.type==='space'&&!String(a.name||'').trim()));
+  P.ann.forEach(a=>{ if(a.type==='space') a.name=String(a.name).trim(); });
   /* the markups list: its columns, its statuses, and what it is showing */
   if(!MARK_SCOPES.some(x=>x.v===P.markScope)) P.markScope='doc';
   if(!Array.isArray(P.statuses)) delete P.statuses;
@@ -1513,7 +1517,8 @@ function applyProject(d){
     }
   });
   P.ann=P.ann.filter(a=>a&&Array.isArray(a.pts)&&a.pts.length&&
-    !((a.type==='area'||a.type==='cloud')&&a.pts.length<3)
+    /* a closed shape with fewer than three corners encloses nothing */
+    !((a.type==='area'||a.type==='cloud'||a.type==='space')&&a.pts.length<3)
     /* the new markups have fixed shapes: two points for a box-like one, three for
        an angle or a radius. Anything else could not be drawn or measured. */
     &&!(/^(arrow|hl|ell)$/.test(a.type)&&a.pts.length<2)
@@ -2232,7 +2237,7 @@ function arcPts(a,n){
 }
 /* a closed poly measures the run back to its first vertex as well */
 const canClose=a=>!!a&&a.type==='line'&&!a.free&&a.pts.length>2;
-const isClosedType=a=>!!a&&(a.type==='area'||a.type==='cloud');
+const isClosedType=a=>!!a&&(a.type==='area'||a.type==='cloud'||a.type==='space');
 function annPts(a){
   if(a.type==='arc') return arcPts(a);
   if(isClosedType(a)) return a.pts.length>2?a.pts.concat([a.pts[0]]):a.pts;
@@ -3141,6 +3146,16 @@ function drawAnn(a,selected,isDraft,multi){
           +'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'\u00b0',col,null,a,'sub',lblRotFor(a,'sub'));
     }
   }
+  if(a.type==='space'){
+    const ring=annPts(a).map(sp);
+    g+='<polygon points="'+ring.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
+      +'" fill="'+col+'" fill-opacity=".05" stroke="'+col+'" stroke-width="'+(W*.9).toFixed(2)
+      +'" stroke-dasharray="9 5" stroke-opacity=".8"/>';
+    const xs=ring.map(q=>q[0]), ys=ring.map(q=>q[1]);
+    const cx=(Math.min(...xs)+Math.max(...xs))/2, cy=(Math.min(...ys)+Math.max(...ys))/2;
+    const n=P.ann.filter(x=>x.type!=='space'&&spaceOf(x)===a).length;
+    g+=chip(cx,cy,(a.name||'unnamed')+(n?'  \u00b7  '+n:''),col,null,a,'total',lblRotFor(a,'total'));
+  }
   if(a.type==='legend'){
     const L=legendBox(a), z=V.zoom;
     const [x,y]=pts[0];
@@ -3695,7 +3710,7 @@ function hitHandle(sx,sy,tol){
    A traced run is never right first time: you need to break a segment where the
    cove turns, or drop a point you over-clicked. */
 const editablePts=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='box'||a.type==='tbox')&&!a.free;
-const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='whip');
+const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='whip'||a.type==='space');
 /* which segment of a is nearest this stage-space point, and how far away */
 function nearestSeg(a,sx,sy){
   /* measured against the line it actually follows, then reported as the vertex
@@ -4206,6 +4221,7 @@ const TOOLS=[
   {k:'ell',g:'Measure',key:'O',t:"Ellipse — a round cove, measured round its edge",svg:'<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></svg>'},
   {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
   {k:'rad',g:'Measure',key:'U',t:"Radius — three points on a curve gives R, D and the arc",svg:'<svg viewBox="0 0 24 24"><path d="M3 18a12 12 0 0118 0"/><path d="M12 6.2V18"/><circle cx="12" cy="18" r="1.6"/></svg>'},
+  {k:'space',g:'Review',key:'Z',t:"Space — name a room or zone, and what falls in it belongs to it",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l7-4 7 4v13z"/><path d="M10 20v-6h4v6"/><path d="M17 11h4v9h-4"/></svg>'},
   {k:'vs',g:'Review',key:'I',t:"Find a symbol — box one, count the rest",svg:'<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M8 10.5h5M10.5 8v5"/></svg>'},
   {k:'legend',g:'Review',key:'',t:"Legend — a key of what is on the sheet",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><rect x="6" y="8" width="3" height="3"/><rect x="6" y="14" width="3" height="3"/><path d="M12 9.5h6M12 15.5h6"/></svg>'},
   {k:'cloud',g:'Review',key:'Q',t:"Revision cloud with a delta",svg:'<svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg>'},
@@ -4286,6 +4302,7 @@ function setTool(t){
     cloud:'Revision cloud — click around what changed, ⏎ to close it',
     legend:'Legend — tap where the key should sit',
     vs:'Find a symbol — drag a box round one of them',
+    space:'Space — click each corner of the room, ⏎ to close it, then name it',
     driver:'Driver — tap to place a power supply, then assign what it feeds',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
     text:'Text — tap to place a note on the sheet',
@@ -4671,7 +4688,7 @@ function endPointer(e){
   if(tool==='photo'){ if(!pr.moved) placePhoto(p); return; }
   if(tool==='legend'){ if(!pr.moved) placeLegend(p); return; }
   if(tool==='whip'){ tapVertex(p,e); syncDrawbar(); return; }
-  if(tool==='area'||tool==='cloud'){ tapVertex(p,e); syncDrawbar(); return; }
+  if(tool==='area'||tool==='cloud'||tool==='space'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
   if(tool==='link'){ if(!pr.moved) placeLink(p); return; }
   if(tool==='text'){ if(!pr.moved) placeText(p); return; }
@@ -4701,7 +4718,7 @@ function tapVertex(p,e){
     if(prev&&ptLen(prev,p)<0.6&&ptLen(prev,raw)>=0.6){ p=raw; V.snapHit=null; }
   }
   if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':V.tool==='cloud'?'cloud'
-      :V.tool==='whip'?'whip':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
+      :V.tool==='whip'?'whip':V.tool==='space'?'space':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
     color:V.tool==='cal'||V.tool==='whip'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined,
     off:V.tool==='area'?(+P.areaOff||0):undefined};
   else{
@@ -4778,7 +4795,7 @@ function tapArc(p){
   drawOverlay(); liveLen(V.draft);
 }
 stage.addEventListener('dblclick',e=>{
-  if(V.draft&&/^(line|area|cloud|whip)$/.test(V.draft.type)){ e.preventDefault(); finishDraft(); return; }
+  if(V.draft&&/^(line|area|cloud|whip|space)$/.test(V.draft.type)){ e.preventDefault(); finishDraft(); return; }
   if(V.tool==='pan'){
     const sc=toS(e), h=hitTest(sc[0],sc[1],9);
     /* double-click any text-bearing markup to edit it in place */
@@ -4930,7 +4947,7 @@ stage.addEventListener('contextmenu',e=>{
     if(lc){ V.sel=lc.a.id; drawOverlay(); showInspector(lc.a); renderAnnList();
       showCtx(e.clientX,e.clientY,ctxForLabel(lc)); return; }
   }
-  if(V.draft&&/^(line|area|cloud|whip)$/.test(V.draft.type)&&V.draft.pts.length>2){ finishDraft(); return; }
+  if(V.draft&&/^(line|area|cloud|whip|space)$/.test(V.draft.type)&&V.draft.pts.length>2){ finishDraft(); return; }
   if(V.draft){ V.draft=null; drawOverlay(); syncDrawbar(); return; }
   const sc=toS(e); ctxPt=toPt(e);
   const h=hitTest(sc[0],sc[1],10);
@@ -4945,7 +4962,7 @@ const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawi
   arrow:'Arrow',hl:'Highlight',ell:'Ellipse',ang:'Angle',rad:'Radius',
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
   area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver',
-  feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo',legend:'Legend'};
+  feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo',legend:'Legend',space:'Space'};
 async function offsetAnn(a){
   if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
   const k=inPerPt();
@@ -5252,6 +5269,23 @@ async function finishDraft(){
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
   }
+  if(d.type==='space'){
+    let pts=d.pts.slice(0,-1);
+    pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
+    if(pts.length<3){ drawOverlay(); toast('A space needs at least three corners'); return; }
+    snap('Space');
+    const a={id:uid('a_'),type:'space',doc:d.doc,page:d.page,pts,color:'#7FB77E',w:d.w||V.width,name:''};
+    P.ann.push(a); V.sel=a.id;
+    drawOverlay(); renderAnnList();
+    if(!await nameSpace(a,true)){
+      /* an unnamed space attributes nothing, so it is not worth keeping */
+      P.ann=P.ann.filter(x=>x.id!==a.id); V.sel=null;
+      invalidateAnns(); drawOverlay(); renderAnnList();
+      return;
+    }
+    showInspector(a);
+    return;
+  }
   if(d.type==='cloud'){
     let pts=d.pts.slice(0,-1);
     pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
@@ -5372,6 +5406,74 @@ function countTotals(){
   return Object.values(g).map(v=>({grp:v.grp,sym:v.sym,n:v.n,sheets:[...v.sheets].sort().join(', ')}))
     .sort((a,b)=>a.grp.localeCompare(b.grp));
 }
+/* ---- spaces ----
+   A named region of the drawing — a room, a level, a zone — so a markup is
+   attributed to where it actually is rather than to whatever someone typed. A
+   space is not a measurement: it is a label for an area of the sheet, which is why
+   it is its own kind and not a region with a name on it.
+
+   Where spaces nest, the smallest one containing a markup wins, so "Level 2" and
+   "Lobby" inside it both work and the finer answer is the one reported. */
+const spaces=()=>P.ann.filter(a=>a.type==='space'&&Array.isArray(a.pts)&&a.pts.length>2);
+function spaceArea(a){
+  const pts=a.pts;
+  let s2=0;
+  for(let i=0,j=pts.length-1;i<pts.length;j=i++) s2+=(pts[j][0]*pts[i][1]-pts[i][0]*pts[j][1]);
+  return Math.abs(s2/2);
+}
+/* the middle of a markup, which is what decides the space it is in */
+function annCentre(a){
+  if(a.type==='count'||a.type==='feed'||a.type==='splice'||a.type==='photo'||a.type==='driver'
+    ||a.type==='legend'||a.type==='text'||a.type==='note') return a.pts[0];
+  const b=annBox(a);
+  return [(b.x1+b.x2)/2,(b.y1+b.y2)/2];
+}
+function spaceAt(doc,page,pt){
+  let best=null;
+  spaces().forEach(sp=>{
+    if(sp.doc!==doc||(sp.page||1)!==(page||1)) return;
+    if(!ptInPoly(pt,sp.pts)) return;
+    const ar=spaceArea(sp);
+    if(!best||ar<best.ar) best={sp,ar};
+  });
+  return best?best.sp:null;
+}
+function spaceOf(a){
+  if(!a||!Array.isArray(a.pts)||!a.pts.length||a.type==='space') return null;
+  return spaceAt(a.doc,a.page,annCentre(a));
+}
+const spaceName=a=>{ const sp=spaceOf(a); return sp?(sp.name||'Space'):''; };
+/* a run belongs where the thing it measures is */
+function treatSpace(t){
+  const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+  if(an) return spaceName(an);
+  return '';
+}
+async function nameSpace(a,isNew){
+  const used=[...new Set(spaces().map(s2=>s2.name).filter(Boolean))];
+  const r=await dlg({title:isNew?'Name this space':'Rename “'+(a.name||'Space')+'”',fields:[
+    {k:'name',label:'Name',val:a.name||'',ph:'Lobby'},
+    ...(used.length?[{k:'pick',type:'select',label:'Or reuse one',
+      opts:[{v:'',t:'— type a new one —'}].concat(used.map(x=>({v:x,t:x}))),val:''}]:[]),
+    ...(isNew?[]:[{k:'del',type:'check',cap:'Delete this space',val:false}])
+  ],ok:isNew?'Name it':'Apply',
+    note:'Markups inside it are attributed to it — in the markups list, the rollups and a legend. Where spaces nest, the smallest one wins.'});
+  if(!r) return false;
+  if(r.del){
+    P.ann=P.ann.filter(x=>x.id!==a.id);
+    V.sel=null; showInspector(null);
+    invalidateAnns(); drawOverlay(); renderAnnList(); renderRollups(); markDirty();
+    toast('Space deleted — what was in it is no longer attributed to it');
+    return true;
+  }
+  const name=String(r.pick||r.name||'').trim();
+  if(!name){ toast('A space needs a name to be any use'); return false; }
+  a.name=name;
+  invalidateAnns(); drawOverlay(); renderAnnList(); renderRollups(); renderTreatments(); markDirty();
+  const n=P.ann.filter(x=>x.type!=='space'&&spaceOf(x)===a).length;
+  toast('“'+name+'” \u2014 '+n+' markup'+(n===1?'':'s')+' inside it');
+  return true;
+}
 /* ---- legends ----
    A key placed on the sheet itself, so a colour-coded takeoff reads without the
    panels. It is generated from the markups every time it is drawn rather than
@@ -5380,6 +5482,7 @@ const LEG_BY=[
   {v:'type',t:'Runs by TYPE'},
   {v:'zone',t:'Runs by Zone #'},
   {v:'status',t:'Runs by status'},
+  {v:'space',t:'Runs by space'},
   {v:'count',t:'Counted items'},
   {v:'kind',t:'Markups by kind'},
 ];
@@ -5426,7 +5529,9 @@ function legendRows(a){
   P.treat.filter(t=>legTreatIn(a,t)).forEach(t=>{
     const r=calc(t);
     if(r.L<=0) return;
-    const k=by==='status'?statusOf(t):(((by==='zone'?t.zone:t.type)||'').trim()||'\u2014');
+    const k=by==='status'?statusOf(t)
+      :by==='space'?(treatSpace(t)||'\u2014')
+      :(((by==='zone'?t.zone:t.type)||'').trim()||'\u2014');
     const lab=by==='status'?statusLabel(k):k;
     const col=by==='status'?statusColor(k):codeColor(k);
     g[k]=g[k]||{key:k,label:lab,color:col,n:0,led:0};
@@ -5998,6 +6103,19 @@ function showInspector(a){
     } else h+='<div class="hint">Set the scale to read the radius.</div>';
     h+='<div class="hint">Three points anywhere along the curve. Use the radius to curve a run\u2019s segment to match.</div>';
   }
+  if(a.type==='space'){
+    const k=inPerPt();
+    const inside=P.ann.filter(x=>x.type!=='space'&&spaceOf(x)===a);
+    const runs=P.treat.filter(t=>{ const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+      return an&&spaceOf(an)===a; });
+    h+='<div class="kv"><span>Name</span><b class="hi">'+esc(a.name||'unnamed')+'</b></div>';
+    if(k) h+='<div class="kv"><span>Area</span><b>'+fmtArea(spaceArea(a)*k*k)+'</b></div>';
+    h+='<div class="kv"><span>Markups inside</span><b>'+inside.length+'</b></div>';
+    h+='<div class="kv"><span>Runs inside</span><b>'+runs.length
+      +(runs.length?'  ·  '+fmtRun(runs.reduce((s2,t)=>s2+calc(t).tot.cut,0)):'')+'</b></div>';
+    h+='<button class="btn" data-act="spn">Rename or delete…</button>';
+    h+='<div class="hint">Everything whose middle falls inside is attributed to it. Where spaces nest, the smallest wins.</div>';
+  }
   if(a.type==='legend'){
     const d=legendRows(a);
     h+='<div class="kv"><span>Rows</span><b class="hi">'+d.rows.length+'</b></div>';
@@ -6240,6 +6358,7 @@ function showInspector(a){
     if(act==='pho') openPhoto(a);
     if(act==='half') splitHalf(a);
     if(act==='rnd') roundCorners(a);
+    if(act==='spn') nameSpace(a,false);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -6362,7 +6481,7 @@ function renderCodeKey(){
    Notes and text get in the way while measuring, so each kind can be hidden.
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
-  ['cloud','Revision clouds'],['legend','Legends'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
+  ['cloud','Revision clouds'],['space','Spaces'],['legend','Legends'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
   ['whip','Home runs'],['photo','Photos'],['ell','Ellipses'],['ang','Angles'],['rad','Radii'],
   ['arrow','Arrows'],['hl','Highlights'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
@@ -6536,13 +6655,14 @@ function markRows(){
     return {a,id:a.id,
       sheet:(d?d.name.replace(/\.pdf$/i,''):'\u2014'),page:a.page||1,
       kind:(a.type==='line'&&a.poly)?'Poly length':(ANN_NAMES[a.type]||a.type),
-      subject:markSubject(a),val:v,valText:markValueText(v),
+      subject:markSubject(a),space:a.type==='space'?(a.name||'\u2014'):spaceName(a),
+      val:v,valText:markValueText(v),
       status:a.status||'',cols:colDefs().map(c=>colVal(a,c.id))};
   });
 }
 function markMatch(r,q){
   if(!q) return true;
-  const hay=[r.sheet,'p'+r.page,r.kind,r.subject,r.valText,r.status]
+  const hay=[r.sheet,'p'+r.page,r.kind,r.subject,r.space,r.valText,r.status]
     .concat(r.cols.map(String)).join(' ').toLowerCase();
   return q.toLowerCase().split(/\s+/).filter(Boolean).every(w=>hay.includes(w));
 }
@@ -7455,6 +7575,7 @@ function outHtml(r,t){
     ['Dimming',r.dim?(dimLabel(r.dim)+(r.dim==='none'?'':(r.dimBad?'  \u00b7  not on this supply'
         :(r.dimKnown?'  \u00b7  supply does it':'  \u00b7  supply not on file')))):'\u2014',false],
     ['Order code',r.codeFmt?r.code:'no format on file',!!(r.codeFmt&&!r.codeMiss.length)],
+    ['Space',treatSpace(t)||'—',false],
     ['Build',r.vars.length?(r.vr?varLabel(r.vr)+(+r.vr.maxLen>0?'  ·  up to '+fmtRun(+r.vr.maxLen):''):'not specified — base figures'):'—',false],
     ['Fed by',(r.feedIn||r.feedOut)
       ?[r.feedIn?r.feedIn+' in':'',r.feedOut?r.feedOut+' out':''].filter(Boolean).join('  ·  ')
@@ -8265,6 +8386,8 @@ function renderRollups(){
   renderMarks(); renderIssues();
   renderDrivers(); renderWhips();
   rollTable($('#zoneTbl'),'Zone',rollup(t=>t.zone||'(no zone)'));
+  const spTbl=$('#spaceTbl');
+  if(spTbl) rollTable(spTbl,'Space',rollup(t=>treatSpace(t)||'(no space)'));
   rollTable($('#sheetTbl'),'Sheet',rollup(t=>t.docId||'(none)',
     t=>((P.docs.find(d=>d.id===t.docId)||{}).name||'(no sheet)').replace(/\.pdf$/i,'')));
 }
@@ -8310,12 +8433,13 @@ function renderMarks(){
       +(cols.length?'  ·  '+cols.length+' custom column'+(cols.length===1?'':'s'):''))
     :'';
   const st=statusList();
-  el.innerHTML='<tr><th>Sheet</th><th>Kind</th><th>Subject</th><th class="n">Value</th><th>Status</th>'
+  el.innerHTML='<tr><th>Sheet</th><th>Kind</th><th>Subject</th><th>Space</th><th class="n">Value</th><th>Status</th>'
     +cols.map(c2=>'<th>'+esc(c2.name)+'</th>').join('')+'</tr>'
     +rows.map(r=>'<tr data-mark="'+r.id+'">'
       +'<td class="hint">'+esc(r.sheet)+' p'+r.page+'</td>'
       +'<td>'+esc(r.kind)+'</td>'
       +'<td>'+esc(r.subject)+'</td>'
+      +'<td class="hint">'+esc(r.space||'\u2014')+'</td>'
       +'<td class="n" style="color:var(--amber)">'+esc(r.valText)+'</td>'
       +'<td><select data-mstat="'+r.id+'"><option value="">—</option>'
         +st.map(x=>'<option value="'+esc(x)+'"'+(r.status===x?' selected':'')+'>'+esc(x)+'</option>').join('')
@@ -8326,7 +8450,7 @@ function renderMarks(){
         +'</select></td>'
       +cols.map((c2,i)=>'<td>'+markCell(r,c2,i)+'</td>').join('')
       +'</tr>').join('')
-    +capNote('markTbl',{shown:rows,all:rows,cut:0},5+cols.length);
+    +capNote('markTbl',{shown:rows,all:rows,cut:0},6+cols.length);
   $$('[data-mark]',el).forEach(tr=>tr.onclick=e=>{
     if(e.target.tagName==='SELECT'||e.target.tagName==='INPUT') return;
     const a=P.ann.find(x=>x.id===tr.dataset.mark);
@@ -8819,14 +8943,14 @@ async function exportBox(name,text){
 }
 $('#btnCsvCut').onclick=()=>{
   const rows=[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind','Build','IP','CCT (K)',
-    'Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Channel','Runs',
+    'Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Space','Channel','Runs',
     'Field length (ft)','Field length (in)','Cut length (ft)','Cut length (in)',
     'Cut increment (ft)','Units per run','Watts total','Feed points','Feeds set manually','Approved','Approved at',
     'Channel length (ft)','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']];
   P.treat.forEach(t=>{ const r=calc(t);
     rows.push([tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',t.detail||'',r.f.name,r.kind,
       r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,
-      (t.rev&&t.rev.n)?('rev '+t.rev.n):'',r.c.name+' (cut to length)',r.qty,
+      (t.rev&&t.rev.n)?('rev '+t.rev.n):'',treatSpace(t),r.c.name+' (cut to length)',r.qty,
       (r.L/12).toFixed(2),r.L.toFixed(1),(r.cut/12).toFixed(2),r.cut.toFixed(1),
       r.inc>0?(r.inc/12).toFixed(3):'any',r.inc>0?r.units:'',
       r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',
@@ -9185,14 +9309,14 @@ function xlsx(sheets){
 function workbookSheets(){
   const S=[];
   S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind',
-    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Channel',
+    'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Space','Channel',
     'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
     'Channel ft','Channel pcs','Clips','End caps','Supply','Supply qty','Notes']].concat(
     P.treat.map(t=>{ const r=calc(t);
       return [tagOf(t),t.type||'',t.zone||'',t.name,t.room,(P.docs.find(d=>d.id===t.docId)||{}).name||'',
         t.detail||'',r.f.name,r.kind,r.vr?r.vr.c:'',r.vr?(r.vr.ip||''):'',
         r.cct,r.feedIn,r.feedOut,r.wire,r.wtype,r.code,r.dim,(t.rev&&t.rev.n)?('rev '+t.rev.n):'',
-        r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
+        treatSpace(t),r.c.name,r.qty,+(r.L/12).toFixed(3),+r.L.toFixed(2),
         +(r.cut/12).toFixed(3),+r.cut.toFixed(2),r.inc>0?+(r.inc/12).toFixed(4):'any',r.inc>0?r.units:'',
         +r.tot.watts.toFixed(1),r.tot.feeds,r.feedSet?'yes':'no',+(r.tot.chLen/12).toFixed(3),r.tot.pieces,
         r.tot.clips,r.tot.caps,r.ps.name,r.psuQty,t.notes||'']; }))});
@@ -9825,11 +9949,11 @@ $('#markFind').onsearch=()=>renderMarks();
 $('#markScope').onchange=e=>{ P.markScope=e.target.value; renderMarks(); markDirty(); };
 $('#btnMarkCsv').onclick=()=>{
   const cols=colDefs();
-  const rows=[['Sheet','Page','Kind','Subject','Value','Unit','Status','Status set at']
+  const rows=[['Sheet','Page','Kind','Subject','Space','Value','Unit','Status','Status set at']
     .concat(cols.map(c=>c.name))];
   const q=(($('#markFind')||{}).value||'').trim();
   markRows().filter(r=>markMatch(r,q)).forEach(r=>rows.push([
-    r.sheet,r.page,r.kind,r.subject,
+    r.sheet,r.page,r.kind,r.subject,r.space,
     r.val.n==null?'':(r.val.unit==='len'||r.val.unit==='area')?(r.val.n/12).toFixed(3):r.val.n,
     r.val.unit==='len'?'ft':r.val.unit==='area'?'sq in/12':r.val.unit,
     r.status||'',r.a.statusAt||''].concat(r.cols)));
@@ -10249,6 +10373,7 @@ document.addEventListener('keydown',e=>{
   if(k==='y'&&!(e.metaKey||e.ctrlKey)) setTool('ang');
   if(k==='u'&&!(e.metaKey||e.ctrlKey)) setTool('rad');
   if(k==='i'&&!(e.metaKey||e.ctrlKey)) setTool('vs');
+  if(k==='z'&&!(e.metaKey||e.ctrlKey)) setTool('space');
   if(k==='w'&&!(e.metaKey||e.ctrlKey)) setTool('whip');
   if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
   /* ? and F1 both open the manual; ? needs shift on most layouts, so match either */
@@ -10428,6 +10553,7 @@ const KEYS=[
   {g:'Tools',k:'Y',t:'Angle — the two legs of a corner'},
   {g:'Tools',k:'U',t:'Radius — three points along a curve'},
   {g:'Tools',k:'I',t:'Find a symbol — box one, count the rest'},
+  {g:'Tools',k:'Z',t:'Space — name a room, and what falls in it belongs to it'},
   {g:'Tools',k:'M',t:'Count — stamp and tally a symbol'},
   {g:'Tools',k:'Q',t:'Revision cloud with a delta'},
   {g:'Tools',k:'D',t:'Place a driver'},
@@ -10544,6 +10670,7 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Spaces (Z)','A named region of the drawing \u2014 a room, a level, a zone \u2014 so a markup is attributed to where it actually is rather than to whatever someone typed. Trace it, name it, and everything whose middle falls inside belongs to it: the markups list gets a Space column, the cut list and the workbook carry it, there is a By space rollup, and a legend can group by it. Where spaces nest the smallest one wins, so a level and a room inside it both work and the finer answer is the one reported. A space is a label, not a measurement \u2014 it never feeds a run \u2014 and one left unnamed is not kept, because it would attribute nothing.'],
       ['Markups list','Every markup in the job as rows \u2014 sheet and page, kind, subject, what it measures, a status, and any columns you add. Click a row to jump to the markup. Filter across every field at once, show this page, this sheet or the whole job, and export what is showing. The value column totals by unit, so feet and degrees are never added together.'],
       ['Statuses','A status per markup, from a set you can rewrite to match how the office tracks work \u2014 the standard set is Open, In review, Closed, Accepted, Rejected. When a status is set the time is recorded with it. A status already on a markup is kept even if it leaves the set, so changing the set never quietly rewrites a decision.'],
       ['Custom columns','Text, number, choice or date columns against any markup \u2014 a cost code, a trade, a room, a due date. This is how a takeoff becomes priced data. Columns are part of the job and export with it; removing one drops the values in it, and says so.'],
@@ -11017,6 +11144,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   palTools,noteRecent,recentMax:RECENT_MAX,
   ellOf,ellPts,angOf,radOf,tapThree,
   legendRows,legendBox,placeLegend,legendBy:LEG_BY,legendScopes:LEG_SCOPE,
+  spaces,spaceArea,spaceAt,spaceOf,spaceName,treatSpace,nameSpace,annCentre,
   markRows,markMatch,markValue,markSubject,renderMarks,manageCols,manageStatuses,
   statusList,colDefs,colVal,setColVal,colTypes:COL_TYPES,markScopes:MARK_SCOPES,
   visualSearch,runVisualSearch,inkOf,integral,boxSum,matchOn,suppress,vsPages,vsScale:VS_SCALE,

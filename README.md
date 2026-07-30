@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.47.0**
+**Version 1.48.0**
 
 ## What it does
 
@@ -228,6 +228,27 @@ However many tools are on, the toolbar stays **one row**: the tool strip yields
 space to the zoom and page controls and scrolls sideways inside itself, so those
 never move. On a tablet the whole row scrolls instead, so one swipe reaches
 everything.
+
+## Spaces (Z)
+
+A named region of the drawing — a room, a level, a zone — so a markup is
+attributed to **where it actually is** rather than to whatever someone typed.
+Trace it, name it, and everything whose middle falls inside belongs to it:
+
+- the markups list gets a **Space** column, and the filter searches it
+- the cut list and the workbook carry it
+- there is a **By space** rollup beside by zone and by sheet
+- a legend can group by it
+- the run card says where the run is
+
+Where spaces **nest, the smallest one wins**, so a level and a room inside it both
+work and the finer answer is the one reported — and deleting the inner one hands
+its contents back to the outer. Moving a markup moves what it belongs to; its typed
+zone is left alone, because a space attributes rather than rewrites.
+
+A space is a label, not a measurement — it never feeds a run. One left unnamed is
+not kept, since it would attribute nothing, and neither is one with fewer than three
+corners.
 
 ## The markups list
 
