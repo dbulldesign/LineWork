@@ -489,6 +489,32 @@ body.padtop header.tb{padding-top:24px}
 /* ---------- pen & touch ---------- */
 #penDot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:1.5px solid var(--flag);border-radius:50%;pointer-events:none;display:none;z-index:4;mix-blend-mode:difference}
 #penDot.show{display:block}
+/* the Pencil is hovering over something it would grab: say which, before contact */
+#penDot.snap{width:20px;height:20px;margin:-10px 0 0 -10px;border-width:2px;
+  border-color:var(--ok);mix-blend-mode:normal;background:rgba(143,196,106,.18)}
+#penHint{position:absolute;pointer-events:none;display:none;z-index:5;
+  transform:translate(10px,-26px);font:600 11px/1.5 var(--mono);white-space:nowrap;
+  background:var(--ovl);color:var(--txt);border:1px solid var(--line2);border-radius:3px;padding:2px 6px}
+#penHint.show{display:block}
+/* ---- the ring ----
+   A press and hold on the sheet puts the things you reach for most around the point
+   you are already touching, so the hand does not travel to the toolbar and back. */
+.ring{position:fixed;inset:0;z-index:78;display:none}
+.ring.show{display:block}
+.ring .rbg{position:absolute;inset:0;background:rgba(0,0,0,.28)}
+.ring .rc{position:absolute;width:0;height:0}
+.ring .rb{position:absolute;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  background:var(--s2);border:1px solid var(--line2);color:var(--txt);
+  box-shadow:0 6px 20px rgba(0,0,0,.45);transition:transform .12s,background .12s}
+.ring .rb svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.7;
+  stroke-linecap:round;stroke-linejoin:round}
+.ring .rb.on{background:var(--amber);color:#1a1510;border-color:var(--amber)}
+.ring .rb:active{transform:scale(.92)}
+.ring .rlab{position:absolute;transform:translate(-50%,-50%);font:600 10px/1 var(--mono);
+  letter-spacing:.08em;text-transform:uppercase;color:var(--dim);text-align:center;
+  background:var(--ovl);padding:3px 7px;border-radius:3px;border:1px solid var(--line)}
+@media(pointer:coarse){ .ring .rb{width:58px;height:58px;margin:-29px 0 0 -29px} }
 /* A banner in the layout rather than a floating overlay — it used to sit on top
    of the toolbar and swallow clicks meant for it. */
 #calNag{flex:0 0 auto;display:flex;align-items:center;gap:9px;flex-wrap:wrap;
@@ -644,6 +670,7 @@ body.haspen #penFlag{display:inline}
   <div id="viewport" class="pan">
     <div id="stage" style="display:none"><canvas id="pdfBase"></canvas><canvas id="pdfCanvas"></canvas><canvas id="pdfCanvas2"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg></div>
     <div id="penDot"></div>
+    <div id="penHint"></div>
     <div class="blank" id="blank">
       <div class="dropzone" id="drop">
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#6E6357" stroke-width="1.2"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 14h6M9 17h4"/></svg>
@@ -866,6 +893,7 @@ body.haspen #penFlag{display:inline}
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div id="pals"></div>
+<div class="ring" id="ring"><div class="rbg"></div><div class="rc" id="ringC"></div></div>
 <div class="toast" id="toast"></div>
 <div class="prog" id="prog" role="status" aria-live="polite">
   <h4 id="progT">Working</h4>
@@ -909,7 +937,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.63.0';
+const APP_VER='1.64.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -4092,6 +4120,36 @@ function showMultiInspector(){
 }
 /* ---- pointer engine: mouse, Apple Pencil, multi-touch ---- */
 const PT=new Map();
+/* ---- two and three finger taps ---- */
+const TAP={n:0,at:0,moved:false,ids:new Set()};
+const TAP_MS=350, TAP_SLOP=16;
+function tapDown(e){
+  const now=Date.now();
+  if(now-TAP.at>TAP_MS||!TAP.ids.size){ TAP.n=0; TAP.moved=false; TAP.ids.clear();
+    /* remembered here because a second finger starts a pinch, and starting a pinch
+       throws the run away — by the time the fingers come up V.draft is already null */
+    TAP.draft=!!V.draft; }
+  TAP.at=now; TAP.ids.add(e.pointerId); TAP.n=Math.max(TAP.n,TAP.ids.size);
+  TAP.x=e.clientX; TAP.y=e.clientY;
+}
+function tapMoved(e){
+  if(!TAP.ids.has(e.pointerId)) return;
+  const r=PT.get(e.pointerId);
+  if(r&&Math.hypot(e.clientX-r.x0,e.clientY-r.y0)>TAP_SLOP) TAP.moved=true;
+}
+function tapUp(e){
+  if(!TAP.ids.has(e.pointerId)) return;
+  TAP.ids.delete(e.pointerId);
+  if(TAP.ids.size) return;                       /* wait for the last one up */
+  const quick=Date.now()-TAP.at<TAP_MS+150;
+  const n=TAP.n; TAP.n=0;
+  /* two fingers down always starts a pinch — that is what a pinch begins as. It is
+     only not a tap once the fingers actually spread or travel. */
+  if(TAP.moved||!quick||V.draft||TAP.draft||(pinch&&pinch.did)) return;
+  if(P.fingerTap===false) return;
+  if(n===2){ if(undo()) closeRing(); }
+  else if(n===3){ redo(); closeRing(); }
+}
 let pan=null, press=null, stroke=null, pinch=null, wz=null, activePen=null, lastPenAt=0;
 let suppressCtx=false, ctxPt=null, CLIP=null, edit=null;
 /* grab points on the selected markup, so a committed markup stays editable */
@@ -4884,6 +4942,58 @@ async function editPal(p){
    menu opens, aimed at whatever is under your finger. Any movement, a second
    finger, or lifting early cancels it. */
 let lp=null;
+/* ---- the ring ----
+   The tools you reach for most, put around the point you are already holding, so on
+   a tablet the hand stops travelling to the toolbar and back. Eight is the most that
+   stays hittable with a thumb; anything else is one more tap away through More.
+   The full menu is still there — the ring is the shortcut, not a replacement. */
+const RING=[
+  {k:'pan',   t:'Select'},
+  {k:'line',  t:'Dimension'},
+  {k:'poly',  t:'Poly'},
+  {k:'area',  t:'Region'},
+  {k:'count', t:'Count'},
+  {k:'note',  t:'Note'},
+  {a:'undo',  t:'Undo'},
+  {a:'more',  t:'More…'}
+];
+let ringOn=false;
+function closeRing(){ if(!ringOn) return; ringOn=false; $('#ring').classList.remove('show'); }
+function showRing(x,y,sc){
+  const wrap=$('#ring'), c=$('#ringC');
+  const R=88, n=RING.length;
+  /* kept clear of the edges so no button lands off screen */
+  const cx=clamp(x,R+34,innerWidth-R-34), cy=clamp(y,R+34,innerHeight-R-34);
+  c.style.left=cx+'px'; c.style.top=cy+'px';
+  c.innerHTML=RING.map((it,i)=>{
+    const ang=-Math.PI/2+i*(2*Math.PI/n);
+    const bx=Math.cos(ang)*R, by=Math.sin(ang)*R;
+    const on=it.k&&V.tool===it.k;
+    const svg=it.k?((toolDef(it.k)||{}).svg||''):
+      (it.a==='undo'?'<svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10H9"/></svg>'
+        :'<svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg>');
+    return '<button class="rb'+(on?' on':'')+'" data-r="'+i+'" style="left:'+bx.toFixed(0)+'px;top:'+by.toFixed(0)+'px" '
+      +'title="'+esc(it.t)+'">'+svg+'</button>'
+      +'<div class="rlab" style="left:'+(bx*1.42).toFixed(0)+'px;top:'+(by*1.42).toFixed(0)+'px">'+esc(it.t)+'</div>';
+  }).join('');
+  ringOn=true;
+  wrap.classList.add('show');
+  $$('.rb',c).forEach(b=>{ b.onclick=ev=>{
+    ev.preventDefault(); ev.stopPropagation();
+    const it=RING[+b.dataset.r];
+    closeRing();
+    if(it.k){ setTool(it.k); toast(it.t); return; }
+    if(it.a==='undo'){ undo(); return; }
+    if(it.a==='more'){
+      /* the same menu a right-click gives, from where the ring was */
+      const h=sc?hitTest(sc[0],sc[1],18):null;
+      ctxPt=sc&&V.vp?V.vp.convertToPdfPoint(sc[0],sc[1]):null;
+      if(h){ V.sel=h.id; V.multi=[]; drawOverlay(); showInspector(h); renderAnnList(); }
+      showCtx(x,y,h?ctxForAnn(h):ctxForSheet());
+    }
+  }; });
+}
+$('#ring').addEventListener('pointerdown',e=>{ if(e.target.closest('.rb')) return; closeRing(); });
 function startLongPress(e,sc){
   cancelLongPress();
   if(V.draft) return;                         /* mid-run: the run bar owns the gestures */
@@ -4901,7 +5011,11 @@ function startLongPress(e,sc){
       const h=hitTest(lp.sc[0],lp.sc[1],18);
       if(h){ V.sel=h.id; V.multi=[]; drawOverlay(); showInspector(h); renderAnnList(); }
       else { V.sel=null; showInspector(null); drawOverlay(); }
-      showCtx(lp.x,lp.y,h?ctxForAnn(h):ctxForSheet());
+      /* On bare paper the ring is the faster thing to offer; on a markup the list is,
+         because those actions are specific and named. More… reaches the list either
+         way, and the setting turns the ring off for anyone who would rather not. */
+      if(!h&&P.ring!==false) showRing(lp.x,lp.y,lp.sc);
+      else showCtx(lp.x,lp.y,h?ctxForAnn(h):ctxForSheet());
     },500)};
 }
 function cancelLongPress(){ if(lp){ clearTimeout(lp.t); lp=null; } }
@@ -4913,6 +5027,27 @@ const touchPts=()=>[...PT.values()].filter(x=>x.t==='touch');
 stage.addEventListener('pointerdown',e=>{
   if(!V.vp) return;
   if(narrowUI()) closeRails();
+  closeRing();
+  /* The eraser end of a Pencil, where iPadOS reports it: button 5 is the standard
+     signal and buttons bit 32 is the same thing while it is down. Support comes and
+     goes between versions, so this is a bonus that degrades to nothing rather than a
+     way of erasing anyone has to rely on — the tools and Delete still work. */
+  if(e.pointerType==='pen'&&(e.button===5||(e.buttons&32))){
+    e.preventDefault();
+    const sc=toS(e);
+    const h=hitTest(sc[0],sc[1],20);
+    if(h){
+      if(h.flat){ toast('That one is flattened — unflatten it first'); return; }
+      snap('Erase');
+      const gone=annName(h);
+      P.ann=P.ann.filter(x=>x.id!==h.id);
+      P.treat.forEach(t=>{ if(t.annId===h.id){ const L=lenOf(t); if(L>0&&!(+t.manual>0)) t.manual=L; t.annId=null; } });
+      V.sel=null; showInspector(null);
+      invalidateAnns(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+      toast('Erased the '+gone);
+    }else toast('Nothing under the eraser');
+    return;
+  }
   if(e.pointerType==='mouse'&&e.button!==0){
     if(e.button===1||e.button===2){                       /* middle or right drag pans */
       e.preventDefault(); closeCtx(); press=null;
@@ -4923,7 +5058,12 @@ stage.addEventListener('pointerdown',e=>{
   }
   if(isPalm(e)) return;                                   /* palm rejection */
   closeCtx();
-  PT.set(e.pointerId,{t:e.pointerType,x:e.clientX,y:e.clientY});
+  PT.set(e.pointerId,{t:e.pointerType,x:e.clientX,y:e.clientY,x0:e.clientX,y0:e.clientY});
+  /* Two fingers tapped is undo and three is redo, the way iPadOS does it everywhere
+     else. It is a tap, not a hold and not a drag: the fingers have to go down close
+     together in time, come up quickly, and not travel, or a pinch would undo the work
+     it was meant to zoom. */
+  if(e.pointerType==='touch') tapDown(e);
   if(e.pointerType==='pen'){
     activePen=e.pointerId; lastPenAt=Date.now(); document.body.classList.add('haspen');
     /* first Pencil stroke of the session, and no explicit choice made */
@@ -5020,10 +5160,11 @@ stage.addEventListener('pointerdown',e=>{
 stage.addEventListener('pointermove',e=>{
   if(!V.vp) return;
   const rec=PT.get(e.pointerId); if(rec){ rec.x=e.clientX; rec.y=e.clientY; }
+  if(e.pointerType==='touch') tapMoved(e);
   if(lp&&lp.id===e.pointerId&&!lp.fired&&Math.hypot(e.clientX-lp.x,e.clientY-lp.y)>10) cancelLongPress();
   if(lp&&lp.fired&&lp.id===e.pointerId) return;      /* the menu is up; ignore the finger */
   if(e.pointerType==='pen'){ lastPenAt=Date.now();
-    if(e.buttons===0){ const sc=toS(e); const d=$('#penDot'); d.classList.add('show'); d.style.left=sc[0]+'px'; d.style.top=sc[1]+'px'; } }
+    if(e.buttons===0) penHover(toS(e)); }
   if(pinch){ movePinch(); return; }
   if(V.marq&&V.marq.id===e.pointerId){
     const sc=toS(e); V.marq.x1=sc[0]; V.marq.y1=sc[1];
@@ -5097,6 +5238,7 @@ function liveLen(d){
   syncDrawbar();
 }
 function endPointer(e){
+  if(e.pointerType==='touch') tapUp(e);
   PT.delete(e.pointerId);
   if(e.pointerType==='pen'){ activePen=null; lastPenAt=Date.now(); }
   if(longPressFired(e.pointerId)){ cancelLongPress(); press=null; pan=null;
@@ -5150,7 +5292,43 @@ function endPointer(e){
 }
 stage.addEventListener('pointerup',endPointer);
 stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); cancelLongPress(); if(edit) endEdit(); if(pinch&&touchPts().length<2) endPinch(); press=null; stroke=null; pan=null; if(V.draft&&V.draft.type==='ink'){V.draft=null;drawOverlay();} });
-stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot').classList.remove('show'); });
+stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') penOff(); });
+/* ---- what the Pencil is about to do ----
+   An iPad Pro reports the Pencil hovering before it touches down, which is the one
+   moment a preview is free: the dot moves to the corner it would grab and turns
+   green, and where a run is part-traced it says what that segment would add. So the
+   snap is confirmed before the mark is made rather than after. */
+const annName=a=>{
+  const n={line:'dimension',poly:'poly length',arc:'arc',area:'region',space:'space',cloud:'revision cloud',
+    count:'count stamp',text:'text',box:'box',note:'note',ink:'ink',arrow:'arrow',hl:'highlight',
+    ell:'ellipse',ang:'angle',rad:'radius',legend:'legend',link:'link',driver:'driver',
+    feed:'feed point',splice:'splice',whip:'home run',photo:'photo'}[a&&a.type];
+  return n||'markup';
+};
+function penOff(){ $('#penDot').classList.remove('show','snap'); $('#penHint').classList.remove('show'); }
+function penHover(sc){
+  const d=$('#penDot'), hint=$('#penHint');
+  if(!V.vp){ penOff(); return; }
+  /* snapAt works in PDF space and answers in it, so convert both ways */
+  const pdf=V.vp.convertToPdfPoint(sc[0],sc[1]);
+  const sn=snapAt(pdf);
+  const at=sn?sp(sn):sc;
+  d.classList.add('show');
+  d.classList.toggle('snap',!!sn);
+  d.style.left=at[0]+'px'; d.style.top=at[1]+'px';
+  /* mid-trace, the useful number is the leg you are about to add */
+  const bits=[];
+  if(sn) bits.push('snap');
+  const dr=V.draft;
+  if(dr&&Array.isArray(dr.pts)&&dr.pts.length&&isPolyDraft(dr)){
+    const k=inPerPt();
+    const last=dr.pts[dr.pts.length-1];
+    if(k&&last) bits.push('+'+fmtLen(ptLen(last,sn||pdf)*k));
+  }
+  if(bits.length){ hint.textContent=bits.join('  ·  ');
+    hint.style.left=at[0]+'px'; hint.style.top=at[1]+'px'; hint.classList.add('show'); }
+  else hint.classList.remove('show');
+}
 
 function tapVertex(p,e){
   if((isLineTool(V.tool)||V.tool==='area'||V.tool==='whip')&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
@@ -5335,7 +5513,9 @@ function startPinch(){
 function movePinch(){
   const t=touchPts(); if(t.length<2||!pinch) return;
   const mx=(t[0].x+t[1].x)/2, my=(t[0].y+t[1].y)/2;
-  zShow(pinch,Math.hypot(t[0].x-t[1].x,t[0].y-t[1].y)/pinch.d0,mx,my);
+  const k=Math.hypot(t[0].x-t[1].x,t[0].y-t[1].y)/pinch.d0;
+  if(Math.abs(k-1)>0.03) pinch.did=true;        /* really a pinch now, not a two-finger tap */
+  zShow(pinch,k,mx,my);
 }
 async function endPinch(){ const g=pinch; pinch=null; if(g) await zCommit(g); }
 document.addEventListener('gesturestart',e=>e.preventDefault());
@@ -5379,6 +5559,126 @@ function showCtx(x,y,items){
   $$('button[data-i]',c).forEach(b=>b.onclick=()=>{ closeCtx(); const it=items.find(i=>i.id===b.dataset.i); it&&it.fn&&it.fn(); });
   $$('.sw[data-col]',c).forEach(b=>b.onclick=()=>{ closeCtx(); const a=P.ann.find(x2=>x2.id===V.sel);
     if(a){ snap(); a.color=b.dataset.col; drawOverlay(); renderAnnList(); showInspector(a); markDirty(); } });
+}
+/* ---- a context menu on anything, not just the sheet ----
+   Right-click worked on the drawing and nowhere else, so every action on a row in
+   the rails had to be hunted for in a card or a dialog. This binds one row to one
+   menu, for both pointers at once: a mouse gets contextmenu, a finger or a Pencil
+   gets a press and hold, and both land in the same builder. */
+function wireCtx(el,items){
+  if(!el||el.dataset.ctx) return;
+  el.dataset.ctx='1';
+  el.addEventListener('contextmenu',e=>{
+    if(e.shiftKey) return;                     /* ⇧ still gives the browser's own */
+    e.preventDefault(); e.stopPropagation();
+    const list=items(); if(list&&list.length) showCtx(e.clientX,e.clientY,list);
+  });
+  /* the same menu from a press and hold, so a tablet is not a second-class way in */
+  let t=null,sx=0,sy=0;
+  const cancel=()=>{ clearTimeout(t); t=null; };
+  el.addEventListener('pointerdown',e=>{
+    if(e.pointerType==='mouse') return;
+    sx=e.clientX; sy=e.clientY;
+    t=setTimeout(()=>{ t=null;
+      const list=items(); if(list&&list.length) showCtx(sx,sy,list);
+    },CTX_HOLD);
+  });
+  el.addEventListener('pointermove',e=>{ if(t&&Math.hypot(e.clientX-sx,e.clientY-sy)>10) cancel(); });
+  ['pointerup','pointercancel','pointerleave'].forEach(k=>el.addEventListener(k,cancel));
+}
+const CTX_HOLD=500;
+/* what a row offers, per kind. Every one of these actions already existed — it was
+   only ever reachable somewhere else. */
+function ctxForSheetRow(d){
+  const out=[{hd:sheetLabel(d)}];
+  out.push({id:'op',t:'Open it',fn:()=>openDoc(d.id,1,true)});
+  if(FILES[d.id]){
+    out.push({id:'sc',t:'Set the scale…',fn:()=>{ openDoc(d.id,1,true).then(()=>pickScale()); }});
+    out.push({id:'ck',t:'Check the scale against a dimension',fn:()=>{ openDoc(d.id,1,true).then(()=>checkScale()); }});
+    out.push({id:'sm',t:'Scales across the sheet…',fn:()=>{ openDoc(d.id,1,true).then(()=>manageScales()); }});
+  }
+  out.push({hr:1});
+  out.push({id:'kd',t:d.kind==='plan'?'Call it a shop drawing':'Call it a plan',
+    fn:()=>{ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); }});
+  out.push({id:'tb',t:'Read the titleblock',fn:()=>{ openDoc(d.id,1,true).then(()=>$('#btnTitles').click()); }});
+  out.push({hr:1});
+  out.push({id:'del',t:'Delete this sheet…',danger:1,fn:()=>delDoc(d)});
+  return out;
+}
+function ctxForTreatRow(t){
+  const out=[{hd:tagOf(t)+(t.name?' · '+t.name:'')}];
+  if(t.annId) out.push({id:'sh',t:'Show on the drawing',fn:()=>{ const a=P.ann.find(x=>x.id===t.annId);
+    if(a) goToAnn(a,true); }});
+  out.push({id:'op',t:'Open this run',fn:()=>openTreat(t.id)});
+  out.push({hr:1});
+  /* Approve, duplicate and delete go through the card's own buttons rather than
+     repeating what they do. One implementation, so the menu can never drift from
+     the card — and the card is where the confirmations live. */
+  const press=a=>{ openTreat(t.id);
+    setTimeout(()=>{ const card=document.querySelector('.card[data-id="'+t.id+'"]');
+      const b=card&&card.querySelector('[data-a="'+a+'"]');
+      if(b) b.click(); else toast('Open the run and use the button on the card'); },90); };
+  out.push({id:'ap',t:t.approved?'Unapprove it…':'Approve it',fn:()=>press('ap')});
+  out.push({id:'sp',t:'Save these options as a spec…',fn:async()=>{
+    const sp=await editSpec(null,t); if(sp){ t.specId=sp.id; renderTreatments(); markDirty(); } }});
+  out.push({id:'dup',t:'Duplicate it',fn:()=>press('dup')});
+  out.push({hr:1});
+  out.push({id:'del',t:'Delete this run',danger:1,fn:()=>press('del')});
+  return out;
+}
+function ctxForLibRow(kind,o){
+  const key={fix:'fixId',ch:'chId',psu:'psuId'}[kind];
+  const what={fix:'LED product',ch:'channel',psu:'power supply'}[kind];
+  const arr={fix:()=>P.fix,ch:()=>P.ch,psu:()=>P.psu}[kind];
+  const out=[{hd:o.name}];
+  out.push({id:'ed',t:'Edit it…',fn:()=>({fix:editFix,ch:editCh,psu:editPsu})[kind](o)});
+  out.push({id:'rd',t:'Read specs from a cutsheet…',fn:()=>readSpecsInto(kind,o,()=>renderLib())});
+  if(sheetOf(o)){
+    out.push({id:'ln',t:'Open its cutsheet',fn:()=>window.open(sheetOf(o),'_blank','noopener')});
+    out.push({id:'ck',t:'Check that link',fn:async()=>{ const r=await checkSheet(o); renderLib(); markDirty();
+      toast(r.msg||r.state); }});
+  }
+  out.push({hr:1});
+  out.push({id:'dup',t:'Duplicate it',fn:()=>{ snap(); const c=clone(o);
+    c.id=uid(kind==='fix'?'f_':kind==='ch'?'c_':'p_'); c.name=o.name+' (copy)';
+    arr().push(c); renderLib(); markDirty(); toast('Copied '+o.name); }});
+  out.push({hr:1});
+  out.push({id:'del',t:'Delete this '+what+'…',danger:1,
+    fn:()=>delLib(key,o,what,arr(),x=>{ if(kind==='fix') P.fix=x; else if(kind==='ch') P.ch=x; else P.psu=x; })});
+  return out;
+}
+function ctxForMarkRow(a){
+  const out=[{hd:markSubject(a)||a.type}];
+  out.push({id:'go',t:'Go to it',fn:()=>goToAnn(a,true)});
+  out.push({hr:1});
+  statusList().forEach((st,i)=>out.push({id:'st'+i,t:'Mark it '+st,
+    fn:()=>{ snap('Status'); a.status=st; a.statusAt=new Date().toISOString();
+      renderMarks(); drawOverlay(); markDirty(); }}));
+  return out;
+}
+/* a piece is a thing the bench orders, so its code is the thing to take away */
+function ctxForPieceRow(r){
+  const out=[{hd:(r.mark||r.item)}];
+  if(r.code) out.push({id:'cc',t:'Copy the order code',fn:()=>copyText(r.code,'Order code copied')});
+  out.push({id:'cl',t:'Copy the length',fn:()=>copyText(fmtLen(r.len),'Length copied')});
+  out.push({id:'cr',t:'Copy the whole row',fn:()=>copyText([r.mark,r.tag,r.item,fmtLen(r.len),r.code||''].
+    filter(Boolean).join('\t'),'Row copied')});
+  if(r.tid) out.push({hr:1},{id:'op',t:'Open the run it comes from',fn:()=>{
+    $$('.tab').find(x=>x.dataset.pane==='pTreat').click(); openTreat(r.tid); }});
+  return out;
+}
+function copyText(t,msg){
+  const done=()=>toast(msg||'Copied');
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){
+    navigator.clipboard.writeText(t).then(done,()=>fallback()); return; } }catch(e){}
+  fallback();
+  function fallback(){
+    try{
+      const ta=document.createElement('textarea');
+      ta.value=t; ta.style.cssText='position:fixed;left:-9999px';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); done();
+    }catch(e){ toast('Could not copy — select it by hand'); }
+  }
 }
 stage.addEventListener('contextmenu',e=>{
   if(e.shiftKey) return;                       /* ⇧ right-click = the browser's own menu */
@@ -7415,6 +7715,7 @@ function renderSheets(){
     el.onclick=e=>{ if(e.target.closest('[data-del]')){ delDoc(d); return; }
       if(e.target.dataset.kind){ d.kind=d.kind==='plan'?'shop':'plan'; renderSheets(); markDirty(); return; }
       openDoc(d.id,1,true); if(narrowUI()) closeRails(); };
+    wireCtx(el,()=>ctxForSheetRow(d));
     h.appendChild(el);
   });
 }
@@ -8416,6 +8717,7 @@ function renderTreatments(){
   shown.forEach(t=>{
     const r=calc(t);
     const el=document.createElement('div'); el.className='card'+(open.includes(t.id)?' on':''); el.dataset.id=t.id;
+    wireCtx(el,()=>ctxForTreatRow(t));
     /* Grouped by whether the sheets say it fits, so the list narrows itself as the
        product changes. What is already chosen is always in the list, whatever it
        says, because a job that has been saved must never quietly change under a
@@ -9543,6 +9845,7 @@ function libRow(txt,sub,onclick,onDel,item,kind){
     if(t.dataset.read){ e.stopPropagation(); readSpecsInto(kind,item); return; }
     onclick();
   };
+  if(item&&kind) wireCtx(el,()=>ctxForLibRow(kind,item));
   return el;
 }
 /* Everything about a library item that someone might type looking for it: not just
@@ -10405,6 +10708,8 @@ function renderMarks(){
       +cols.map((c2,i)=>'<td>'+markCell(r,c2,i)+'</td>').join('')
       +'</tr>').join('')
     +capNote('markTbl',{shown:rows,all:rows,cut:0},6+cols.length);
+  $$('[data-mark]',el).forEach(tr=>{ const a=P.ann.find(x=>x.id===tr.dataset.mark);
+    if(a) wireCtx(tr,()=>ctxForMarkRow(a)); });
   $$('[data-mark]',el).forEach(tr=>tr.onclick=e=>{
     if(e.target.tagName==='SELECT'||e.target.tagName==='INPUT') return;
     const a=P.ann.find(x=>x.id===tr.dataset.mark);
@@ -10531,7 +10836,7 @@ function renderPieces(){
       +thSort('piece','run','Run','n')+thSort('piece','item','Item')
       +thSort('piece','len','Cut to','n')+thSort('piece','code','Order code')
       +thSort('piece','note','Note')+'</tr>'
-      +pord.map(r=>'<tr><td><span class="tag">'+esc(r.mark)+'</span>'
+      +pord.map((r,pi)=>'<tr data-piece="'+pi+'"><td><span class="tag">'+esc(r.mark)+'</span>'
         +'<div class="hint">'+r.seq+' of '+r.of+'</div></td>'
         +'<td>'+esc(r.tag)+'</td><td>'+esc(r.zone||'—')
         +'</td><td class="n">'+r.run+'</td><td>'+esc(r.item)+'<div class="hint">'+esc(r.kind)+'</div></td>'
@@ -10542,6 +10847,9 @@ function renderPieces(){
       +capNote('pieceTbl',pcap,8)
       +'<tr class="tot"><td colspan="5">'+pc.length+' pieces</td><td class="n">'
       +fmtRun(pc.reduce((a,b)=>a+b.len,0))+'</td><td></td><td></td></tr>';
+    /* the order code is the thing the bench needs off this screen, so it is one
+       right-click away rather than a careful text selection */
+    $$('[data-piece]',pt).forEach(tr=>wireCtx(tr,()=>ctxForPieceRow(pord[+tr.dataset.piece])));
   }
   const nest=nestData(), nt=$('#nestTbl');
   if(!nest.length){ nt.innerHTML='<tr><td class="hint" style="padding:12px">No channel with a stock length yet.</td></tr>'; }
@@ -12968,6 +13276,11 @@ function settingsHtml(){
       setSel('scrollZoom',[{v:'1',t:'Zooms at the cursor'},{v:'0',t:'Scrolls the sheet'}],P.scrollZoom===false?'0':'1'))
     +setRow('One finger','On a tablet: draw with your finger, or reserve it for panning.',
       setSel('fingerDraws',[{v:'1',t:'Draws'},{v:'0',t:'Pans — draw with the Pencil'}],V.fingerDraws?'1':'0'))
+    +'</div><div class="setgrp"><h4>Press and hold</h4>'
+    +setRow('On bare paper','A ring of the tools you reach for, around your finger. More… opens the full list.',
+      setSel('ring',[{v:'1',t:'A ring of tools'},{v:'0',t:'The list menu'}],P.ring===false?'0':'1'))
+    +setRow('Two and three fingers','Tapped, not dragged — two undoes and three redoes, the way iPadOS does elsewhere.',
+      setSel('fingerTap',[{v:'1',t:'Undo and redo'},{v:'0',t:'Off'}],P.fingerTap===false?'0':'1'))
     +'</div>';
   if(setTab==='files') return '<div class="setgrp"><h4>Saving</h4>'
     +setRow('Auto-save to the linked file','Every change also writes to the project file you picked.',
@@ -13073,6 +13386,8 @@ function applySetting(el){
     case 'units': P.units=val; $('#unitBtn').textContent=P.units.toUpperCase();
       syncScaleUI(); drawOverlay(); renderAnnList(); renderTreatments(); renderLib(); renderBom(); stats(); break;
     case 'toolMode': P.toolMode=val==='once'?'once':'stay'; break;
+    case 'ring': P.ring=val!=='0'; break;
+    case 'fingerTap': P.fingerTap=val!=='0'; break;
     case 'snap': P.snap=val; syncSnapBtn(); if(val&&!SNAP.grid) buildSnap(); break;
     case 'round': P.round=val; P.treat.forEach(t=>{ if(!t.round) t.roundDefault=val; });
       renderTreatments(); renderBom(); stats(); break;
