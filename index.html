@@ -937,7 +937,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.64.0';
+const APP_VER='1.65.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1751,7 +1751,9 @@ function applyProject(d){
   });
   P.ann=P.ann.filter(a=>a&&Array.isArray(a.pts)&&a.pts.length&&
     /* a closed shape with fewer than three corners encloses nothing */
-    !((a.type==='area'||a.type==='cloud'||a.type==='space')&&a.pts.length<3)
+    !((a.type==='area'||a.type==='cloud'||a.type==='space'||a.type==='srgn')&&a.pts.length<3)
+    /* a scale region with no scale on it says nothing about anything */
+    &&!(a.type==='srgn'&&!(+a.ratio>0))
     /* the new markups have fixed shapes: two points for a box-like one, three for
        an angle or a radius. Anything else could not be drawn or measured. */
     &&!(/^(arrow|hl|ell)$/.test(a.type)&&a.pts.length<2)
@@ -2596,6 +2598,44 @@ const calKey=(doc,pg)=>doc+'|'+pg;
 function scaleOf(doc,pg){ return P.cal[calKey(doc,pg)] || P.cal[doc+'|*'] || null; }
 function curScale(){ return V.docId? scaleOf(V.docId,V.page) : null; }
 function inPerPt(){ const s=curScale(); return s? s.ratio/72 : null; }
+/* ---- a scale for part of a sheet ----
+   Enlarged plans, sections and details share a page with the plan and are drawn at
+   their own scale. A scale region is an outline carrying a scale of its own: any
+   markup whose middle falls inside it is measured at that scale, and the rest of the
+   page carries on at the page's. Where regions nest the smallest one containing the
+   markup wins, which is the same rule spaces use, so a detail drawn inside an
+   enlarged plan still reads correctly.
+   Everything measured goes through annScale rather than the current page's scale,
+   which also means a markup on another sheet is measured at that sheet's scale — it
+   used to be measured at whatever page happened to be open. */
+const scaleRgns=()=>P.ann.filter(a=>a.type==='srgn'&&Array.isArray(a.pts)&&a.pts.length>2&&+a.ratio>0);
+function srgnAt(doc,page,pt){
+  let best=null;
+  scaleRgns().forEach(r=>{
+    if(r.doc!==doc||(r.page||1)!==(page||1)) return;
+    if(!ptInPoly(pt,r.pts)) return;
+    const ar=spaceArea(r);
+    if(!best||ar<best.ar) best={r,ar};
+  });
+  return best?best.r:null;
+}
+function srgnOf(a){
+  if(!a||!Array.isArray(a.pts)||!a.pts.length||a.type==='srgn') return null;
+  return srgnAt(a.doc,a.page,annCentre(a));
+}
+const rgnScale=r=>({ratio:+r.ratio,label:r.label||ratioLabel(+r.ratio),rgn:r});
+/* the scale one markup is measured at: its region's, else its own page's */
+function annScale(a){
+  const r=srgnOf(a);
+  if(r) return rgnScale(r);
+  return (a&&a.doc)?scaleOf(a.doc,a.page):curScale();
+}
+function annPerPt(a){ const s=annScale(a); return (s&&s.ratio>0)? s.ratio/72 : null; }
+/* the scale in force at one spot, for a readout that follows the pointer */
+function scaleAtPt(doc,page,pt){
+  const r=pt?srgnAt(doc,page,pt):null;
+  return r?rgnScale(r):scaleOf(doc,page);
+}
 function ptLen(a,b){ return Math.hypot(b[0]-a[0],b[1]-a[1]); }
 function realLen(a,b){ const k=inPerPt(); return k? ptLen(a,b)*k : null; }
 /* Circular arc through three points: start, a point along it, and the end.
@@ -2630,7 +2670,7 @@ function arcPts(a,n){
 }
 /* a closed poly measures the run back to its first vertex as well */
 const canClose=a=>!!a&&a.type==='line'&&!a.free&&a.pts.length>2;
-const isClosedType=a=>!!a&&(a.type==='area'||a.type==='cloud'||a.type==='space');
+const isClosedType=a=>!!a&&(a.type==='area'||a.type==='cloud'||a.type==='space'||a.type==='srgn');
 function annPts(a){
   if(a.type==='arc') return arcPts(a);
   if(isClosedType(a)) return a.pts.length>2?a.pts.concat([a.pts[0]]):a.pts;
@@ -2796,7 +2836,7 @@ function polyMetrics(pts,k,offIn){
   }
   return {area,perim,cove,off:d,n};
 }
-const areaMetrics=a=>polyMetrics(a.pts,inPerPt(),a.off||0);
+const areaMetrics=a=>polyMetrics(a.pts,annPerPt(a),a.off||0);
 /* +1 when the ring is wound counter-clockwise, where the right-hand normal
    points outward — which way "inward" is depends on it */
 function ringDir(pts){
@@ -2851,24 +2891,24 @@ function offsetPts(pts,dPt,closed){
    difference is shown, and the run says which one it is ordering to. */
 const statedOf=a=>{ const v=+((a||{}).stated); return v>0?v:0; };
 function annLen(a){
+  if(a&&a.type==='srgn') return null;            /* a scale region is not a thing you order */
   const st=statedOf(a);
   if(st>0) return st;
-  const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
+  const k=annPerPt(a); if(!k||!a.pts||a.pts.length<2) return null;
   if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
   /* a round cove is measured the way round it */
   if(a.type==='ell'){ const g=ellOf(a); return g?g.per*k:null; }
   /* for a region the length that matters downstream is the cove run, not the
      perimeter — that is what a treatment linked to it should order */
   if(a.type==='area'){ const m=areaMetrics(a); return m?m.cove:null; }
-  if(a.type==='ell'){ const g=ellOf(a); return g?g.per*k:null; }
   const pts=annPath(a); let t=0;
   for(let i=1;i<pts.length;i++) t+=ptLen(pts[i-1],pts[i]);
   return t*k;
 }
 /* per-segment breakdown, in drawing order — the poly-length readout */
 function annSegs(a){
-  if(a.type==='arc'){ const k=inPerPt(),g=arcOf(a); return g?[{a:a.pts[0],b:a.pts[2],len:k?g.len*k:null}]:[]; }
-  const k=inPerPt(), pts=annPts(a), out=[];
+  if(a.type==='arc'){ const k=annPerPt(a),g=arcOf(a); return g?[{a:a.pts[0],b:a.pts[2],len:k?g.len*k:null}]:[]; }
+  const k=annPerPt(a), pts=annPts(a), out=[];
   for(let i=1;i<pts.length;i++){
     const b=bulgeOf(a,i);
     const g=b?segArcOf(pts[i-1],pts[i],b):null;
@@ -2886,8 +2926,8 @@ function annSegs(a){
 }
 /* what it traces, ignoring any stated override — for showing the two side by side */
 function annMeasured(a){
-  if(!a) return null;
-  const k=inPerPt(); if(!k||!a.pts||a.pts.length<2) return null;
+  if(!a||a.type==='srgn') return null;
+  const k=annPerPt(a); if(!k||!a.pts||a.pts.length<2) return null;
   if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
   if(a.type==='area'){ const m=areaMetrics(a); return m?m.cove:null; }
   const pts=annPath(a); let t=0;
@@ -2915,6 +2955,30 @@ function checkScale(){
   if(!curScale()){ toast('Set a scale first, then check it'); return; }
   V.calCheck=true; setTool('cal');
   toast('Drag along a dimension you can read — the scale will be checked, not changed');
+}
+/* one reader for both dialogs, so a typed scale means the same thing wherever it
+   is typed — including the refusal to guess at an ambiguous "1/4" */
+function readScale(sel,custom){
+  const typed=String(custom||'').trim();
+  /* what was typed wins, since it is the more deliberate act */
+  if(typed){
+    const ratio=parseScale(typed);
+    if(!(ratio>0)){
+      toast(/^1\s*\/\s*(?:2|4|8|16|32)$/.test(typed)
+        ? '"'+typed+'" could mean 1:'+typed.split('/')[1].trim()
+          +' or '+typed+'" = 1\'-0" — write whichever you mean'
+        : 'Could not read "'+typed+'" as a scale — try 1/4" = 1\'-0", 1" = 30\' or 1:75');
+      return null;
+    }
+    const hit=SCALES.find(x=>Math.abs(x[1]-ratio)<0.02);
+    return {ratio,label:hit?hit[0]:typed};
+  }
+  if(sel){
+    const ratio=+sel;
+    return {ratio,label:(SCALES.find(x=>String(x[1])===String(sel))||[])[0]||ratioLabel(ratio)};
+  }
+  toast('Pick a scale or type one');
+  return null;
 }
 async function pickScale(){
   if(!V.docId||!FILES[V.docId]){ toast('Open a drawing first'); return; }
@@ -2944,24 +3008,9 @@ async function pickScale(){
       +'. Check it against a dimension you can read before ordering from it \u2014 the Calibrate tool measures '
       +'what is actually on the sheet.'});
   if(!r) return;
-  const typed=String(r.custom||'').trim();
-  let ratio=null,label='';
-  /* what was typed wins, since it is the more deliberate act */
-  if(typed){
-    ratio=parseScale(typed);
-    if(!(ratio>0)){
-      toast(/^1\s*\/\s*(?:2|4|8|16|32)$/.test(typed.trim())
-        ? '"'+typed.trim()+'" could mean 1:'+typed.trim().split('/')[1].trim()
-          +' or '+typed.trim()+'" = 1\'-0" — write whichever you mean'
-        : 'Could not read "'+typed+'" as a scale — try 1/4" = 1\'-0", 1" = 30\' or 1:75');
-      return;
-    }
-    const hit=SCALES.find(x=>Math.abs(x[1]-ratio)<0.02);
-    label=hit?hit[0]:typed;
-  }else if(r.scale){
-    ratio=+r.scale;
-    label=(SCALES.find(x=>String(x[1])===String(r.scale))||[])[0]||ratioLabel(ratio);
-  }else{ toast('Pick a scale or type one'); return; }
+  const got=readScale(r.scale,r.custom);
+  if(!got) return;
+  const {ratio,label}=got;
   snap('Scale on '+sheetLabel(d));
   if(r.where==='sheet'){
     Object.keys(P.cal).forEach(k=>{ if(k.startsWith(V.docId+'|')) delete P.cal[k]; });
@@ -3047,8 +3096,10 @@ function syncScaleUI(){
   $('#tbScale').textContent=(s?s.label:'not set')+(s&&own?' *':'');
   $('#tbScale').style.color=s?'var(--amber)':'var(--flag)';
   $('#tbScale').title=s?(own?'This page has its own scale':'From the sheet, applied to every page'):'';
+  const rg=V.docId?scaleRgns().filter(r=>r.doc===V.docId&&(r.page||1)===(V.page||1)):[];
   $('#stScale').textContent='Scale: '+(s?s.label+(own?' (this page only)':' (whole sheet)')
-    :'not set — calibrate before measuring');
+    :'not set — calibrate before measuring')
+    +(rg.length?'  ·  '+rg.length+' scale region'+(rg.length===1?'':'s')+' on this page':'');
   /* calibration comes before everything else, so say so where it cannot be missed */
   const bar=$('#calNag');
   if(bar) bar.style.display=(V.docId&&FILES[V.docId]&&!s)?'':'none';
@@ -3454,7 +3505,7 @@ function drawAnn(a,selected,isDraft,multi){
     const tot=annLen(a), tg=a.treat&&P.treat.find(t=>t.id===a.treat);
     const mid=sp2[Math.floor(sp2.length/2)]||pts[1];
     if(g0){
-      const rr=inPerPt()?fmtRun(g0.r*inPerPt()):'—';
+      const kR=annPerPt(a); const rr=kR?fmtRun(g0.r*kR):'—';
       g+=chip(mid[0],mid[1]-CHIP_H*.8,(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,null,a,'total',
         lblRotFor(a,'total'));
       if(P.arcDetail!==false)
@@ -3470,7 +3521,7 @@ function drawAnn(a,selected,isDraft,multi){
     const m=areaMetrics(a);
     /* the cove line the numbers describe, drawn where it will actually sit */
     if(m&&m.off>0&&!isDraft){
-      const ins=offsetPts(a.pts,-(m.off/(inPerPt()||1))*ringDir(a.pts),true);
+      const ins=offsetPts(a.pts,-(m.off/(annPerPt(a)||1))*ringDir(a.pts),true);
       if(ins&&ins.length>2){
         const ip=ins.concat([ins[0]]).map(sp);
         g+='<polyline points="'+ip.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
@@ -3563,7 +3614,7 @@ function drawAnn(a,selected,isDraft,multi){
       +'" fill="'+col+'" fill-opacity=".07" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>';
     const tot=annLen(a), tg=a.treat&&P.treat.find(t=>t.id===a.treat);
     if(g0){
-      const c2=sp(g0.c), k=inPerPt();
+      const c2=sp(g0.c), k=annPerPt(a);
       g+=chip(c2[0],c2[1],(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot)),tg?'#F2A93B':col,
         null,a,'total',lblRotFor(a,'total'));
       if(P.arcDetail!==false&&k)
@@ -3587,7 +3638,7 @@ function drawAnn(a,selected,isDraft,multi){
       g+='<polyline points="'+arcp.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
         +'" fill="none" stroke="'+col+'" stroke-width="'+(W*.8).toFixed(2)+'" stroke-opacity=".85"/>';
       const mid=arcp[Math.floor(arcp.length/2)];
-      const k=inPerPt();
+      const k=annPerPt(a);
       g+=chip(mid[0],mid[1],g0.deg.toFixed(1)+'\u00b0',col,null,a,'total',lblRotFor(a,'total'));
       if(P.arcDetail!==false&&k)
         g+=chip(mid[0],mid[1]+CHIP_H*1.15,'legs '+fmtRun(g0.legs[0]*k)+' / '+fmtRun(g0.legs[1]*k),
@@ -3601,7 +3652,7 @@ function drawAnn(a,selected,isDraft,multi){
     g+=pts.map(q=>'<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)
       +'" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
     if(g0){
-      const c2=sp(g0.c), mid=ap[Math.floor(ap.length/2)], k=inPerPt();
+      const c2=sp(g0.c), mid=ap[Math.floor(ap.length/2)], k=annPerPt(a);
       /* the radius itself, drawn from the centre to the middle of the arc */
       g+='<path d="M'+c2[0].toFixed(1)+' '+c2[1].toFixed(1)+'L'+mid[0].toFixed(1)+' '+mid[1].toFixed(1)
         +'" stroke="'+col+'" stroke-width="'+(W*.7).toFixed(2)+'" stroke-dasharray="5 4" stroke-opacity=".8"/>'
@@ -3612,6 +3663,18 @@ function drawAnn(a,selected,isDraft,multi){
           +'  ·  '+(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'\u00b0',col,null,a,'sub',lblRotFor(a,'sub'));
     }
   }
+  if(a.type==='srgn'){
+    /* dash-dot, and amber like every other scale readout in the app, so it is
+       plainly a note about measuring rather than something measured */
+    const ring=annPts(a).map(sp);
+    g+='<polygon points="'+ring.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
+      +'" fill="'+col+'" fill-opacity=".04" stroke="'+col+'" stroke-width="'+(W*.9).toFixed(2)
+      +'" stroke-dasharray="12 4 3 4" stroke-opacity=".85"/>';
+    const xs=ring.map(q=>q[0]), ys=ring.map(q=>q[1]);
+    const cx=(Math.min(...xs)+Math.max(...xs))/2, ty=Math.min(...ys);
+    g+=chip(cx,ty+CHIP_H*.9,(a.name?a.name+'  \u00b7  ':'')+(a.label||ratioLabel(+a.ratio||0)),
+      col,null,a,'total',lblRotFor(a,'total'));
+  }
   if(a.type==='space'){
     const ring=annPts(a).map(sp);
     g+='<polygon points="'+ring.map(q=>q[0].toFixed(1)+','+q[1].toFixed(1)).join(' ')
@@ -3619,7 +3682,7 @@ function drawAnn(a,selected,isDraft,multi){
       +'" stroke-dasharray="9 5" stroke-opacity=".8"/>';
     const xs=ring.map(q=>q[0]), ys=ring.map(q=>q[1]);
     const cx=(Math.min(...xs)+Math.max(...xs))/2, cy=(Math.min(...ys)+Math.max(...ys))/2;
-    const n=P.ann.filter(x=>x.type!=='space'&&spaceOf(x)===a).length;
+    const n=P.ann.filter(x=>x.type!=='space'&&x.type!=='srgn'&&spaceOf(x)===a).length;
     g+=chip(cx,cy,(a.name||'unnamed')+(n?'  \u00b7  '+n:''),col,null,a,'total',lblRotFor(a,'total'));
   }
   if(a.type==='legend'){
@@ -4212,7 +4275,7 @@ function hitHandle(sx,sy,tol){
    A traced run is never right first time: you need to break a segment where the
    cove turns, or drop a point you over-clicked. */
 const editablePts=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='box'||a.type==='tbox')&&!a.free;
-const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='whip'||a.type==='space');
+const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='whip'||a.type==='space'||a.type==='srgn');
 /* which segment of a is nearest this stage-space point, and how far away */
 function nearestSeg(a,sx,sy){
   /* measured against the line it actually follows, then reported as the vertex
@@ -4284,7 +4347,7 @@ function roundOne(a,vi,R){
 }
 async function roundCorners(a){
   if(!vertexType(a)||a.free){ toast('Corners can be rounded on a run or a region'); return false; }
-  const k=inPerPt();
+  const k=annPerPt(a);
   if(!k){ toast('Calibrate the sheet first — a radius is a real distance'); return false; }
   const inner=a.pts.length-2+((a.closed&&canClose(a))?2:0);
   if(inner<1){ toast('That run has no corner to round'); return false; }
@@ -4339,7 +4402,7 @@ async function segToArc(a,i){
   const pts=annPts(a);
   if(!(i>=1&&i<pts.length)){ toast('Right-click on the segment you want to curve'); return false; }
   const A=pts[i-1], B=pts[i];
-  const k=inPerPt()||0;
+  const k=annPerPt(a)||0;
   const chord=ptLen(A,B);
   if(!(chord>0)){ toast('That segment has no length'); return false; }
   const cur=bulgeOf(a,i);
@@ -4410,7 +4473,7 @@ function halveSeg(a,i){
   if(a.type==='line'&&!a.poly&&a.pts.length>2) a.poly=true;
   invalidateAnns(); V.sel=a.id;
   drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
-  toast('Segment halved into two of '+fmtLen(ptLen(A,B)*(inPerPt()||0)/2));
+  toast('Segment halved into two of '+fmtLen(ptLen(A,B)*(annPerPt(a)||0)/2));
   return true;
 }
 /* the point half way along the path, and the two point lists either side of it */
@@ -4632,7 +4695,7 @@ function editMove(e){
     ovInvalidate(a.id);
     drawOverlayFor(a);
     const pts=annPts(a), g=bulgeOf(a,edit.i)?bulgeGeom(pts[edit.i-1],pts[edit.i],bulgeOf(a,edit.i)):null;
-    const k=inPerPt()||0;
+    const k=annPerPt(a)||0;
     $('#stCoord').textContent=g
       ? ('R '+(k?fmtRun(g.r*k):'—')+'  ·  '+g.deg.toFixed(1)+'°  ·  '+(k?fmtLen(g.len*k):'—'))
       : 'straight';
@@ -4724,6 +4787,7 @@ const TOOLS=[
   {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
   {k:'rad',g:'Measure',key:'U',t:"Radius — three points on a curve gives R, D and the arc",svg:'<svg viewBox="0 0 24 24"><path d="M3 18a12 12 0 0118 0"/><path d="M12 6.2V18"/><circle cx="12" cy="18" r="1.6"/></svg>'},
   {k:'space',g:'Review',key:'Z',t:"Space — name a room or zone, and what falls in it belongs to it",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l7-4 7 4v13z"/><path d="M10 20v-6h4v6"/><path d="M17 11h4v9h-4"/></svg>'},
+  {k:'srgn',g:'Review',key:'',t:"Scale region \u2014 an enlarged plan or detail at its own scale",svg:'<svg viewBox="0 0 24 24"><path d="M3 4h8v8H3z" stroke-dasharray="3 2"/><path d="M13 12h8v8h-8z" stroke-dasharray="3 2"/><path d="M6.5 8.5L21 4"/></svg>'},
   {k:'vs',g:'Review',key:'I',t:"Find a symbol — box one, count the rest",svg:'<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M8 10.5h5M10.5 8v5"/></svg>'},
   {k:'legend',g:'Review',key:'',t:"Legend — a key of what is on the sheet",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><rect x="6" y="8" width="3" height="3"/><rect x="6" y="14" width="3" height="3"/><path d="M12 9.5h6M12 15.5h6"/></svg>'},
   {k:'cloud',g:'Review',key:'Q',t:"Revision cloud with a delta",svg:'<svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg>'},
@@ -5225,8 +5289,10 @@ stage.addEventListener('pointermove',e=>{
     const n=V.draft.pts.length;
     V.draft.pts[n-1]=snapAt(p)||ortho(V.draft.pts[n-2],p,e.shiftKey);
     drawOverlayFor(); liveLen(V.draft); return; }
-  const k=inPerPt();
-  $('#stCoord').textContent=k?('x '+fmtLen(p[0]*k)+'   y '+fmtLen(p[1]*k)):'—';
+  const kc=scaleAtPt(V.docId,V.page,p);
+  const k=kc?kc.ratio/72:null;
+  $('#stCoord').textContent=k?('x '+fmtLen(p[0]*k)+'   y '+fmtLen(p[1]*k)
+    +(kc.rgn?'   ('+(kc.rgn.name||kc.label)+')':'')):'—';
 },{passive:false});
 
 function liveLen(d){
@@ -5274,7 +5340,7 @@ function endPointer(e){
   if(tool==='photo'){ if(!pr.moved) placePhoto(p); return; }
   if(tool==='legend'){ if(!pr.moved) placeLegend(p); return; }
   if(tool==='whip'){ tapVertex(p,e); syncDrawbar(); return; }
-  if(tool==='area'||tool==='cloud'||tool==='space'){ tapVertex(p,e); syncDrawbar(); return; }
+  if(tool==='area'||tool==='cloud'||tool==='space'||tool==='srgn'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
   if(tool==='link'){ if(!pr.moved) placeLink(p); return; }
   if(tool==='text'){ if(!pr.moved) placeText(p); return; }
@@ -5299,7 +5365,7 @@ stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') penOff(); }
    green, and where a run is part-traced it says what that segment would add. So the
    snap is confirmed before the mark is made rather than after. */
 const annName=a=>{
-  const n={line:'dimension',poly:'poly length',arc:'arc',area:'region',space:'space',cloud:'revision cloud',
+  const n={line:'dimension',poly:'poly length',arc:'arc',area:'region',space:'space',srgn:'scale region',cloud:'revision cloud',
     count:'count stamp',text:'text',box:'box',note:'note',ink:'ink',arrow:'arrow',hl:'highlight',
     ell:'ellipse',ang:'angle',rad:'radius',legend:'legend',link:'link',driver:'driver',
     feed:'feed point',splice:'splice',whip:'home run',photo:'photo'}[a&&a.type];
@@ -5321,7 +5387,7 @@ function penHover(sc){
   if(sn) bits.push('snap');
   const dr=V.draft;
   if(dr&&Array.isArray(dr.pts)&&dr.pts.length&&isPolyDraft(dr)){
-    const k=inPerPt();
+    const k=annPerPt(dr);
     const last=dr.pts[dr.pts.length-1];
     if(k&&last) bits.push('+'+fmtLen(ptLen(last,sn||pdf)*k));
   }
@@ -5340,7 +5406,7 @@ function tapVertex(p,e){
     if(prev&&ptLen(prev,p)<0.6&&ptLen(prev,raw)>=0.6){ p=raw; V.snapHit=null; }
   }
   if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':V.tool==='cloud'?'cloud'
-      :V.tool==='whip'?'whip':V.tool==='space'?'space':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
+      :V.tool==='whip'?'whip':V.tool==='space'?'space':V.tool==='srgn'?'srgn':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
     color:V.tool==='cal'||V.tool==='whip'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined,
     off:V.tool==='area'?(+P.areaOff||0):undefined};
   else{
@@ -5379,7 +5445,7 @@ function tapThree(p){
         color:d.color,w:d.w,text:''};
       P.ann.push(a); V.sel=a.id;
       drawOverlay(); showInspector(a); renderAnnList(); markDirty();
-      const k=inPerPt();
+      const k=annPerPt(a);
       if(kind==='ang'){ const g=angOf(a);
         toast('Angle '+g.deg.toFixed(1)+'°'+(k?'  ·  legs '+fmtRun(g.legs[0]*k)+' and '+fmtRun(g.legs[1]*k):'')); }
       else{ const g=arcOf(a);
@@ -5706,10 +5772,11 @@ const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawi
   arrow:'Arrow',hl:'Highlight',ell:'Ellipse',ang:'Angle',rad:'Radius',
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
   area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver',
-  feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo',legend:'Legend',space:'Space'};
+  feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo',legend:'Legend',space:'Space',
+  srgn:'Scale region'};
 async function offsetAnn(a){
   if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
-  const k=inPerPt();
+  const k=annPerPt(a);
   if(!k){ toast('Set the scale first'); return; }
   const closed=isClosedType(a)||!!a.closed;
   const r=await dlg({title:'Parallel run',fields:[
@@ -5785,7 +5852,7 @@ function ctxForAnn(a){
   const names=ANN_NAMES;
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   const L=/^(line|arc|area|ell)$/.test(a.type)?annLen(a)
-    :(a.type==='rad'&&arcOf(a)&&inPerPt())?arcOf(a).r*inPerPt()
+    :(a.type==='rad'&&arcOf(a)&&annPerPt(a))?arcOf(a).r*annPerPt(a)
     :null;
   const items=[{hd:names[a.type]+(L!=null?'  ·  '+fmtLen(L):'')}];
   if(a.type==='count') items.push({id:'cn',t:'Count group '+(a.grp||'COUNT')+'  ·  '+countsOf(a.grp).length+' stamped',off:1});
@@ -5800,6 +5867,9 @@ function ctxForAnn(a){
     drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
   if(a.type==='link'&&a.target) items.push({id:'op',t:'Open linked drawing',fn:()=>openDoc(a.target.doc,a.target.page,true)});
   if(/^(note|box|text|tbox|link)$/.test(a.type)) items.push({id:'ed',t:'Edit text…',fn:()=>editAnnText(a)});
+  if(a.type==='space') items.push({id:'sn',t:'Rename this space…',fn:()=>nameSpace(a,false)});
+  if(a.type==='srgn') items.push({id:'rs',t:'Scale for this region ('+(a.label||'not set')+')…',
+    fn:()=>rgnScaleDlg(a,false)});
   if(vertexType(a)&&!a.free&&ctxPt){
     const sc=V.vp?sp(ctxPt):null;
     const vi=sc?a.pts.findIndex(q=>{ const s2=sp(q); return Math.hypot(s2[0]-sc[0],s2[1]-sc[1])<12; }):-1;
@@ -5811,7 +5881,7 @@ function ctxForAnn(a){
       const sg=nearestSeg(a,sc[0],sc[1]);
       if(sg.i>=1){
         const b=bulgeOf(a,sg.i);
-        const k=inPerPt()||0;
+        const k=annPerPt(a)||0;
         const gg=b?bulgeGeom(annPts(a)[sg.i-1],annPts(a)[sg.i],b):null;
         items.push({id:'ca',t:b
           ? 'Edit the arc on segment '+sg.i+(gg&&k?'  ·  R '+fmtRun(gg.r*k)+', '+gg.deg.toFixed(0)+'°':'')
@@ -5900,7 +5970,7 @@ function syncDrawbar(){
   $('#dbClose').textContent=d&&d.closed?'Open loop':'Close loop';
   if(on){
     if(d.type==='area'){
-      const m=d.pts.length>3?polyMetrics(d.pts.slice(0,-1),inPerPt(),d.off||0):null;
+      const m=d.pts.length>3?polyMetrics(d.pts.slice(0,-1),annPerPt(d),d.off||0):null;
       $('#dbLen').textContent=m?(fmtArea(m.area)+'  ·  perimeter '+fmtRun(m.perim)
         +(m.off?'  ·  cove '+fmtRun(m.cove):'')):'region — keep clicking corners';
       return;
@@ -6013,6 +6083,24 @@ async function finishDraft(){
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
     return;
   }
+  if(d.type==='srgn'){
+    let pts=d.pts.slice(0,-1);
+    pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
+    if(pts.length<3){ drawOverlay(); toast('A scale region needs at least three corners'); return; }
+    snap('Scale region');
+    const a={id:uid('a_'),type:'srgn',doc:d.doc,page:d.page,pts,color:'#F2A93B',w:d.w||V.width,
+      name:'',ratio:0,label:''};
+    P.ann.push(a); V.sel=a.id;
+    drawOverlay(); renderAnnList();
+    if(!await rgnScaleDlg(a,true)){
+      /* a region with no scale on it changes nothing, so it is not worth keeping */
+      P.ann=P.ann.filter(x=>x.id!==a.id); V.sel=null;
+      invalidateAnns(); drawOverlay(); renderAnnList();
+      return;
+    }
+    showInspector(a);
+    return;
+  }
   if(d.type==='space'){
     let pts=d.pts.slice(0,-1);
     pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
@@ -6065,7 +6153,7 @@ async function finishDraft(){
     const a={id:uid('a_'),type:'ell',doc:d.doc,page:d.page,pts:d.pts,color:d.color,w:d.w||V.width,text:''};
     P.ann.push(a); V.sel=a.id;
     drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
-    const k=inPerPt();
+    const k=annPerPt(a);
     toast(g.round?('Circle R '+(k?fmtRun(g.rx*k):'—')+' — '+(k?fmtLen(g.per*k):'set the scale')+' round it')
       :('Ellipse '+(k?fmtLen(g.per*k):'set the scale')+' round it'));
     return;
@@ -6320,7 +6408,7 @@ function spaceAt(doc,page,pt){
   return best?best.sp:null;
 }
 function spaceOf(a){
-  if(!a||!Array.isArray(a.pts)||!a.pts.length||a.type==='space') return null;
+  if(!a||!Array.isArray(a.pts)||!a.pts.length||a.type==='space'||a.type==='srgn') return null;
   return spaceAt(a.doc,a.page,annCentre(a));
 }
 const spaceName=a=>{ const sp=spaceOf(a); return sp?(sp.name||'Space'):''; };
@@ -6351,8 +6439,51 @@ async function nameSpace(a,isNew){
   if(!name){ toast('A space needs a name to be any use'); return false; }
   a.name=name;
   invalidateAnns(); drawOverlay(); renderAnnList(); renderRollups(); renderTreatments(); markDirty();
-  const n=P.ann.filter(x=>x.type!=='space'&&spaceOf(x)===a).length;
+  const n=P.ann.filter(x=>x.type!=='space'&&x.type!=='srgn'&&spaceOf(x)===a).length;
   toast('“'+name+'” \u2014 '+n+' markup'+(n===1?'':'s')+' inside it');
+  return true;
+}
+/* the scale on one region, set when it is drawn and editable after */
+async function rgnScaleDlg(a,isNew){
+  const cur=+a.ratio>0?{ratio:+a.ratio,label:a.label||ratioLabel(+a.ratio)}:null;
+  const near=cur?SCALES.reduce((best,x)=>Math.abs(x[1]-cur.ratio)<Math.abs(best[1]-cur.ratio)?x:best,SCALES[0]):null;
+  const exact=!!(cur&&near&&Math.abs(near[1]-cur.ratio)<0.02);
+  const page=scaleOf(a.doc,a.page);
+  const inside=P.ann.filter(x=>x.type!=='srgn'&&srgnOf(x)===a).length;
+  const r=await dlg({title:isNew?'Scale for this part of the sheet':'Scale region \u2014 '+(a.name||'unnamed'),
+    fields:[
+      {k:'name',label:'Name',val:a.name||'',ph:'Enlarged plan  \u00b7  Detail 3  \u00b7  Section A'},
+      {k:'scale',type:'select',label:'Scale',find:true,findLabel:'a scale',
+        opts:[{v:'',t:'\u2014 type one below \u2014'}].concat(SCALES.map(x=>({v:String(x[1]),t:x[0]}))),
+        val:exact?String(near[1]):''},
+      {k:'custom',label:'or type it',val:exact?'':(cur?cur.label:''),
+        ph:'1/2" = 1\'-0"   \u00b7   3" = 1\'-0"   \u00b7   1:20',
+        hint:'However the detail is titled.'},
+      ...(isNew?[]:[{k:'del',type:'check',cap:'Delete this region \u2014 what is inside goes back to the page scale',val:false}])
+    ],ok:isNew?'Set it':'Apply',
+    note:'Anything whose middle falls inside this outline is measured at this scale. The rest of the page stays at '
+      +(page?page.label:'whatever the page is set to')+'.'
+      +(inside?'  '+inside+' markup'+(inside===1?'':'s')+' inside it now.':'')
+      +'  Where regions nest, the smallest one containing a markup wins.'});
+  if(!r) return false;
+  if(r.del){
+    snap('Delete scale region');
+    P.ann=P.ann.filter(x=>x.id!==a.id);
+    V.sel=null; showInspector(null);
+    invalidateAnns(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+    toast('Scale region deleted \u2014 what was inside is back at the page scale');
+    return true;
+  }
+  const got=readScale(r.scale,r.custom);
+  if(!got) return false;
+  if(!isNew) snap('Scale region');
+  a.ratio=got.ratio; a.label=got.label;
+  a.name=String(r.name||'').trim();
+  invalidateAnns(); drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats();
+  syncScaleUI(); markDirty();
+  const n=P.ann.filter(x=>x.type!=='srgn'&&srgnOf(x)===a).length;
+  toast(got.label+(a.name?' on \u201c'+a.name+'\u201d':' on this region')
+    +' \u2014 '+n+' markup'+(n===1?'':'s')+' measured at it');
   return true;
 }
 /* ---- legends ----
@@ -6592,7 +6723,7 @@ function driverLoad(a){
   const serves=Array.isArray(a.serves)?a.serves:[];
   const lf=clamp((+P.load||80)/100,.4,1);
   const cap=ps.watts>0?ps.watts*lf:0;
-  const k=inPerPt()||0;
+  const k=annPerPt(a)||0;
   let watts=0, home=0; const links=[], missing=[], dims=new Set();
   serves.forEach(id=>{
     const t=P.treat.find(x=>x.id===id);
@@ -6800,7 +6931,7 @@ function whipData(){
     (Array.isArray(a.serves)?a.serves:[]).forEach(id=>{
       const t=P.treat.find(x=>x.id===id); if(!t) return;
       const r=calc(t);
-      const k=inPerPt()||0;
+      const k=annPerPt(a)||0;
       /* a feed point placed on the drawing measures its own way back, and a
          routed home run measures the way it is actually pulled. Either beats the
          straight line, and the row says which one it used. */
@@ -7070,7 +7201,7 @@ function showInspector(a){
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   let h='';
   if(a.type==='arc'){
-    const g0=arcOf(a), k=inPerPt();
+    const g0=arcOf(a), k=annPerPt(a);
     h+='<div class="kv"><span>Arc length</span><b class="hi">'+fmtLen(annLen(a))+'</b></div>';
     h+='<div class="kv"><span>Radius</span><b>'+(g0&&k?fmtLen(g0.r*k):'—')+'</b></div>';
     h+='<div class="kv"><span>Included angle</span><b>'+(g0?(Math.abs(g0.sweep)*180/Math.PI).toFixed(1)+'°':'—')+'</b></div>';
@@ -7082,7 +7213,7 @@ function showInspector(a){
     h+='<div class="hint">Drag the middle handle to change the bow, the ends to move it.</div>';
   }
   if(a.type==='ell'){
-    const g0=ellOf(a), k=inPerPt();
+    const g0=ellOf(a), k=annPerPt(a);
     h+='<div class="kv"><span>Round the edge</span><b class="hi">'+fmtLen(annLen(a))+'</b></div>';
     if(g0&&k){
       h+='<div class="kv"><span>'+(g0.round?'Radius':'Axes')+'</span><b>'
@@ -7094,7 +7225,7 @@ function showInspector(a){
     h+='<div class="hint">A round cove is measured the way round it. Drag either corner handle to resize; hold ⇧ while drawing to keep it a circle.</div>';
   }
   if(a.type==='ang'){
-    const g0=angOf(a), k=inPerPt();
+    const g0=angOf(a), k=annPerPt(a);
     h+='<div class="kv"><span>Angle</span><b class="hi">'+(g0?g0.deg.toFixed(1)+'°':'—')+'</b></div>';
     if(g0) h+='<div class="kv"><span>Turned through</span><b>'+(180-g0.deg).toFixed(1)+'°</b></div>';
     if(g0&&k){
@@ -7105,7 +7236,7 @@ function showInspector(a){
     h+='<div class="hint">First point is the corner. A mitre is cut at half the angle on each piece.</div>';
   }
   if(a.type==='rad'){
-    const g0=arcOf(a), k=inPerPt();
+    const g0=arcOf(a), k=annPerPt(a);
     if(g0&&k){
       h+='<div class="kv"><span>Radius</span><b class="hi">'+fmtLen(g0.r*k)+'</b></div>';
       h+='<div class="kv"><span>Diameter</span><b>'+fmtLen(g0.r*2*k)+'</b></div>';
@@ -7116,8 +7247,8 @@ function showInspector(a){
     h+='<div class="hint">Three points anywhere along the curve. Use the radius to curve a run\u2019s segment to match.</div>';
   }
   if(a.type==='space'){
-    const k=inPerPt();
-    const inside=P.ann.filter(x=>x.type!=='space'&&spaceOf(x)===a);
+    const k=annPerPt(a);
+    const inside=P.ann.filter(x=>x.type!=='space'&&x.type!=='srgn'&&spaceOf(x)===a);
     const runs=P.treat.filter(t=>{ const an=t.annId&&P.ann.find(x=>x.id===t.annId);
       return an&&spaceOf(an)===a; });
     h+='<div class="kv"><span>Name</span><b class="hi">'+esc(a.name||'unnamed')+'</b></div>';
@@ -7127,6 +7258,22 @@ function showInspector(a){
       +(runs.length?'  ·  '+fmtRun(runs.reduce((s2,t)=>s2+calc(t).tot.cut,0)):'')+'</b></div>';
     h+='<button class="btn" data-act="spn">Rename or delete…</button>';
     h+='<div class="hint">Everything whose middle falls inside is attributed to it. Where spaces nest, the smallest wins.</div>';
+  }
+  if(a.type==='srgn'){
+    const k=annPerPt(a);
+    const page=scaleOf(a.doc,a.page);
+    const inside=P.ann.filter(x=>x.type!=='srgn'&&srgnOf(x)===a);
+    const runs=P.treat.filter(t=>{ const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+      return an&&srgnOf(an)===a; });
+    h+='<div class="kv"><span>Scale here</span><b class="hi">'+esc(a.label||ratioLabel(+a.ratio||0))+'</b></div>';
+    h+='<div class="kv"><span>Rest of the page</span><b>'+esc(page?page.label:'not set')+'</b></div>';
+    if(a.name) h+='<div class="kv"><span>Name</span><b>'+esc(a.name)+'</b></div>';
+    if(k) h+='<div class="kv"><span>Covers</span><b>'+fmtArea(spaceArea(a)*k*k)+'</b></div>';
+    h+='<div class="kv"><span>Markups inside</span><b>'+inside.length+'</b></div>';
+    h+='<div class="kv"><span>Runs inside</span><b>'+runs.length
+      +(runs.length?'  ·  '+fmtRun(runs.reduce((s2,t)=>s2+calc(t).tot.cut,0)):'')+'</b></div>';
+    h+='<button class="btn" data-act="rsc">Change the scale, rename or delete…</button>';
+    h+='<div class="hint">Anything whose middle falls inside is measured at this scale. Where regions nest, the smallest wins.</div>';
   }
   if(a.type==='legend'){
     const d=legendRows(a);
@@ -7170,7 +7317,7 @@ function showInspector(a){
     h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
     /* Bluebeam-style per-segment readout */
     if(segs.length>1&&!a.free){
-      const kk=inPerPt()||0;
+      const kk=annPerPt(a)||0;
       h+='<div class="seglist">'+segs.map((sg,i)=>{
         const gg=sg.arc;
         return '<div class="kv"><span>'+(a.closed&&i===segs.length-1?'closing':'seg '+(i+1))
@@ -7385,6 +7532,7 @@ function showInspector(a){
     if(act==='half') splitHalf(a);
     if(act==='rnd') roundCorners(a);
     if(act==='spn') nameSpace(a,false);
+    if(act==='rsc') rgnScaleDlg(a,false);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -7519,7 +7667,7 @@ function renderCodeKey(){
    Notes and text get in the way while measuring, so each kind can be hidden.
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
-  ['cloud','Revision clouds'],['space','Spaces'],['legend','Legends'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
+  ['cloud','Revision clouds'],['space','Spaces'],['srgn','Scale regions'],['legend','Legends'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
   ['whip','Home runs'],['photo','Photos'],['ell','Ellipses'],['ang','Angles'],['rad','Radii'],
   ['arrow','Arrows'],['hl','Highlights'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
@@ -7854,7 +8002,7 @@ function setColVal(a,id,v){
 function markValue(a){
   if(a.type==='line'||a.type==='arc'||a.type==='ell') return {n:annLen(a),unit:'len'};
   if(a.type==='area'){ const m=areaMetrics(a); return m?{n:m.area,unit:'area'}:{n:null,unit:''}; }
-  if(a.type==='rad'){ const g=arcOf(a),k=inPerPt(); return {n:(g&&k)?g.r*k:null,unit:'len'}; }
+  if(a.type==='rad'){ const g=arcOf(a),k=annPerPt(a); return {n:(g&&k)?g.r*k:null,unit:'len'}; }
   if(a.type==='ang'){ const g=angOf(a); return {n:g?g.deg:null,unit:'deg'}; }
   if(a.type==='count') return {n:1,unit:'ea'};
   return {n:null,unit:''};
@@ -8267,7 +8415,7 @@ function calc(t){
      was actually traced — a typed length has no geometry to check */
   const bendR=bendOf(f);
   const bendA=t.annId?P.ann.find(x=>x.id===t.annId):null;
-  const k=inPerPt();
+  const k=bendA?annPerPt(bendA):inPerPt();
   const curves=(bendA&&k)?bendCurves(bendA,k):[];
   const tight=bendR>0?curves.filter(x=>x.r<bendR-1e-6):[];
   const corners=(bendR>0&&bendA&&(f.kind||'tape')==='fixture')?bendCorners(bendA):0;
@@ -8597,7 +8745,7 @@ function renumSort(list,by){
    drawing units, so it lands where the grid says it should. */
 async function arrayAnn(a){
   if(!a||!a.pts||!a.pts.length){ toast('Select a markup first'); return; }
-  const k=inPerPt();
+  const k=annPerPt(a);
   if(!k){ toast('Calibrate the sheet first — the step is a real distance'); return; }
   const t0=a.treat&&P.treat.find(x=>x.id===a.treat);
   const r=await dlg({title:'Array '+(a.poly?'poly length':a.type),fields:[
@@ -9048,7 +9196,7 @@ async function dupAcross(t){
   if(!r) return;
   const list=r.all?targets:targets.filter(x=>x.v===r.to);
   snap();
-  let n=0;
+  let n=0, noScale=0;
   list.forEach(x=>{
     const [doc,pg]=x.v.split('|');
     const c=clone(t);
@@ -9062,13 +9210,21 @@ async function dupAcross(t){
       a2.id=uid('a_'); a2.doc=doc; a2.page=+pg; a2.treat=c.id;
       delete a2.hidden;
       P.ann.push(a2);
-      c.annId=a2.id; c.manual=0;
+      c.annId=a2.id;
+      /* a copied markup is measured at the scale of the sheet it lands on, not the
+         one it came from. Where that sheet has no scale yet the copy would measure
+         nothing, so the length it was copied with is kept as a typed figure — the
+         same rule deleting a sheet uses, and the run says it is ordering to a stated
+         length. Set the scale on that sheet and clear the figure to trace it. */
+      if(scaleOf(doc,+pg)) c.manual=0; else noScale++;
     }
     P.treat.push(c); n++;
   });
   invalidateAnns();
   renderTreatments(); renderAnnList(); renderSheets(); renderBom(); drawOverlay(); stats(); markDirty();
-  toast('Copied '+tagOf(t)+' to '+n+' sheet'+(n===1?'':'s'));
+  toast('Copied '+tagOf(t)+' to '+n+' sheet'+(n===1?'':'s')
+    +(noScale?'  ·  '+noScale+' of them landed on a sheet with no scale, so those keep '
+      +fmtLen(lenOf(t))+' as a typed length until it is set':''));
 }
 /* the colour temperatures this product is offered in, with output where the sheet
    publishes it; a plain number when the product carries no list */
@@ -12958,8 +13114,16 @@ const KEYS=[
 const TOUCH=[
   ['One finger',"Draws while a drawing tool is chosen, otherwise moves the sheet. The first Apple Pencil stroke switches the finger back to panning; the ✋ button in the toolbar overrides either way."],
   ['Two fingers',"Pinch to zoom, drag to move the sheet — at any time, whatever tool is chosen."],
-  ['Long press',"The right-click menu, aimed at whatever is under your finger. On a label it is the label's own menu; on a markup, that markup's."],
+  ['Two fingers tapped',"Undo. Tapped, not dragged: the fingers have to go down together, come up quickly and not travel, so a pinch still zooms."],
+  ['Three fingers tapped',"Redo. Both taps can be turned off in Settings › Input."],
+  ['Press and hold on paper',"A ring of the tools you reach for, around your finger: Select, Dimension, Poly, Region, Count, Note, Undo, and More… for the full list. Lift and tap one, or tap away to dismiss it. Settings › Input swaps the ring back for the plain list."],
+  ['Press and hold a markup',"That markup’s own menu — its length, its treatment, its points, its arcs — because those actions are specific and named. On a label it is the label’s menu."],
+  ['Press and hold a row',"The same in the rails: a sheet, a markup, a run, a library product or a cut-list piece each give the menu of things you would do to that row, including copying the order code."],
   ['Double tap',"Finishes a run, retypes a text markup, or breaks a run at that point."],
+  ['Apple Pencil hovering',"On a Pencil that reports hover, a dot shows where the point would land before it touches down, and turns green over a corner it will snap to. Part way through a run it also shows what the next segment would add, so the snap is confirmed before the mark is made."],
+  ['The eraser end',"Turn the Pencil over and the markup under it goes, named in the message so you know what went. A run measured off it keeps its length as a typed figure rather than losing it. Where iPadOS does not report the eraser this does nothing — Delete and the menus still work."],
+  ['Pressure',"Ink (P) is pressure-sensitive."],
+  ['Your palm',"Ignored while the Pencil is near the glass, so you can rest your hand on the drawing."],
   ['⧉ button',"Add to selection: tap markups to build a set, since there is no shift key."],
   ['Sheets / Takeoff',"Slide a rail over the drawing; tap the sheet or the dimmed area to send it away."],
 ];
@@ -13002,6 +13166,7 @@ function manualSections(){
       ['Turning things','Drag the round grip above a selected text markup, or type an angle in the inspector. Angles snap at 15°.'],
       ['Line weight','Per markup, from the toolbar or the inspector.'],
       ['Ink (P)','Freehand, pressure-sensitive with an Apple Pencil.'],
+      ['Right-click anywhere','Not just the sheet. A sheet in the list, a markup row, a run card, a library product, a piece in the cut list — each gives the menu of things you would do to that one thing, including copying its order code straight to the clipboard. On the sheet it is aimed at whatever is under the pointer: a label has its own menu, a markup has its, a segment offers to curve just that segment. ⇧-right-click gives the browser’s own menu where you want it, and middle- or right-dragging pans.'],
     ]}]},
   {id:'labels',t:'Labels',blocks:[
     {p:'Every measurement carries labels you can move, turn and hide.'},
@@ -13063,6 +13228,7 @@ function manualSections(){
       ['Profiles','A profile is the office standard as one file: the settings, the rates, the tool visibility and palettes, and now the workspace too \u2014 including a custom palette. Save it from Settings \u203a Files, hand it over, and loading it puts the arrangement on screen rather than only into the project.'],
       ['Workspaces','How the window is arranged, under one name. Settings \u203a View has the rows \u2014 Workspace, Appearance, Tools, Takeoff panel, Density \u2014 and \u25eb in the titleblock or \u2318\u21e7W opens the manager, where an arrangement can be saved, exported as a .linework-view.json, or loaded from one someone sent. Three palettes, each with a light and a dark: Bench is the warm drafting palette this app has always had, Paper is a white sheet with one ink accent, Slate is neutral so the amber is the only warm thing on screen. Two layout switches: tools across the top or standing up as a rail down the side, and the takeoff beside the sheet or as a full-width drawer under it where a run table can be read across. The arrangement travels in the project, so a job reopens the way it was left; named workspaces are kept beside the projects, being an office preference rather than job data. A workspace file holds only how the window is arranged \u2014 never sheets, markups or runs \u2014 so applying one can never change a takeoff.'],
       ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. A bare "1/4" is refused rather than guessed at, because as a ratio it means 1:4 and on a drawing it means 1/4" = 1’-0" — twelve times apart. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
+      ['A scale for part of a sheet','An enlarged plan, a section or a detail sits on the same page as the plan and is drawn at its own scale. Trace a scale region round it and give it that scale: anything whose middle falls inside is measured at it, and the rest of the page carries on at the page’s. Where regions nest the smallest one containing a markup wins, so a blow-up inside an enlarged plan still reads correctly. It is drawn dash-dot in amber with its name and scale on it, so a sheet never measures at a scale you cannot see, and the status bar says how many are on the page. A region with no scale on it is not kept, because it would change nothing. Everything measured now goes through the region-or-page scale, which also means a markup on a sheet you are not looking at is measured at that sheet’s scale rather than the open page’s.'],
       ['Deleting a sheet','The ✕ on a sheet in the list. It counts what goes with it first — markups, runs measured off it, links pointing at it, its scale — and asks twice. Runs measured off it are kept by default with their measured length written in as a typed figure: the takeoff is what was priced, and losing a drawing is not a reason to change it. Untick that and they go too. The PDF is dropped from this browser as well, so undo brings the markups and runs back but the drawing needs re-importing.'],
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
@@ -13112,7 +13278,10 @@ function manualSections(){
     ]}]},
   {id:'touch',t:'On an iPad',blocks:[
     {p:'With a finger as the pointer the rails slide over the drawing instead of flanking it, the toolbar becomes one swipeable row, and zoom, Fit and the page arrows float over the sheet. Attach a trackpad and the columns come back.'},
-    {rows:TOUCH}]},
+    {p:'The idea is that nothing needs a keyboard. Anything a right-click does on a computer, a press and hold does here — on the sheet, on a markup, on a label, and on any row in either rail. Undo and redo are two and three fingers tapped. And where a computer has a whole toolbar in view, a press and hold on bare paper brings the six tools you reach for most to your finger instead of sending you back to the top of the screen.'},
+    {rows:TOUCH},
+    {p:'One thing Apple does not give a web app: the Pencil’s own double-tap, and the squeeze on a Pencil Pro. Those are reserved for native apps, so no browser can see them — which is why the ring is on press and hold rather than on a double-tap of the Pencil. Everything else the Pencil reports — pressure, tilt, hover, the eraser end — is used.'},
+    {p:'If a gesture gets in your way, Settings › Input has the switches: what one finger does, whether press and hold gives the ring or the list, and whether the two- and three-finger taps are live at all.'}]},
   {id:'keys',t:'Keyboard shortcuts',blocks:[{keys:true}]},
   {id:'trouble',t:'When something looks wrong',blocks:[
     {rows:[
@@ -13563,6 +13732,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   legendRows,legendBox,placeLegend,legendBy:LEG_BY,legendScopes:LEG_SCOPE,
   flattenMarkups,unflattenMarkups,flatBatches,flatTargets,isFlat,flatOf,
   spaces,spaceArea,spaceAt,spaceOf,spaceName,treatSpace,nameSpace,annCentre,
+  scaleRgns,srgnAt,srgnOf,annScale,annPerPt,scaleAtPt,rgnScaleDlg,readScale,treatFromAnn,
   markRows,markMatch,markValue,markSubject,renderMarks,manageCols,manageStatuses,
   statusList,colDefs,colVal,setColVal,colTypes:COL_TYPES,markScopes:MARK_SCOPES,
   visualSearch,runVisualSearch,inkOf,integral,boxSum,matchOn,suppress,vsPages,vsScale:VS_SCALE,

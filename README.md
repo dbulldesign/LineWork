@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.63.0**
+**Version 1.65.0**
 
 ## What it does
 
@@ -67,8 +67,34 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   Pencil is used the finger goes back to panning, which is what you want with a
   palm on the sheet; the toolbar toggle overrides either way. Two fingers or a
   pinch always move and zoom the sheet.
-- **Long-press is right-click.** Hold for half a second on a markup or on bare
-  paper and the same menu opens. A press that turns into a drag stays a drag.
+- **Long-press is right-click — everywhere.** Half a second on a markup, a label
+  or bare paper opens the same menu a right-click gives, and so does half a second
+  on any row in either rail: a sheet, a markup, a run, a library product, a piece
+  in the cut list. A press that turns into a drag stays a drag.
+- **A ring of tools under your finger.** Press and hold on bare paper and the six
+  tools you reach for most come to you — Select, Dimension, Poly, Region, Count,
+  Note — with Undo and a *More…* that falls through to the full list. On a markup
+  you still get the list, because those actions are specific and named. Settings ›
+  Input swaps the ring back for the list if you would rather.
+- **Two fingers tapped is undo, three is redo**, the way iPadOS does it everywhere
+  else. Tapped, not dragged: the fingers have to go down together, come up quickly
+  and not travel, so a pinch still zooms. Both can be turned off.
+- **What the Pencil is about to do.** Where iPadOS reports the Pencil hovering, a
+  dot shows where the point would land before it touches down and turns green over
+  a corner it will snap to — and part way through a run it says what the next
+  segment would add. The snap is confirmed before the mark is made rather than
+  after.
+- **The eraser end erases.** Turn the Pencil over and the markup under it goes,
+  named in the message so you know what went; a run measured off it keeps its
+  length as a typed figure rather than losing it. Where iPadOS does not report the
+  eraser this simply does nothing.
+- **Your palm is ignored** while the Pencil is near the glass, so you can rest
+  your hand on the drawing.
+- **What Apple does not give a web app:** the Pencil's own double-tap and the
+  squeeze on a Pencil Pro are reserved for native apps, so no browser can see
+  them. That is why the ring is on press-and-hold rather than on a double-tap of
+  the Pencil. Everything else the Pencil reports — pressure, tilt, hover, the
+  eraser end — is used.
 - **No shift key, no problem**: the ⧉ button in the toolbar turns on
   add-to-selection, so tapping markups builds a set to align, recolour or delete
   together. It is also in the long-press menu.
@@ -199,6 +225,20 @@ fit a smaller page is wrong by exactly however much it was shrunk, and a
 letter-sized page is called out as one. Calibrating with the ruler measures what is
 actually on the sheet, so it stays the sure way and is worth doing once against a
 dimension you can read.
+
+**A scale for part of a sheet.** An enlarged plan, a section or a detail sits on the
+same page as the plan and is drawn at its own scale. Trace a **scale region** round
+it and give it that scale: anything whose middle falls inside is measured at it, and
+the rest of the page carries on at the page's. Where regions nest **the smallest one
+containing a markup wins**, so a blow-up inside an enlarged plan still reads
+correctly — the same rule spaces use. It is drawn dash-dot in amber with its name and
+its scale on it, so a sheet never measures at a scale you cannot see, and the status
+bar says how many are on the page. A region with no scale on it is not kept, because
+it would change nothing.
+
+Everything measured now goes through the region-or-page scale rather than whatever
+page happens to be open, which also fixes a quieter thing: a markup on a sheet you
+are not looking at is measured at **that sheet's** scale.
 
 **Deleting a sheet** is the ✕ on its row. It counts what goes with it first —
 markups, runs measured off it, links pointing at it, its scale — and asks twice.
