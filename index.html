@@ -874,7 +874,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.57.0';
+const APP_VER='1.57.1';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1030,8 +1030,16 @@ function parseScale(str){
     .replace(/[\u2013\u2014]/g,'-').toLowerCase();
   if(!t) return null;
   let m;
-  if((m=/^1\s*[:\/]\s*(\d+(?:\.\d+)?)$/.exec(t))){
-    const n=parseFloat(m[1]); return n>0?n:null;
+  if(/^full(\s*size)?$/.test(t)||/^1\s*[:\/]\s*1$/.test(t)) return 1;
+  if((m=/^1\s*([:\/])\s*(\d+(?:\.\d+)?)$/.exec(t))){
+    const n=parseFloat(m[2]);
+    if(!(n>0)) return null;
+    /* "1/4" alone is the trap: as a ratio it is 1:4, but on an architectural
+       drawing it means 1/4" = 1'-0", which is 48 — twelve times different, and
+       silently so. A slash with one of those denominators is refused so it can be
+       written unambiguously; a colon always means a ratio. */
+    if(m[1]==='/'&&[2,4,8,16,32].includes(n)) return null;
+    return n;
   }
   /* the paper side, which may be a mixed fraction: 1 1/2 */
   const frac=x=>{
@@ -1569,7 +1577,9 @@ function applyProject(d){
     chId:P.ch.some(c=>c.id===sp.chId)?sp.chId:'',
     psuId:P.psu.some(x=>x.id===sp.psuId)?sp.psuId:'',
     note:String(sp.note||'')}));
-  if(typeof P.libFind!=='string') P.libFind='';
+  /* a saved search would reopen the job with most of the library filtered out of
+     sight, which reads as a library that has lost its products */
+  P.libFind='';
   if(P.onlyFit!==false) P.onlyFit=true;
   /* a legend has to list something it knows how to list */
   P.ann.forEach(a=>{ if(a&&a.type==='legend'){
@@ -1814,11 +1824,11 @@ const comboMatch=(o,q)=>{ const h=(o&&o.hay!=null)?String(o.hay):libHay(o);
    hiding; a dialog select only knows its own options, which is enough */
 const comboFromSelect=(sel,hay)=>[...sel.options].map(o=>({id:o.value,name:o.textContent,
   hay:((hay&&hay(o.value))||o.textContent).toLowerCase()}));
-function wireCombo(root,key,list,state,label){
+function wireCombo(root,key,list,state,label,hideNo){
   const sel=root.querySelector('[data-t="'+key+'"]');
-  comboOn(sel,{list,state,label});
+  comboOn(sel,{list,state,label,hideNo});
 }
-function comboOn(sel,{list,state,label,hay}={}){
+function comboOn(sel,{list,state,label,hay,hideNo}={}){
   if(!sel||sel.disabled||sel.dataset.combo) return;
   sel.dataset.combo='1';
   const items=list||comboFromSelect(sel,hay);
@@ -1846,7 +1856,7 @@ function comboOn(sel,{list,state,label,hay}={}){
       /* Browsing respects the "only what fits" setting; typing does not, because a
          product asked for by name must be findable. It is still put last and said
          to be unlisted. */
-      if(st2.k==='no'&&!typed&&o.id!==sel.value&&P.onlyFit!==false) return;
+      if(st2.k==='no'&&!typed&&hideNo!==false&&o.id!==sel.value&&P.onlyFit!==false) return;
       g[st2.k==='any'?'yes':st2.k].push({o,st:st2});
     });
     const stated=g.yes.some(x=>x.st.k==='yes')||g.no.length;
@@ -2145,7 +2155,15 @@ function needRepaint(){
   const v=visRect(),o=V.win;
   return v.x<o.x0-1||v.y<o.y0-1||v.x+v.w>o.x0+o.w+1||v.y+v.h>o.y0+o.h+1;
 }
-const clampZoom=z=>clamp(z,MIN_ZOOM,maxZoom());
+/* clamp is Math.min/Math.max, which pass NaN straight through — and one NaN zoom
+   gives the overlay a NaN viewBox and asks for a NaN-sized canvas, which leaves the
+   sheet blank until the page is reloaded. A bad number is nothing to act on, so it
+   becomes the zoom already in force. */
+const clampZoom=z=>{
+  const v=+z;
+  const ok=isFinite(v)&&v>0?v:(isFinite(V.zoom)&&V.zoom>0?V.zoom:1);
+  return clamp(ok,MIN_ZOOM,maxZoom());
+};
 
 async function ensurePage(){
   const d=FILES[V.docId]; if(!d) return false;
@@ -2801,6 +2819,7 @@ function setScale(ratio,all,label){
 async function pickScale(){
   if(!V.docId||!FILES[V.docId]){ toast('Open a drawing first'); return; }
   const d=P.docs.find(x=>x.id===V.docId);
+  if(!d){ toast('Open a drawing first'); return; }
   const cur=curScale();
   const pi=pageInches();
   const paper=pi?paperName(pi.w,pi.h):'';
@@ -2829,7 +2848,13 @@ async function pickScale(){
   /* what was typed wins, since it is the more deliberate act */
   if(typed){
     ratio=parseScale(typed);
-    if(!(ratio>0)){ toast('Could not read "'+typed+'" as a scale — try 1/4" = 1\'-0", 1" = 30\' or 1:75'); return; }
+    if(!(ratio>0)){
+      toast(/^1\s*\/\s*(?:2|4|8|16|32)$/.test(typed.trim())
+        ? '"'+typed.trim()+'" could mean 1:'+typed.trim().split('/')[1].trim()
+          +' or '+typed.trim()+'" = 1\'-0" — write whichever you mean'
+        : 'Could not read "'+typed+'" as a scale — try 1/4" = 1\'-0", 1" = 30\' or 1:75');
+      return;
+    }
     const hit=SCALES.find(x=>Math.abs(x[1]-ratio)<0.02);
     label=hit?hit[0]:typed;
   }else if(r.scale){
@@ -7083,10 +7108,14 @@ async function delDoc(d){
   P.docs=P.docs.filter(x=>x.id!==d.id);
   delete FILES[d.id];
   if(V.docId===d.id){
-    V.sel=null; V.multi=[]; V.draft=null;
-    if(P.docs.length) openDoc(P.docs[0].id,1,true);
-    else{ V.docId=null; V.pageObj=null; V.vp=null;
-      const st=$('#stage'); if(st) st.style.display='none'; }
+    /* cleared first, unconditionally: openDoc refuses a sheet whose PDF is not
+       loaded, so opening one that is not there would have left the view pointing at
+       the sheet just deleted — and the drop zone has to come back when none is */
+    V.sel=null; V.multi=[]; V.draft=null; V.page=1;
+    V.docId=null; V.pageObj=null; V.vp=null;
+    stage.style.display='none'; $('#blank').style.display='';
+    const next=P.docs.find(x=>FILES[x.id]);
+    if(next) openDoc(next.id,1,true);
   }
   pdfDrop(d.id).catch(()=>{});
   pdfPrune();
@@ -7920,14 +7949,14 @@ function renderTreatments(){
        product changes. What is already chosen is always in the list, whatever it
        says, because a job that has been saved must never quietly change under a
        compatibility list that arrived later. */
-    const fitOpts=(list,sel,state)=>{
+    const fitOpts=(list,sel,state,hideNo)=>{
       const g={yes:[],unknown:[],no:[]};
       let stated=0;
       list.forEach(o=>{
         const st=state(o), on=o.id===sel;
         const why=st.k==='no'?'  \u2014 '+(st.why||'not listed'):'';
         const html='<option value="'+o.id+'"'+(on?' selected':'')+'>'+esc(o.name+why)+'</option>';
-        if(st.k==='no'&&!on&&P.onlyFit!==false) return;      /* hidden, not lost */
+        if(st.k==='no'&&!on&&hideNo&&P.onlyFit!==false) return;   /* hidden, not lost */
         if(st.k==='yes'||st.k==='no') stated++;
         g[st.k==='any'?'yes':st.k].push(html);
       });
@@ -7945,12 +7974,16 @@ function renderTreatments(){
       return (a2.k==='yes'||b2.k==='yes')?{k:'yes'}:{k:'unknown'};
     };
     const stCh=c2=>fitCh(r.f,c2), stPs=p2=>fitPsu(r.f,p2);
-    const fixOpts=fitOpts(P.fix,t.fixId,stFix);
-    const chOpts=fitOpts(P.ch,t.chId,stCh);
-    const psOpts=fitOpts(P.psu,t.psuId,stPs);
+    /* The product drives the other two, not the other way round. Narrowing the
+       product list by the channel already chosen inverts that — and with a channel
+       no sheet lists, the placeholder extrusion say, it would hide every product at
+       once. So the product list is grouped and marked but never shortened; only the
+       channel and supply lists are. */
+    const fixOpts=fitOpts(P.fix,t.fixId,stFix,false);
+    const chOpts=fitOpts(P.ch,t.chId,stCh,true);
+    const psOpts=fitOpts(P.psu,t.psuId,stPs,true);
     const hidden=(P.onlyFit!==false)?(
-      P.fix.filter(x=>x.id!==t.fixId&&(fitCh(x,r.c).k==='no'||fitPsu(x,r.ps).k==='no')).length
-      +P.ch.filter(x=>x.id!==t.chId&&fitCh(r.f,x).k==='no').length
+      P.ch.filter(x=>x.id!==t.chId&&fitCh(r.f,x).k==='no').length
       +P.psu.filter(x=>x.id!==t.psuId&&fitPsu(r.f,x).k==='no').length):0;
     const shopOpts='<option value="">— none —</option>'+P.docs.map(d=>'<option value="'+d.id+'"'+(d.id===t.shop?' selected':'')+'>'+esc(d.name)+'</option>').join('');
     el.innerHTML=
@@ -8003,8 +8036,9 @@ function renderTreatments(){
         +'<div class="f"><label>LED product</label><select data-t="fixId">'+fixOpts+'</select></div>'
         +'<div class="f"><label>Colour temperature</label>'+cctControl(r)+'</div>'
       +'</div>'
-      +(hidden?'<div class="hint" style="margin-top:4px">'+hidden+' product'+(hidden===1?'':'s')
-        +' the cutsheets do not list as fitting '+(hidden===1?'is':'are')+' hidden. '
+      +(hidden?'<div class="hint" style="margin-top:4px">'+hidden
+        +(hidden===1?' channel or supply the cutsheets do not list as fitting is'
+          :' channels or supplies the cutsheets do not list as fitting are')+' hidden. '
         +'<button class="btn sm ghost" data-a="allfit">Show everything</button></div>'
         :(P.onlyFit===false?'<div class="hint" style="margin-top:4px">Showing everything, fitting or not. '
           +'<button class="btn sm ghost" data-a="onlyfit">Only what fits</button></div>':''))
@@ -8077,13 +8111,17 @@ function renderTreatments(){
     /* an approved treatment is read-only until it is unapproved */
     if(t.approved) $$('[data-t]',el).forEach(inp=>{ inp.disabled=true; inp.tabIndex=-1; });
     /* after the disable pass, so an approved run keeps its plain read-only selects */
-    wireCombo(el,'fixId',P.fix,stFix,'an LED product');
-    wireCombo(el,'chId',P.ch,stCh,'a channel');
-    wireCombo(el,'psuId',P.psu,stPs,'a supply');
+    /* the same hiding rule as the selects above: the product list is never
+       shortened, the other two are */
+    wireCombo(el,'fixId',P.fix,stFix,'an LED product',false);
+    wireCombo(el,'chId',P.ch,stCh,'a channel',true);
+    wireCombo(el,'psuId',P.psu,stPs,'a supply',true);
     $$('[data-t]',el).forEach(inp=>{
       inp.oninput=()=>{
         const k=inp.dataset.t;
-        if(k==='len'){ const v=parseLen(inp.value); t.manual=isFinite(v)?v:0; }
+        /* a negative length is not a short run, it is nonsense — and it flowed
+           through as one, so it is clamped where it is typed */
+        if(k==='len'){ const v=parseLen(inp.value); t.manual=(isFinite(v)&&v>0)?v:0; }
         else if(k==='qty') t.qty=Math.max(1,parseInt(inp.value)||1);
         else if(k==='feedOv'){ const v=parseInt(inp.value); t.feedOv=(isFinite(v)&&v>0)?v:0; }
         else if(k==='cct'){ const v=parseInt(inp.value); t.cct=(isFinite(v)&&v>0)?v:0; }
@@ -8855,6 +8893,7 @@ async function bulkSpecs(files){
   const rows=[],bad=[];
   let stopped=0;
   progOpen('Reading cutsheets',files.length);
+  try{
   for(let i=0;i<files.length;i++){
     const f=files[i];
     await progStep(i,f.name);
@@ -8880,7 +8919,7 @@ async function bulkSpecs(files){
     rows.push({f,found,kind:k,item:null});
   }
   await progStep(files.length-stopped,'');
-  progClose();
+  }finally{ progClose(); }   /* a panel left up would block the page for good */
   const why=n=>bad.slice(0,n).join('  \u00b7  ')+(bad.length>n?'  \u00b7  and '+(bad.length-n)+' more':'');
   const stopNote=stopped?('  Stopped early, with '+stopped+' sheet'+(stopped===1?'':'s')+' not read.'):'';
   if(!rows.length){
@@ -11996,7 +12035,7 @@ function manualSections(){
     ]}]},
   {id:'sheets',t:'Sheets and revisions',blocks:[
     {rows:[
-      ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
+      ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. A bare "1/4" is refused rather than guessed at, because as a ratio it means 1:4 and on a drawing it means 1/4" = 1’-0" — twelve times apart. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
       ['Deleting a sheet','The ✕ on a sheet in the list. It counts what goes with it first — markups, runs measured off it, links pointing at it, its scale — and asks twice. Runs measured off it are kept by default with their measured length written in as a typed figure: the takeoff is what was priced, and losing a drawing is not a reason to change it. Untick that and they go too. The PDF is dropped from this browser as well, so undo brings the markups and runs back but the drawing needs re-importing.'],
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],

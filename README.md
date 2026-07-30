@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.57.0**
+**Version 1.57.1**
 
 ## What it does
 
@@ -85,7 +85,8 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 **Click the scale in the titleblock.** Pick from the standard architectural, civil
 and metric scales — typed into, like every other list — or write it however the
 titleblock does: `3/32" = 1'-0"`, `1" = 30'`, `1:75`. Apply it to the whole sheet or
-to this page alone.
+to this page alone. A bare `1/4` is **refused rather than guessed at**: as a ratio it
+is 1:4, on a drawing it means `1/4" = 1'-0"`, and those are twelve times apart.
 
 The dialog shows **the page size**, named where it is a standard sheet, because a
 stated scale is only right if the PDF is at its plotted size. A drawing printed to
