@@ -530,6 +530,9 @@ body.haspen #penFlag{display:inline}
     <button class="tool" data-tool="area" title="Region — trace a room for its area, perimeter and cove run (R)"><svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg></button>
     <button class="tool" data-tool="count" title="Count — stamp and tally a symbol (M)"><svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg></button>
     <button class="tool" data-tool="cloud" title="Revision cloud with a delta (Q)"><svg viewBox="0 0 24 24"><path d="M5 15a2.6 2.6 0 01.4-5 3 3 0 015.2-2 3 3 0 015.6.7 2.8 2.8 0 013.3 2.6A2.7 2.7 0 0119 15z"/><path d="M9 19h6l-3-5z"/></svg></button>
+    <button class="tool" data-tool="feed" title="Place a feed point on a run (F)"><svg viewBox="0 0 24 24"><path d="M3 17h18"/><path d="M12 17V8"/><circle cx="12" cy="6" r="2.6"/><path d="M8 12h8"/></svg></button>
+    <button class="tool" data-tool="splice" title="Place a splice where pieces join (J)"><svg viewBox="0 0 24 24"><path d="M3 12h6M15 12h6"/><path d="M9 8v8M15 8v8"/></svg></button>
+    <button class="tool" data-tool="whip" title="Route a home run — click the driver, then each turn, then the feed (W)"><svg viewBox="0 0 24 24"><path d="M4 20V9a3 3 0 013-3h6a3 3 0 013 3v6a2 2 0 002 2h2"/><circle cx="4" cy="20" r="1.9"/><circle cx="20" cy="17" r="1.9"/></svg></button>
     <button class="tool" data-tool="driver" title="Place a power supply / driver (D)"><svg viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="9" rx="1"/><path d="M7 8V5M17 8V5M6 12.5h4M14 12.5h4"/></svg></button>
     <button class="tool" data-tool="box" title="Area box (B)"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="1"/></svg></button>
     <button class="tool" data-tool="ink" title="Pencil ink — freehand notes & sketching (P)"><svg viewBox="0 0 24 24"><path d="M4 20l1-4.5L15.5 5a2.1 2.1 0 013 3L8 18.5z"/><path d="M14 6.5l3.5 3.5"/></svg></button>
@@ -760,7 +763,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.37.0';
+const APP_VER='1.38.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1329,6 +1332,8 @@ function applyProject(d){
   P=Object.assign(BLANK(),d);
   ['docs','ann','treat'].forEach(k=>{ if(!Array.isArray(P[k])) P[k]=[]; });
   P.ann.forEach(a=>{ if(a&&a.stated!=null){ const v=+a.stated; if(v>0) a.stated=v; else delete a.stated; } });
+  /* a feed point or splice only means something attached to a run */
+  P.ann.forEach(a=>{ if(a&&(a.type==='feed'||a.type==='splice')) a.at=clamp(+a.at||0,0,1); });
   P.ann=P.ann.filter(a=>a&&a.type!=='cal');       /* older files kept the calibration line */
   if(!P.cal||typeof P.cal!=='object'||Array.isArray(P.cal)) P.cal={};
   if(!Array.isArray(P.fix)||!P.fix.length) P.fix=clone(DEF_FIX);
@@ -1403,6 +1408,15 @@ function applyProject(d){
   /* a driver cannot feed a treatment that has been deleted */
   const tids=new Set(P.treat.map(t=>t.id));
   P.ann.forEach(a=>{ if(a.type==='driver') a.serves=a.serves.filter(id=>tids.has(id)); });
+  /* a feed point or splice whose run is gone would be counted against nothing */
+  P.ann=P.ann.filter(a=>!((a.type==='feed'||a.type==='splice')&&!tids.has(a.treat)));
+  /* a routed home run still measures once its ends are gone, so it is kept — but
+     the dangling ends are cleared so it reads as unattached instead of counting */
+  const aids=new Set(P.ann.map(a=>a.id));
+  P.ann.forEach(a=>{ if(a.type==='whip'){
+    if(!aids.has(a.from)) a.from=null;
+    if(!aids.has(a.to)) a.to=null;
+  } });
   P.maxHome=Math.max(0,+P.maxHome||0)||240;
   P.whipSlack=Math.max(0,+P.whipSlack||0);
   P.whipSpare=clamp(+P.whipSpare||0,0,100);
@@ -2759,6 +2773,36 @@ function drawAnn(a,selected,isDraft,multi){
       +'" text-anchor="middle">'+esc(a.name||'PS')+'</text>';
     g+=chip(x,y+h/2+CHIP_H*.7,driverLabel(a,d0),c2,null,a,'total',lblRotFor(a,'total'));
   }
+  if(a.type==='feed'||a.type==='splice'){
+    const [x,y]=pts[0], R=6.5*W_MUL;
+    if(a.type==='feed'){
+      /* a lightning-free plain mark: a filled ring with a stub, so it reads at
+         any zoom and does not look like a count */
+      g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+R.toFixed(1)+'" fill="'+OVL
+        +'" fill-opacity=".92" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>'
+        +'<path d="M'+x.toFixed(1)+' '+(y-R*1.9).toFixed(1)+'V'+(y-R).toFixed(1)
+        +'" stroke="'+col+'" stroke-width="'+W.toFixed(2)+'"/>'
+        +'<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(R*.38).toFixed(1)+'" fill="'+col+'"/>';
+    }else{
+      const s2=R*1.15;
+      g+='<path d="M'+(x-s2).toFixed(1)+' '+(y-s2).toFixed(1)+'L'+(x+s2).toFixed(1)+' '+(y+s2).toFixed(1)
+        +'M'+(x-s2).toFixed(1)+' '+(y+s2).toFixed(1)+'L'+(x+s2).toFixed(1)+' '+(y-s2).toFixed(1)
+        +'" stroke="'+col+'" stroke-width="'+(W*1.1).toFixed(2)+'"/>';
+    }
+  }
+  if(a.type==='whip'){
+    /* the route itself, dashed, with a tick at each turn */
+    g+='<path d="'+pts.map((q,i)=>(i?'L':'M')+q[0].toFixed(1)+' '+q[1].toFixed(1)).join('')
+      +'" fill="none" stroke="'+col+'" stroke-width="'+(W*.9).toFixed(2)
+      +'" stroke-dasharray="7 4" stroke-linejoin="round"/>';
+    pts.slice(1,-1).forEach(q=>{ g+='<circle cx="'+q[0].toFixed(1)+'" cy="'+q[1].toFixed(1)+'" r="'
+      +(2.2*W_MUL).toFixed(1)+'" fill="'+col+'"/>'; });
+    const L=annMeasured(a);
+    if(L!=null){
+      const mid=pts[Math.floor(pts.length/2)];
+      g+=chip(mid[0],mid[1]-CHIP_H*.8,fmtLen(L)+(a.from&&a.to?'':'  ·  not attached'),col,null,a,'total',lblRotFor(a,'total'));
+    }
+  }
   if(a.type==='count'){
     const [x,y]=pts[0], R=8*W_MUL;
     g+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+R.toFixed(1)+'" fill="'+OVL
@@ -3160,7 +3204,7 @@ function hitHandle(sx,sy,tol){
    A traced run is never right first time: you need to break a segment where the
    cove turns, or drop a point you over-clicked. */
 const editablePts=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='box'||a.type==='tbox')&&!a.free;
-const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud');
+const vertexType=a=>a&&(a.type==='line'||a.type==='area'||a.type==='cloud'||a.type==='whip');
 /* which segment of a is nearest this stage-space point, and how far away */
 function nearestSeg(a,sx,sy){
   const pts=annPts(a).map(sp);
@@ -3304,6 +3348,9 @@ function setTool(t){
     arc:'Arc length — click the start, a point along the curve, then the end',
     area:'Region — click each corner of the room, ⏎ to close it',
     count:'Count — click to stamp one, and it tallies into the BOM',
+    feed:'Feed point — click on a run where it is fed',
+    splice:'Splice — click on a run where two pieces join',
+    whip:'Home run — click the driver, then each turn, then the feed. ⏎ to finish',
     cloud:'Revision cloud — click around what changed, ⏎ to close it',
     driver:'Driver — tap to place a power supply, then assign what it feeds',
     box:'Area box — drag',ink:'Pencil ink — freehand notes',erase:'Erase — drag across markups',
@@ -3543,6 +3590,8 @@ function endPointer(e){
   if(tool==='box'||tool==='tbox'){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
   if(tool==='count'){ if(!pr.moved) placeCount(p); return; }
   if(tool==='driver'){ if(!pr.moved) placeDriver(p); return; }
+  if(tool==='feed'||tool==='splice'){ if(!pr.moved) placePoint(tool,p); return; }
+  if(tool==='whip'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='area'||tool==='cloud'){ tapVertex(p,e); syncDrawbar(); return; }
   if(tool==='note'){ if(!pr.moved) placeNote(p); return; }
   if(tool==='link'){ if(!pr.moved) placeLink(p); return; }
@@ -3564,7 +3613,7 @@ stage.addEventListener('pointercancel',e=>{ PT.delete(e.pointerId); cancelLongPr
 stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') $('#penDot').classList.remove('show'); });
 
 function tapVertex(p,e){
-  if((isLineTool(V.tool)||V.tool==='area')&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
+  if((isLineTool(V.tool)||V.tool==='area'||V.tool==='whip')&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
   const raw=p; p=snapped(p);
   /* If snapping would land on the vertex just placed, keep the raw click: the
      duplicate would be filtered out on commit and the point would vanish. */
@@ -3572,8 +3621,9 @@ function tapVertex(p,e){
     const prev=V.draft.pts[V.draft.pts.length-2];
     if(prev&&ptLen(prev,p)<0.6&&ptLen(prev,raw)>=0.6){ p=raw; V.snapHit=null; }
   }
-  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':V.tool==='cloud'?'cloud':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
-    color:V.tool==='cal'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined,
+  if(!V.draft) V.draft={id:'d',type:V.tool==='cal'?'cal':V.tool==='area'?'area':V.tool==='cloud'?'cloud'
+      :V.tool==='whip'?'whip':'line',doc:V.docId,page:V.page,pts:[p,p.slice()],
+    color:V.tool==='cal'||V.tool==='whip'?'#5AB6DE':V.color,w:V.width,poly:V.tool==='poly'||undefined,
     off:V.tool==='area'?(+P.areaOff||0):undefined};
   else{
     const a=V.draft.pts[V.draft.pts.length-2];
@@ -3610,7 +3660,7 @@ function tapArc(p){
   drawOverlay(); liveLen(V.draft);
 }
 stage.addEventListener('dblclick',e=>{
-  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area'||V.draft.type==='cloud')){ e.preventDefault(); finishDraft(); return; }
+  if(V.draft&&/^(line|area|cloud|whip)$/.test(V.draft.type)){ e.preventDefault(); finishDraft(); return; }
   if(V.tool==='pan'){
     const sc=toS(e), h=hitTest(sc[0],sc[1],9);
     /* double-click any text-bearing markup to edit it in place */
@@ -3762,7 +3812,7 @@ stage.addEventListener('contextmenu',e=>{
     if(lc){ V.sel=lc.a.id; drawOverlay(); showInspector(lc.a); renderAnnList();
       showCtx(e.clientX,e.clientY,ctxForLabel(lc)); return; }
   }
-  if(V.draft&&(V.draft.type==='line'||V.draft.type==='area'||V.draft.type==='cloud')&&V.draft.pts.length>2){ finishDraft(); return; }
+  if(V.draft&&/^(line|area|cloud|whip)$/.test(V.draft.type)&&V.draft.pts.length>2){ finishDraft(); return; }
   if(V.draft){ V.draft=null; drawOverlay(); syncDrawbar(); return; }
   const sc=toS(e); ctxPt=toPt(e);
   const h=hitTest(sc[0],sc[1],10);
@@ -3775,7 +3825,8 @@ stage.addEventListener('contextmenu',e=>{
    quite match. Works on runs and on regions. */
 const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawing link',
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
-  area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver'};
+  area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver',
+  feed:'Feed point',splice:'Splice',whip:'Home run'};
 async function offsetAnn(a){
   if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
   const k=inPerPt();
@@ -4014,6 +4065,32 @@ async function finishDraft(){
     if(d.poly) a.poly=true;
     if(d.closed&&pts.length>2) a.closed=true;
     P.ann.push(a); V.sel=a.id; drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+    return;
+  }
+  if(d.type==='whip'){
+    let pts=d.pts.slice(0,-1);
+    pts=pts.filter((p,i)=>i===0||ptLen(p,pts[i-1])>0.6);
+    if(pts.length<2){ drawOverlay(); toast('A home run needs at least two points'); return; }
+    /* the ends say what it joins: nearest driver to the first point, nearest feed
+       point to the last. Nothing is invented — an end that finds nothing is
+       reported and the route is still kept as a measurement. */
+    const nearOf=(p,type)=>{
+      let best=null;
+      P.ann.filter(x=>x.type===type&&x.doc===d.doc&&(x.page||1)===(d.page||1)).forEach(x=>{
+        const dd=ptLen(p,x.pts[0]);
+        if(!best||dd<best.d) best={d:dd,a:x};
+      });
+      return best;
+    };
+    const dv=nearOf(pts[0],'driver'), fd=nearOf(pts[pts.length-1],'feed');
+    snap('Home run');
+    const a={id:uid('a_'),type:'whip',doc:d.doc,page:d.page,pts,color:'#5AB6DE',w:d.w||V.width,
+      from:dv?dv.a.id:null,to:fd?fd.a.id:null};
+    P.ann.push(a); V.sel=a.id;
+    drawOverlay(); showInspector(a); renderAnnList(); renderBom(); stats(); markDirty();
+    toast(!dv?'No driver at the start of that route — it measures, but it is not attached'
+      :!fd?'No feed point at the end of that route — it measures, but it is not attached'
+      :'Routed '+fmtLen(annMeasured(a))+' from '+(dv.a.name||'PS'));
     return;
   }
   if(d.type==='area'){
@@ -4262,6 +4339,65 @@ async function placeDriver(p){
   drawOverlay(); showInspector(a); renderAnnList(); renderBom(); markDirty();
   if(!r.keep) setTool('pan');
 }
+/* ---- placed feed points and splices ----
+   Feed points were only ever a count derived from voltage drop, which meant the
+   wire schedule had to take every whip at the same measured distance. Placing
+   them fixes that: each feed measures its own way back to the driver, and the
+   count comes from the drawing instead of from arithmetic. Splices are the same
+   idea for the other end of the job — where the pieces actually join. */
+const nearRun=(p,doc,page)=>{
+  let best=null;
+  P.treat.forEach(t=>{
+    const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+    if(!an||an.doc!==doc||(an.page||1)!==(page||1)) return;
+    const n=nearestPtOn(an,p);
+    if(n&&(!best||n.d<best.d)) best={d:n.d,t,an,pt:n.pt};
+  });
+  return best;
+};
+const feedsPlaced=t=>P.ann.filter(a=>a.type==='feed'&&a.treat===t.id);
+const splicesOn=t=>P.ann.filter(a=>a.type==='splice'&&a.treat===t.id);
+/* how far along its run a point sits, 0..1, so a splice can be turned into a
+   piece length without needing the geometry again downstream */
+function alongRun(an,p){
+  const pts=annPts(an);
+  if(!pts||pts.length<2) return 0;
+  let total=0; const segs=[];
+  for(let i=1;i<pts.length;i++){ const d=ptLen(pts[i-1],pts[i]); segs.push(d); total+=d; }
+  if(!(total>0)) return 0;
+  let best={d:Infinity,run:0};
+  let acc=0;
+  for(let i=1;i<pts.length;i++){
+    const c=closestOnSeg(p,pts[i-1],pts[i]);
+    if(c.d<best.d) best={d:c.d,run:acc+ptLen(pts[i-1],c.pt)};
+    acc+=segs[i-1];
+  }
+  return clamp(best.run/total,0,1);
+}
+async function placePoint(kind,p){
+  const near=nearRun(p,V.docId,V.page);
+  if(!near){ toast('Measure a run on this page first — a '+(kind==='feed'?'feed point':'splice')+' belongs to one'); setTool('pan'); return; }
+  const list=P.treat.filter(t=>{ const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+    return an&&an.doc===V.docId&&(an.page||1)===(V.page||1); });
+  const r=await dlg({title:kind==='feed'?'Place a feed point':'Place a splice',fields:[
+    {k:'t',type:'select',label:'On which run',opts:list.map(t=>({v:t.id,t:tagOf(t)+(t.name?' · '+t.name:'')})),
+      val:near.t.id},
+    {k:'keep',type:'check',cap:'Keep placing',val:true}
+  ],ok:'Place',
+    note:kind==='feed'
+      ? 'Placed feed points replace the calculated count, and each one measures its own home run back to its driver.'
+      : 'Placed splices say where the pieces actually join, so the piece list is cut at them rather than at equal lengths.'});
+  if(!r){ setTool('pan'); return; }
+  const t=P.treat.find(x=>x.id===r.t)||near.t;
+  const an=t.annId&&P.ann.find(x=>x.id===t.annId);
+  const snapped=an?(nearestPtOn(an,p)||{}).pt||p:p;
+  snap(kind==='feed'?'Feed point':'Splice');
+  const a={id:uid('a_'),type:kind,doc:V.docId,page:V.page,pts:[snapped],treat:t.id,
+    at:an?alongRun(an,snapped):0,color:kind==='feed'?'#5AB6DE':'#C9A227',w:V.width};
+  P.ann.push(a); invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
+  if(!r.keep) setTool('pan');
+}
 /* ---- wire schedule ----
    The one geometric fact the drawing gives is how far a placed driver is from
    each run it feeds, so that is what gets measured: one whip per feed point, at
@@ -4279,23 +4415,46 @@ function whipData(){
     (Array.isArray(a.serves)?a.serves:[]).forEach(id=>{
       const t=P.treat.find(x=>x.id===id); if(!t) return;
       const r=calc(t);
+      const k=inPerPt()||0;
+      /* a feed point placed on the drawing measures its own way back, and a
+         routed home run measures the way it is actually pulled. Either beats the
+         straight line, and the row says which one it used. */
+      const mine=feedsPlaced(t).filter(f=>f.doc===a.doc&&(f.page||1)===(a.page||1));
+      if(mine.length){
+        mine.forEach((f,i)=>{
+          const route=P.ann.find(x=>x.type==='whip'&&x.to===f.id&&x.from===a.id);
+          const routed=route?annMeasured(route):null;
+          const each=routed!=null?routed:(k?ptLen(a.pts[0],f.pts[0])*k:0);
+          const per=each>0?each+slack:0;
+          rows.push({drv:a.name||'PS',supply:d.ps.name,sheet,tag:tagOf(t),tid:t.id,
+            runs:r.qty,feeds:r.feeds,whips:Math.max(1,r.qty),each,per,
+            total:per*Math.max(1,r.qty),measured:each>0,assumed:false,
+            routed:routed!=null,
+            over:!!(each>0&&each>d.maxHome),
+            note:(routed!=null?'routed on the drawing':'feed '+(i+1)+' placed, straight line')
+              +(r.qty>1?' · '+r.qty+' identical runs':'')});
+        });
+        return;
+      }
       const link=d.links.find(l=>l.tag===tagOf(t));
       const each=link?link.len:0;
       const whips=Math.max(1,r.feeds)*Math.max(1,r.qty);
       const per=each>0?each+slack:0;
       rows.push({drv:a.name||'PS',supply:d.ps.name,sheet,tag:tagOf(t),tid:t.id,
         runs:r.qty,feeds:r.feeds,whips,each,per,
-        total:per*whips,measured:!!link,
+        total:per*whips,measured:!!link,routed:false,
         assumed:!!(link&&r.feeds>1),
         over:!!(each>0&&each>d.maxHome),
         note:!link?'on another sheet — not measured'
-          :(r.feeds>1?r.feeds+' feed points per run, all taken at the measured distance'
+          :(r.feeds>1?r.feeds+' feed points per run, all taken at the measured distance — place them to measure each'
             :(r.qty>1?r.qty+' runs at the measured distance':''))});
     });
   });
   const measured=rows.filter(r=>r.measured);
   const raw=measured.reduce((s,r)=>s+r.total,0);
   return {rows,slack,spare,
+    routed:rows.filter(r=>r.routed).length,
+    assumed:rows.filter(r=>r.assumed).length,
     whips:rows.reduce((s,r)=>s+r.whips,0),
     unmeasured:rows.filter(r=>!r.measured).reduce((s,r)=>s+r.whips,0),
     raw,total:raw*spare};
@@ -4730,7 +4889,8 @@ function renderCodeKey(){
    Notes and text get in the way while measuring, so each kind can be hidden.
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
-  ['cloud','Revision clouds'],['driver','Drivers'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
+  ['cloud','Revision clouds'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
+  ['whip','Home runs'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
 const layerOn=type=>!(P.hide&&P.hide[type]);
 const annVisible=a=>layerOn(a.type)&&!a.hidden;
@@ -5005,7 +5165,11 @@ function calc(t){
   const maxRun=feedLimit(vr&&+vr.maxLen>0?vr:f);
   const feedKnown=maxRun>0;
   const autoFeeds=cut>0?Math.max(1,Math.ceil(cut/(feedKnown?maxRun:1e9)-1e-6)):0;
-  const feedSet=+t.feedOv>0, feeds=feedSet?Math.max(1,Math.round(+t.feedOv)):autoFeeds;
+  /* placed feed points are the drawing's own answer and beat both the override
+     and the arithmetic — they are what the electrician will actually land */
+  const placed=feedsPlaced(t).length;
+  const feedSet=+t.feedOv>0;
+  const feeds=placed>0?placed:(feedSet?Math.max(1,Math.round(+t.feedOv)):autoFeeds);
   const clipAsked=parseLen(t.clip);
   const clipBad=t.clip!==''&&t.clip!=null&&(!isFinite(clipAsked)||clipAsked<=0);
   /* an absurd spacing quietly produced 2 clips for a 100ft run; clamp and say so */
@@ -5104,7 +5268,12 @@ function calc(t){
   if(gap>0.06&&cut>0) warn('gap','Dark gap of '+fmtLen(gap)+' per run. Decide now which end it lands on.');
   if(gap<-0.06&&cut>0) warn('overrun','Runs '+fmtLen(-gap)+' long per run — rounded up to whole '+(fixed?'fixtures':'cut increments')+'.');
   if(fixed&&mode==='down'&&gap>0.06) warn('fixdown','Fixtures cannot be cut down — rounding down leaves this run short. Use Round up.');
-  if(feedSet&&feeds<autoFeeds) warn('feedfew','Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(maxRun)+' per feed.');
+  if(placed>0&&placed<autoFeeds) warn('feedfew',placed+' feed point'+(placed===1?'':'s')
+    +' placed on the drawing but voltage drop needs at least '+autoFeeds+' at '+fmtLen(maxRun)+' per feed.');
+  if(placed>0&&feedSet&&placed!==Math.round(+t.feedOv))
+    warn('feedmany','Feed points are set to '+Math.round(+t.feedOv)+' but '+placed
+      +(placed===1?' is':' are')+' placed on the drawing — the drawing is being used.');
+  if(!placed&&feedSet&&feeds<autoFeeds) warn('feedfew','Set to '+feeds+' feed point'+(feeds===1?'':'s')+' but voltage drop needs at least '+autoFeeds+' at '+fmtLen(maxRun)+' per feed.');
   if(!feedSet&&feeds>1) warn('feedmany',feeds+' feed points per run — max '+fmtLen(maxRun)+' per feed. A centre feed usually solves it.');
   if(dimBad) warn('dimbad',ps.name+' does not dim on '+dimLabel(dim)+' — it handles '
     +psDims.map(dimLabel).join(' and ')+'.');
@@ -5126,7 +5295,7 @@ function calc(t){
   if(clipClamped) warn('clipclamp','Clip spacing clamped to '+fmtLen(clipSp)+' (allowed range 1" to 10 ft).');
   if(L>0&&clipSp>L) warn('cliplong','Clip spacing is longer than the run — only the two end clips are counted.');
   return {f,c,ps,L,qty,cut,gap,watts,feeds,autoFeeds,feedSet,feedKnown,maxRun,kind,fixed,mode,inc,units,opts,locked,clipBad,clipClamped,cct,lmFt,cctBad,
-    fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,
+    fTerms,feedIn,feedOut,feedBad,feedInBad,vars,vr,varBad,placed,
     wire,wtype,codeParts,code:oc.code,codeMiss:oc.miss,codeFmt:oc.fmt,plenumBad,barrelWire,
     dim,psDims,dimKnown,dimBad,
     clips,clipSp,stock,pieces,full,remainder,joiners,caps,tot,design,psuQty,warn:w,warnAll:wAll};
@@ -6201,11 +6370,25 @@ function pieceData(){
     const tag=tagOf(t);
     for(let run=1;run<=r.qty;run++){
       if(r.cut>0){
-        /* the code is per piece because the length is one of its positions */
-        const oc=orderCode(r.f,r.codeParts,r.cut);
-        rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
-          item:r.f.name,len:r.cut,note:r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length',
-          locked:r.locked,chId:null,detail:t.detail||'',code:oc.code,codeMiss:oc.miss});
+        /* splices placed on the drawing say where the pieces actually join, so
+           the run is cut at them rather than shipped as one length */
+        const sp=splicesOn(t).map(x=>clamp(+x.at||0,0,1)).sort((x,y)=>x-y)
+          .filter((v,i,arr)=>v>0.001&&v<0.999&&(i===0||v-arr[i-1]>0.001));
+        const cuts=[];
+        if(sp.length){
+          let prev=0;
+          sp.forEach(v=>{ cuts.push(r.cut*(v-prev)); prev=v; });
+          cuts.push(r.cut*(1-prev));
+        } else cuts.push(r.cut);
+        cuts.forEach((len,i)=>{
+          /* the code is per piece because the length is one of its positions */
+          const oc=orderCode(r.f,r.codeParts,len);
+          rows.push({tid:t.id,tag,type:t.type||'',zone:t.zone||'',run,kind:r.kind,
+            item:r.f.name,len,
+            note:cuts.length>1?('piece '+(i+1)+' of '+cuts.length+' — spliced on the drawing')
+              :(r.inc>0?(r.units+' × '+fmtRun(r.inc)):'cut to length'),
+            locked:r.locked,chId:null,detail:t.detail||'',code:oc.code,codeMiss:oc.miss});
+        });
       }
       if(r.stock>0){
         let rem=r.L,i=1;
@@ -8136,6 +8319,9 @@ document.addEventListener('keydown',e=>{
   if(k==='t') setTool('text'); if(k==='x') setTool('tbox');
   if(k==='r') setTool('area'); if(k==='m') setTool('count');
   if(k==='q') setTool('cloud'); if(k==='d'&&!(e.metaKey||e.ctrlKey)) setTool('driver');
+  if(k==='f'&&!(e.metaKey||e.ctrlKey)) setTool('feed');
+  if(k==='j') setTool('splice');
+  if(k==='w'&&!(e.metaKey||e.ctrlKey)) setTool('whip');
   if(k===','&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); openSettings(); }
   /* ? and F1 both open the manual; ? needs shift on most layouts, so match either */
   if(k==='?'||k==='f1'||(k==='/'&&e.shiftKey)){ e.preventDefault(); openManual(); }
@@ -8212,6 +8398,9 @@ const KEYS=[
   {g:'Tools',k:'G',t:'Poly length — every segment measured separately'},
   {g:'Tools',k:'A',t:'Arc length — start, a point along the curve, then the end'},
   {g:'Tools',k:'R',t:'Region — area, perimeter and the cove run inside it'},
+  {g:'Tools',k:'F',t:'Feed point — place one on a run'},
+  {g:'Tools',k:'J',t:'Splice — mark where two pieces join'},
+  {g:'Tools',k:'W',t:'Home run — route the wire from a driver to a feed'},
   {g:'Tools',k:'M',t:'Count — stamp and tally a symbol'},
   {g:'Tools',k:'Q',t:'Revision cloud with a delta'},
   {g:'Tools',k:'D',t:'Place a driver'},
@@ -8283,6 +8472,9 @@ function manualSections(){
       ['Counts (M)','Stamp a symbol for what you tally rather than measure. Name the group once and every stamp after that just lands; each group totals into the BOM.'],
       ['Revision clouds (Q)','A cloud with a revision delta and a note. Compare revisions diffs two versions of a sheet and clouds what changed.'],
       ['Drivers (D)','Place a supply, assign the runs it feeds, and see its load against its usable capacity plus the longest home run.'],
+      ['Feed points (F)','Feed points used to be only a count worked out from voltage drop, which meant every whip had to be taken at the same measured distance. Place them on a run and the drawing answers instead: the count comes from what is placed, and each one measures its own way back to its driver. Placing fewer than voltage drop needs is flagged, and a placed count beats a typed override with the disagreement reported.'],
+      ['Home runs (W)','Straight-line distance is a floor, not a length. Route the wire \u2014 click the driver, each turn, then the feed \u2014 and the schedule uses what it would actually be pulled. A route whose ends do not find a driver and a feed still measures, and says it is not attached rather than quietly counting for something.'],
+      ['Splices (J)','Mark where two pieces of a run actually join and the piece list is cut there instead of shipped as one length. Each piece keeps its own order code, at its own length.'],
       ['Links (K)','Tie a plan to the shop drawing that details it, with the detail reference that follows the treatment into the cut list.'],
       ['Turning things','Drag the round grip above a selected text markup, or type an angle in the inspector. Angles snap at 15°.'],
       ['Line weight','Per markup, from the toolbar or the inspector.'],
@@ -8325,6 +8517,12 @@ function manualSections(){
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
       ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
+      ['Issues','Every warning on the job in one place, grouped by kind, so a systemic gap reads as one line with a count instead of forty identical notes. Click a run to open it. Exports as a CSV.'],
+      ['Quieting a kind','Some warnings are permanent facts of an office rather than problems \u2014 a shop that always orders to the exact length does not need telling there is no cut increment. Quieting a kind stops it showing on runs and stops it colouring them. It does not decide the question: the issues panel still lists it, still counts it, marks it as quieted, and still exports it.'],
+      ['Colour by status','Colours the drawing by where each run stands: changed by a revision, has a warning, approved, measured and clean, or not measured yet. Worst news wins, so a flagged run reads as flagged whether or not it also warns. The key counts each one.'],
+      ['Stated lengths','Plans are not to scale everywhere. Where the sheet prints a dimension, type it into the markup and it governs \u2014 but never quietly: the inspector shows what it traces, what it is ordering to and the difference between them, a polyline shares the stated total over its segments in proportion, and the run says every time that it is ordering to a stated length rather than the trace.'],
+      ['Renumber','Zone numbers leave holes when runs are deleted. Renumbering fills them in the order you ask for \u2014 as added, down the sheet, or longest first \u2014 counting from the start within each type, since a zone number means something inside its type. Approved runs keep their numbers because they are the record of what was issued, and the numbers they hold are stepped over so no two runs end up sharing a tag.'],
+      ['Array','Repeated bays hold the same run over and over. Array steps a markup by a real distance as many times as you like, and can give each copy its own run carrying every product choice from the original. No copy arrives approved, and none inherits the original\u2019s zone number \u2014 press Renumber and they fall into line.'],
       ['Defaults by type','A run\u2019s type says most of what it is, so the product, build, colour temperature, connectors, wire, dimming, channel, supply and rounding are remembered against it. Name a new run\u2019s type and it arrives filled in \u2014 which is most of an order code done. A saved default never overwrites a decision already made: applied by hand it fills only the blanks, and replacing a choice takes an explicit tick.'],
       ['Editing several runs','Tick the runs in the list and set any field on all of them at once. Every field starts at leave alone, so nothing moves unless it is chosen, and the option lists come off the picked runs\u2019 own products so nothing impossible is offered. Approved runs are skipped and counted rather than quietly unlocked.'],
       ['Revision impact','What moved is half the answer; which runs are in it is the other half. After a compare, every run whose markup crosses a changed area is listed \u2014 tested segment against rectangle, so an L-shaped cove is not blamed for a change in a corner it never enters. Flag them for a re-measure and, where they were approved, withdraw the approval in the same step. The flag shows as a REV badge on the run, warns in the Calculated panel, is searchable, and travels into the cut list and the report. Approving a run clears it, because approving is the re-measure the flag asked for.'],
@@ -8701,7 +8899,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   openManual,closeManual,printManual,
   approveTreat,unapproveTreat,editMany,tdefFor,saveTdef,clearTdef,applyTdef,tdefKeys:TDEF_KEYS,
   tsel:()=>V.tsel||new Set(),issueData,renderIssues,warnKinds:WARN_KINDS,statusOf,statuses:STATUSES,
-  renumber,arrayAnn,annMeasured,statedOf,renumSort,showInspector,annSegs,annLen,apDrift,
+  renumber,arrayAnn,annMeasured,statedOf,renumSort,showInspector,annSegs,annLen,
+  placePoint,feedsPlaced,splicesOn,alongRun,nearRun,apDrift,
   bomAgg,costRows,costTotals,money,rateOf,renderCost,
   sheetOf,sheetState,checkSheet,readSpecs,readSpecsInto,pdfText,defaults:{fix:DEF_FIX,ch:DEF_CH,psu:DEF_PSU},
   cctOptions:CCT_ALL,feedOptions:FEEDS,feedLabel,feedsFor,feedTerms,cctControl,feedLimit,varList,varOf,

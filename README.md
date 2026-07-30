@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.37.0**
+**Version 1.38.0**
 
 ## What it does
 
@@ -184,6 +184,29 @@ red **REV** badge, warns in the Calculated panel, is searchable, and appears in 
 cut list, the workbook and a section of the printed report. Approving a run clears
 the flag, because approving *is* the re-measure the flag asked for. Runs on other
 sheets are set aside rather than reported clear.
+
+**Feed points, routed home runs, splices.** Three tools that turn assumptions
+into measurements.
+
+*Feed points* (**F**) were only ever a count worked out from voltage drop, which
+is why the wire schedule had to take every whip at the same distance. Place them
+on a run and the drawing answers instead: the count comes from what is placed, and
+each feed measures its own way back to its driver. Placing fewer than voltage drop
+needs is flagged rather than silently corrected, and a placed count beats a typed
+override — with the disagreement reported.
+
+*Home runs* (**W**) route the wire: click the driver, each turn, then the feed. The
+schedule then uses what would actually be pulled rather than the straight line — a
+dog-leg that measures 450" no longer counts as 180". A route whose ends find no
+driver and no feed still measures, and says it is **not attached** rather than
+quietly counting for something.
+
+*Splices* (**J**) mark where two pieces of a run actually join, and the piece list
+is cut there instead of shipping one length. Each piece keeps its own order code at
+its own length, and they still add up to the run.
+
+Deleting a run takes its feed points and splices with it. Routes survive as
+measurements with their dangling ends cleared.
 
 **Home-run wire.** A placed driver knows how far it is from each run it feeds, so
 that distance is measured off the sheet and multiplied by the whips the run needs
