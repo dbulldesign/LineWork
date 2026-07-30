@@ -874,7 +874,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.59.0';
+const APP_VER='1.60.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1803,6 +1803,17 @@ function applyProject(d){
     c.madeTo=Math.max(0,+c.madeTo||0); c.chCut=Math.max(0,+c.chCut||0); });
   /* how tape is bought: to length, or by the reel it comes on */
   if(P.buyBy!=='reel') P.buyBy='cut';
+  P.whipAwg=AWG.some(x=>x[0]===String(P.whipAwg))?String(P.whipAwg):'18';
+  P.vdMax=clamp(+P.vdMax||3,0.5,10);
+  /* a circuit needs a breaker and a voltage to mean anything, and a driver cannot
+     be on a circuit that is not in the file */
+  P.circuits=Array.isArray(P.circuits)?P.circuits.filter(c=>c&&c.id).map(c=>({
+    id:String(c.id),name:String(c.name||''),panel:String(c.panel||''),
+    breaker:Math.max(1,+c.breaker||20),volts:String(+c.volts||120),note:String(c.note||'')})):[];
+  {
+    const cids=new Set(P.circuits.map(c=>c.id));
+    P.ann.forEach(a=>{ if(a.circuit&&!cids.has(a.circuit)) delete a.circuit; });
+  }
   /* a treatment naming a product that is not in this file gets the first one */
   const fixIds=new Set(P.fix.map(x=>x.id)),chIds=new Set(P.ch.map(x=>x.id)),psuIds=new Set(P.psu.map(x=>x.id));
   P.treat.forEach(t=>{
@@ -6425,6 +6436,25 @@ async function placePoint(kind,p){
    feed point needs more than one whip and the app cannot know where the others
    land — they are taken at the same measured distance and the row says so, so the
    assumption is visible instead of buried. */
+/* ---- voltage drop on the home run ----
+   Feed points come from the product's maximum run, which is the drop along the strip
+   itself. The whip from the driver to the run is a separate conductor and was not
+   checked at all. Its length is measured off the drawing and its load is known, so
+   the only thing missing was the wire.
+
+   DC resistance of solid copper at 20 C, ohms per 1000 ft. A hot conductor is worse
+   than this, so a run near the limit is near it optimistically. */
+const AWG=[['18',6.385],['16',4.016],['14',2.525],['12',1.588],['10',0.9989],['8',0.6282]];
+const awgOhms=g=>{ const h=AWG.find(x=>x[0]===String(g)); return h?h[1]:0; };
+const AWG_OPTS=AWG.map(([g])=>({v:g,t:g+' AWG'}));
+/* both legs of the run, at the load the strip draws */
+function vDrop(lenIn,watts,volts,gauge){
+  const R=awgOhms(gauge), V=+volts||24;
+  if(!(R>0)||!(lenIn>0)||!(watts>0)||!(V>0)) return null;
+  const I=watts/V;
+  const drop=2*(lenIn/12/1000)*R*I;
+  return {I,drop,pct:drop/V*100};
+}
 function whipData(){
   const slack=Math.max(0,+P.whipSlack||0);
   const spare=1+Math.max(0,+P.whipSpare||0)/100;
@@ -6470,14 +6500,122 @@ function whipData(){
             :(r.qty>1?r.qty+' runs at the measured distance':''))});
     });
   });
+  /* the drop on each whip, at the load the run it feeds actually draws */
+  const gauge=String(P.whipAwg||'18');
+  const vdMax=Math.max(0,+P.vdMax||3);
+  rows.forEach(r=>{
+    const t=P.treat.find(x=>x.id===r.tid);
+    const c=t?calc(t):null;
+    /* one whip carries one run's worth of load, not the whole treatment's */
+    const w=c?(c.watts/Math.max(1,c.feeds)):0;
+    const v=c?(+c.f.volts||24):24;
+    const d=r.per>0?vDrop(r.per,w,v,gauge):null;
+    r.gauge=gauge; r.amps=d?d.I:0; r.vdrop=d?d.drop:0; r.vpct=d?d.pct:0;
+    r.vdOver=!!(d&&d.pct>vdMax);
+  });
   const measured=rows.filter(r=>r.measured);
   const raw=measured.reduce((s,r)=>s+r.total,0);
-  return {rows,slack,spare,
+  return {rows,slack,spare,gauge,vdMax,
+    vdOver:rows.filter(r=>r.vdOver).length,
+    worstVd:rows.reduce((m,r)=>Math.max(m,r.vpct||0),0),
     routed:rows.filter(r=>r.routed).length,
     assumed:rows.filter(r=>r.assumed).length,
     whips:rows.reduce((s,r)=>s+r.whips,0),
     unmeasured:rows.filter(r=>!r.measured).reduce((s,r)=>s+r.whips,0),
     raw,total:raw*spare};
+}
+/* ---- circuits and the panel schedule ----
+   A driver has a load; nothing grouped drivers onto the branch circuits that feed
+   them. A circuit is named, sits on a panel, has a breaker and a voltage, and the
+   drivers assigned to it must not add up to more than the breaker will carry
+   continuously.
+
+   The load counted is the connected load on the driver's secondary. A driver is not
+   100% efficient, so the primary draws more: where a supply carries an efficiency
+   the figure is grossed up by it, and where it does not the row says the loss is not
+   accounted for rather than pretending the two sides are equal. */
+const circuits=()=>Array.isArray(P.circuits)?P.circuits:(P.circuits=[]);
+const circuitOf=id=>circuits().find(c=>c.id===id)||null;
+const CIRC_V=[{v:'120',t:'120V'},{v:'208',t:'208V'},{v:'240',t:'240V'},{v:'277',t:'277V'},{v:'347',t:'347V'}];
+const BREAKERS=[{v:'15',t:'15 A'},{v:'20',t:'20 A'},{v:'25',t:'25 A'},{v:'30',t:'30 A'},{v:'40',t:'40 A'},{v:'50',t:'50 A'}];
+/* a breaker is not loaded past 80% continuously */
+const CIRC_LOAD=0.8;
+function circuitData(){
+  const drv=P.ann.filter(a=>a.type==='driver');
+  const rows=circuits().map(c=>{
+    const on=drv.filter(a=>a.circuit===c.id);
+    let va=0, unknownEff=0;
+    on.forEach(a=>{
+      const d=driverLoad(a);
+      const eff=+((P.psu.find(x=>x.id===a.psuId)||{}).eff)||0;
+      if(eff>0&&eff<=1) va+=d.watts/eff; else { va+=d.watts; if(d.watts>0) unknownEff++; }
+    });
+    const amps=Math.max(0,+c.breaker||20), volts=Math.max(1,+c.volts||120);
+    const cap=amps*volts*CIRC_LOAD;
+    return {c,id:c.id,name:c.name||'—',panel:c.panel||'—',breaker:amps,volts,
+      drivers:on.length,va,cap,pct:cap>0?va/cap*100:0,over:cap>0&&va>cap,
+      unknownEff,marks:on.map(a=>a.name||'PS').join(', ')||'—',note:c.note||''};
+  });
+  const loose=drv.filter(a=>!a.circuit||!circuitOf(a.circuit));
+  return {rows:rows.sort((a,b)=>String(a.panel+a.name).localeCompare(String(b.panel+b.name))),
+    loose,total:rows.reduce((s,r)=>s+r.va,0)};
+}
+async function manageCircuits(){
+  const cd=circuitData();
+  const r=await dlg({title:'Circuits',fields:[
+    {k:'act',type:'select',label:'What to do',opts:[
+      {v:'add',t:'Add a circuit'},
+      {v:'edit',t:'Edit one'},
+      {v:'del',t:'Delete one'},
+      {v:'assign',t:'Put every driver with no circuit on one'}],val:circuits().length?'assign':'add'},
+    {k:'which',type:'select',label:'Which circuit',
+      opts:circuits().length?circuits().map(c=>({v:c.id,t:(c.panel?c.panel+'-':'')+(c.name||'?')}))
+        :[{v:'',t:'\u2014 none yet \u2014'}],val:(circuits()[0]||{}).id||''}
+  ],ok:'Go',
+    note:circuits().length
+      ? circuits().length+' circuit'+(circuits().length===1?'':'s')+', '
+        +cd.loose.length+' driver'+(cd.loose.length===1?'':'s')+' not on one.'
+      : 'No circuits yet. A circuit is a breaker feeding some of the drivers on this job.'});
+  if(!r) return;
+  if(r.act==='del'){
+    const c=circuitOf(r.which); if(!c){ toast('Pick a circuit'); return; }
+    snap('Delete circuit');
+    P.circuits=circuits().filter(x=>x!==c);
+    P.ann.forEach(a=>{ if(a.circuit===c.id) delete a.circuit; });
+    renderBom(); drawOverlay(); markDirty(); toast('Circuit deleted — its drivers are on no circuit now');
+    return;
+  }
+  if(r.act==='assign'){
+    const c=circuitOf(r.which); if(!c){ toast('Add a circuit first'); return; }
+    if(!cd.loose.length){ toast('Every driver is already on a circuit'); return; }
+    snap('Assign circuits');
+    cd.loose.forEach(a=>{ a.circuit=c.id; });
+    renderBom(); drawOverlay(); markDirty();
+    toast(cd.loose.length+' driver'+(cd.loose.length===1?'':'s')+' put on '+(c.panel?c.panel+'-':'')+c.name);
+    return;
+  }
+  const c=r.act==='edit'?circuitOf(r.which):null;
+  if(r.act==='edit'&&!c){ toast('Pick a circuit'); return; }
+  const cur=c||{id:uid('cir_'),name:String(circuits().length+1),panel:'',breaker:20,volts:'120',note:''};
+  const f=await dlg({title:c?'Edit circuit':'Add a circuit',fields:[
+    {k:'r1',type:'row'},
+    {k:'panel',label:'Panel',val:cur.panel||'',ph:'LP-1',row:'r1'},
+    {k:'name',label:'Circuit',val:cur.name||'',ph:'7',row:'r1'},
+    {k:'r2',type:'row'},
+    {k:'breaker',type:'select',label:'Breaker',opts:BREAKERS,val:String(cur.breaker||20),row:'r2'},
+    {k:'volts',type:'select',label:'Voltage',opts:CIRC_V,val:String(cur.volts||'120'),row:'r2'},
+    {k:'note',label:'Note',val:cur.note||''}
+  ],ok:'Save',
+    note:'A breaker is not loaded past '+Math.round(CIRC_LOAD*100)+'% continuously, so a '
+      +(cur.breaker||20)+' A circuit at '+(cur.volts||120)+'V carries '
+      +Math.round((+cur.breaker||20)*(+cur.volts||120)*CIRC_LOAD)+' VA of lighting.'});
+  if(!f) return;
+  snap(c?'Edit circuit':'Add circuit');
+  Object.assign(cur,{panel:String(f.panel||'').toUpperCase(),name:String(f.name||'').toUpperCase(),
+    breaker:+f.breaker||20,volts:String(f.volts||'120'),note:f.note||''});
+  if(!c) circuits().push(cur);
+  renderBom(); markDirty();
+  toast((cur.panel?cur.panel+'-':'')+cur.name+' saved');
 }
 function driverRows(){
   return P.ann.filter(a=>a.type==='driver').map(a=>{
@@ -6740,6 +6878,20 @@ function showInspector(a){
       +d.watts.toFixed(0)+' W</b></div>';
     h+='<div class="kv"><span>Usable capacity</span><b>'+(d.cap>0?Math.round(d.cap)+' W at '+Math.round(P.load)+'%':'—')+'</b></div>';
     h+='<div class="kv"><span>Longest home run</span><b>'+(d.home>0?fmtLen(d.home):'—')+'</b></div>';
+    /* which branch circuit feeds this driver — the primary side, which the load
+       figures above say nothing about */
+    h+='<div class="f"><label>Branch circuit</label><select data-f2="circuit">'
+      +'<option value=""'+(a.circuit?'':' selected')+'>\u2014 not assigned \u2014</option>'
+      +circuits().map(c=>'<option value="'+esc(c.id)+'"'+(a.circuit===c.id?' selected':'')+'>'
+        +esc((c.panel?c.panel+'-':'')+(c.name||'?')+'  ·  '+c.breaker+' A '+c.volts+'V')+'</option>').join('')
+      +'</select>'
+      +(circuits().length?'':'<div class="hint" style="margin-top:4px">No circuits yet — add one from the command palette.</div>')
+      +'</div>';
+    {
+      const cr=a.circuit&&circuitData().rows.find(x=>x.id===a.circuit);
+      if(cr) h+='<div class="kv"><span>That circuit</span><b'+(cr.over?' style="color:var(--flag)"':'')+'>'
+        +cr.va.toFixed(0)+' of '+cr.cap.toFixed(0)+' VA · '+cr.pct.toFixed(0)+'%'+(cr.over?' over':'')+'</b></div>';
+    }
     const list=P.treat.slice().sort((x,y)=>tagOf(x).localeCompare(tagOf(y),undefined,{numeric:true}));
     h+='<div class="f"><label>Feeds these runs</label>'+(list.length?'<div class="seglist">'+list.map(t=>{
       const on=(a.serves||[]).includes(t.id), r=calc(t);
@@ -6952,6 +7104,10 @@ const WARN_KINDS=[
   {c:'bendtight',t:'A curve tighter than the product bends to'},
   {c:'bendcorner',t:'Hard corners on a product that must be bent, not cut'},
   {c:'nobend',t:'No bend radius on file, so curves cannot be checked'},
+  {c:'vdrop',t:'Home-run whip over the voltage-drop limit'},
+  {c:'typemix',t:'A TYPE that does not describe one thing'},
+  {c:'circover',t:'A branch circuit over what its breaker carries'},
+  {c:'nocirc',t:'A driver on no branch circuit'},
   {c:'psvolt',t:'Supply voltage does not match the product'},
   {c:'psfit',t:'Supply does not list this product'},
   {c:'chfit',t:'Product and channel are not listed as fitting each other'},
@@ -9676,6 +9832,54 @@ function nestData(){
   });
   return out.sort((a,b)=>String(a.name+a.scope).localeCompare(String(b.name+b.scope)));
 }
+/* ---- the fixture schedule ----
+   The table a lighting drawing is issued with: one row per TYPE designation, saying
+   what that type is. Everything in it is already known — this only gathers it.
+
+   A TYPE is meant to be one thing. Where two runs share a designation but not their
+   product, colour temperature or driver, the row says "mixed" rather than picking
+   one, because a schedule that quietly reports one of two different products is
+   worse than one that admits the drawing disagrees with itself. */
+function schedData(){
+  const g={};
+  P.treat.forEach(t=>{
+    const r=calc(t); if(r.L<=0) return;
+    const key=String(t.type||'').trim().toUpperCase()||'(no type)';
+    g[key]=g[key]||{type:key,runs:0,len:0,watts:0,feeds:0,units:0,zones:new Set(),
+      sheets:new Set(),vals:{},details:new Set()};
+    const G=g[key];
+    G.runs+=r.qty; G.len+=r.tot.cut; G.watts+=r.tot.watts; G.feeds+=r.tot.feeds; G.units+=r.tot.units;
+    if(t.zone) G.zones.add(t.zone);
+    const doc=P.docs.find(x=>x.id===t.docId);
+    if(doc) G.sheets.add(doc.sheetNo||doc.name.replace(/\.pdf$/i,''));
+    if(t.detail) G.details.add(t.detail);
+    /* every field a schedule states, collected so disagreement can be seen */
+    const add=(k,v)=>{ (G.vals[k]=G.vals[k]||new Set()).add(v==null||v===''?'—':String(v)); };
+    add('product',r.f.name);
+    add('kind',{tape:'LED tape',fixture:'Fixture',neon:'Neon flex'}[r.kind]||'LED');
+    add('cct',r.cct?r.cct+'K':'—');
+    add('lm',r.lmFt?r.lmFt+' lm/ft':'—');
+    add('wft',r.f.wft?r.f.wft+' W/ft':'—');
+    add('volts',r.f.volts?r.f.volts+'V':'—');
+    add('build',r.vr?varLabel(r.vr):'—');
+    add('channel',r.c.name);
+    add('supply',r.ps.name);
+    add('dim',r.dim?dimLabel(r.dim):'—');
+    add('code',r.codeFmt?r.code:'—');
+  });
+  const one=set=>{ const a=[...set]; return a.length===1?a[0]:(a.length?'mixed ('+a.length+')':'—'); };
+  return Object.values(g).map(G=>{
+    const mixed=Object.keys(G.vals).filter(k=>G.vals[k].size>1);
+    return {type:G.type,runs:G.runs,len:G.len,watts:G.watts,feeds:G.feeds,units:G.units,
+      zones:[...G.zones].sort().join(', ')||'—',
+      sheets:[...G.sheets].sort().join(', ')||'—',
+      detail:[...G.details].sort().join(', ')||'—',
+      product:one(G.vals.product),kind:one(G.vals.kind),cct:one(G.vals.cct),lm:one(G.vals.lm),
+      wft:one(G.vals.wft),volts:one(G.vals.volts),build:one(G.vals.build),
+      channel:one(G.vals.channel),supply:one(G.vals.supply),dim:one(G.vals.dim),
+      code:one(G.vals.code),mixed};
+  }).sort((a,b)=>String(a.type).localeCompare(String(b.type)));
+}
 /* totals grouped by an arbitrary key — zone, sheet, type */
 function rollup(keyFn,labelFn){
   const g={};
@@ -9975,6 +10179,28 @@ function issueData(){
       g.runs.push({id:t.id,tag:tagOf(t),name:t.name||'',msg:x.m});
     });
   });
+  /* Issues that belong to the job rather than to one run: a whip is a driver-and-run
+     pair, a TYPE spans runs, and a circuit spans drivers. They are folded in here so
+     the panel is the one place to look. */
+  const jobAdd=(code,runs)=>{ if(!runs.length) return;
+    const g=by[code]||(by[code]={c:code,label:warnLabel(code),muted:wMuted(code),runs:[]});
+    g.runs.push(...runs); };
+  {
+    const w=whipData();
+    jobAdd('vdrop',w.rows.filter(r=>r.vdOver).map(r=>({id:r.tid,tag:r.tag,name:r.drv,
+      msg:'The whip from '+r.drv+' to '+r.tag+' drops '+r.vpct.toFixed(1)+'% at '+w.gauge
+        +' AWG over '+fmtLen(r.per)+', past the '+w.vdMax+'% allowed.'})));
+    jobAdd('typemix',schedData().filter(r=>r.mixed.length).map(r=>({id:'',tag:r.type,name:'',
+      msg:'TYPE '+r.type+' is used for runs that disagree on '+r.mixed.join(', ')
+        +' — a schedule cannot describe it as one thing.'})));
+    const cd=circuitData();
+    jobAdd('circover',cd.rows.filter(r=>r.over).map(r=>({id:'',tag:(r.panel?r.panel+'-':'')+r.name,name:'',
+      msg:'Circuit '+(r.panel?r.panel+'-':'')+r.name+' carries '+r.va.toFixed(0)+' VA against '
+        +r.cap.toFixed(0)+' usable on a '+r.breaker+' A breaker at '+r.volts+'V.'})));
+    jobAdd('nocirc',cd.loose.length?[{id:'',tag:cd.loose.length+' driver'+(cd.loose.length===1?'':'s'),
+      name:'',msg:cd.loose.map(a=>a.name||'PS').join(', ')+' '+(cd.loose.length===1?'is':'are')
+        +' on no branch circuit, so nothing checks what feeds them.'}]:[]);
+  }
   const order=WARN_KINDS.map(k=>k.c);
   return Object.values(by).sort((a,b)=>
     (a.muted-b.muted)||(order.indexOf(a.c)-order.indexOf(b.c)));
@@ -10378,6 +10604,30 @@ async function reportHtml(opts){
     +(c.perFt!=null&&c.total>0?'<div><span>Per LED ft</span><b>'+rEsc(money(c.perFt))+'</b></div>':'')
     +'</div>';
   /* cut list */
+  {
+    const sch=schedData();
+    if(sch.length) h+='<h2>Fixture schedule</h2>'+rTable(
+      ['Type','Description','Product','CCT','Output','Load','Volts','Build','Channel','Supply',
+       'Dimming',{t:'Runs',n:1},{t:'Length',n:1},'Zones','Sheets','Detail','Order code'],
+      sch.map(r=>[r.type+(r.mixed.length?' ⚠':''),r.kind,r.product,r.cct,r.lm,r.wft,r.volts,r.build,
+        r.channel,r.supply,r.dim,r.runs,fmtRun(r.len),r.zones,r.sheets,r.detail,r.code]));
+    const mix=sch.filter(r=>r.mixed.length);
+    if(mix.length) h+='<p class="note">'+mix.length+' type'+(mix.length===1?'':'s')
+      +' marked ⚠ do not describe one thing: '
+      +esc(mix.map(r=>r.type+' ('+r.mixed.join(', ')+')').join(' · '))+'.</p>';
+  }
+  {
+    const cd=circuitData();
+    if(cd.rows.length) h+='<h2>Panel schedule</h2>'+rTable(
+      ['Panel','Circuit',{t:'Breaker',n:1},'Volts',{t:'Drivers',n:1},{t:'Connected VA',n:1},
+       {t:'Usable VA',n:1},{t:'Load',n:1},'Marks','Note'],
+      cd.rows.map(r=>[r.panel,r.name,r.breaker+' A',r.volts+'V',r.drivers,r.va.toFixed(0),
+        r.cap.toFixed(0),r.pct.toFixed(0)+'%'+(r.over?' OVER':''),r.marks,
+        r.note+(r.unknownEff?(r.note?' · ':'')+r.unknownEff+' driver'
+          +(r.unknownEff===1?'':'s')+' with no efficiency on file, so losses are not counted':'')]));
+    if(cd.loose.length) h+='<p class="note">'+cd.loose.length+' driver'
+      +(cd.loose.length===1?' is':'s are')+' on no circuit.</p>';
+  }
   h+='<h2>Cut list</h2>'+rTable(
     ['Tag','Type','Zone','Location','Detail','Product',{t:'Runs',n:1},{t:'Field',n:1},{t:'Cut',n:1},{t:'W',n:1},{t:'Feeds',n:1}],
     P.treat.map(t=>{ const r=calc(t);
@@ -10439,10 +10689,15 @@ async function reportHtml(opts){
       t.rev.at?new Date(t.rev.at).toLocaleDateString():'']))
     +'<p class="hint">These runs sit in areas the compare found changed, and have not been re-measured and approved since.</p>';
   const wsc=whipData();
-  if(wsc.rows.length) h+='<h2>Home-run wire</h2>'+rTable(['Driver','Run',{t:'Whips',n:1},{t:'Each',n:1},{t:'Wire',n:1},'Note'],
-    wsc.rows.map(r=>[r.drv,r.tag,r.whips,r.per>0?fmtLen(r.per):'—',r.total>0?fmtRun(r.total):'—',r.note]))
+  if(wsc.rows.length) h+='<h2>Home-run wire</h2>'+rTable(['Driver','Run',{t:'Whips',n:1},{t:'Each',n:1},{t:'Wire',n:1},
+      {t:'Amps',n:1},{t:'Drop',n:1},'Note'],
+    wsc.rows.map(r=>[r.drv,r.tag,r.whips,r.per>0?fmtLen(r.per):'—',r.total>0?fmtRun(r.total):'—',
+      r.amps?r.amps.toFixed(2)+' A':'—',
+      r.vpct?(r.vpct.toFixed(1)+'%'+(r.vdOver?' OVER':'')):'—',r.note]))
     +'<p class="hint">'+wsc.whips+' whip'+(wsc.whips===1?'':'s')+', '+fmtRun(wsc.total)+' of wire'
     +(wsc.spare>1?' including '+Math.round((wsc.spare-1)*100)+'% spare':'')
+    +' · '+wsc.gauge+' AWG, drop limit '+wsc.vdMax+'%'
+    +(wsc.vdOver?', '+wsc.vdOver+' over it':', none over it')
     +(wsc.unmeasured?'. '+wsc.unmeasured+' whip'+(wsc.unmeasured===1?' is':'s are')+' on another sheet and not measured.':'.')+'</p>';
   if(drv.length) h+='<h2>Drivers</h2>'+rTable(['Mark','Supply','Sheet',{t:'Load',n:1},{t:'Usable',n:1},{t:'Home run',n:1},{t:'Runs',n:1},'Flags'],
     drv.map(r=>[r.name,r.supply,r.sheet,r.watts.toFixed(0)+' W',r.cap>0?Math.round(r.cap)+' W':'—',
@@ -10879,6 +11134,23 @@ function xlsx(sheets){
 /* every table the app can produce, as one workbook */
 function workbookSheets(){
   const S=[];
+  /* the schedule first, because it is the sheet a job is issued with */
+  {
+    const sch=schedData();
+    if(sch.length) S.push({name:'Fixture schedule',rows:[['Type','Description','Product','CCT','Output',
+      'Load','Volts','Build','Channel','Supply','Dimming','Runs','Length ft','Length in','Watts',
+      'Feed points','Zones','Sheets','Detail','Order code','Disagrees on']].concat(
+      sch.map(r=>[r.type,r.kind,r.product,r.cct,r.lm,r.wft,r.volts,r.build,r.channel,r.supply,r.dim,
+        r.runs,+(r.len/12).toFixed(2),+r.len.toFixed(2),+r.watts.toFixed(1),r.feeds,
+        r.zones,r.sheets,r.detail,r.code,r.mixed.join(', ')]))});
+  }
+  {
+    const cd=circuitData();
+    if(cd.rows.length) S.push({name:'Panel schedule',rows:[['Panel','Circuit','Breaker A','Volts',
+      'Drivers','Connected VA','Usable VA','Load %','Over','Marks','Efficiency unknown','Note']].concat(
+      cd.rows.map(r=>[r.panel,r.name,r.breaker,+r.volts,r.drivers,+r.va.toFixed(1),+r.cap.toFixed(1),
+        +r.pct.toFixed(1),r.over?'yes':'',r.marks,r.unknownEff||'',r.note]))});
+  }
   S.push({name:'Cut list',rows:[['Tag','Type','Zone','Name','Location','Sheet','Detail','Product','Kind',
     'Build','IP','CCT (K)','Connector in','Connector out','Wire colour','Wire type','Order code','Dimming','Rev flag','Space','Channel',
     'Runs','Field ft','Field in','Cut ft','Cut in','Increment ft','Units/run','Watts','Feeds','Feeds set',
@@ -10924,11 +11196,14 @@ function workbookSheets(){
   const drv=driverRows();
   const wsch=whipData();
   if(wsch.rows.length) S.push({name:'Wire',rows:[['Driver','Supply','Sheet','Run','Runs','Feeds/run','Whips',
-      'Each ft','Wire ft','Measured','Note']]
+      'Each ft','Wire ft','AWG','Amps','Drop V','Drop %','Over','Measured','Note']]
     .concat(wsch.rows.map(r=>[r.drv,r.supply,r.sheet,r.tag,r.runs,r.feeds,r.whips,
-      r.per>0?+(r.per/12).toFixed(2):'',r.total>0?+(r.total/12).toFixed(2):'',r.measured?'yes':'no',r.note]))
-    .concat([['','','','','','',wsch.whips,'',+(wsch.total/12).toFixed(2),'',
-      wsch.spare>1?('incl '+Math.round((wsch.spare-1)*100)+'% spare'):'total']])});
+      r.per>0?+(r.per/12).toFixed(2):'',r.total>0?+(r.total/12).toFixed(2):'',
+      r.gauge,r.amps?+r.amps.toFixed(2):'',r.vdrop?+r.vdrop.toFixed(3):'',
+      r.vpct?+r.vpct.toFixed(2):'',r.vdOver?'yes':'',r.measured?'yes':'no',r.note]))
+    .concat([['','','','','','',wsch.whips,'',+(wsch.total/12).toFixed(2),wsch.gauge,'','','','','',
+      (wsch.spare>1?('incl '+Math.round((wsch.spare-1)*100)+'% spare · '):'total · ')
+      +'limit '+wsch.vdMax+'%'+(wsch.vdOver?', '+wsch.vdOver+' over':'')]])});
   if(drv.length) S.push({name:'Drivers',rows:[['Mark','Supply','Sheet','Connected W','Usable W','% used','Home run ft','Runs','Flags']]
     .concat(drv.map(r=>[r.name,r.supply,r.sheet,+r.watts.toFixed(1),+r.cap.toFixed(1),
       +(r.pct*100).toFixed(0),+(r.home/12).toFixed(2),r.serves,r.warn.join(' | ')]))});
@@ -11579,6 +11854,7 @@ $('#btnCsvZone').onclick=()=>{
 const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt','labFeed','labEa',
   'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblSize','snap',
   'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','buyBy','keepPdf',
+  'whipAwg','vdMax','circuits',
   'hideTool','pals','toolMode'];
 function presetText(withLib){
   const set={};
@@ -12095,6 +12371,7 @@ function cmdItems(){
   add('File','Save library file',()=>$('#btnLibSave').click());
   add('Do','Set the scale',pickScale);
   add('Do','Check the scale against a dimension',checkScale);
+  add('Do','Circuits…',manageCircuits);
   add('Do','Delete this sheet',()=>{ const d=P.docs.find(x=>x.id===V.docId);
     if(d) delDoc(d); else toast('Open a drawing first'); });
   add('File','Export the workbook',exportWorkbook);
@@ -12277,6 +12554,9 @@ function manualSections(){
   {id:'library',t:'The product library',blocks:[
     {p:'Seeded with QTL products, each linked to its own catalogue page. Only figures those pages state are filled in; anything else is left unset and marked unverified, and the calculator says which number is missing.'},
     {rows:[
+      ['Fixture schedule','The table a lighting drawing is issued with: one row per TYPE, in the printed report and as its own sheet in the workbook. Everything in it is already known — this only gathers it. A TYPE is meant to be one thing, so where two runs share a designation but not their product, colour temperature or driver, the row says "mixed" and names which field disagrees rather than picking one of them. A schedule that quietly reports one of two different products is worse than one that admits the drawing contradicts itself.'],
+      ['Circuits and the panel schedule','A driver has a load; a circuit is the breaker feeding it. Name a circuit against its panel, give it a breaker and a voltage, and put drivers on it from the driver\u2019s own panel. A breaker is not loaded past 80% continuously, so a 20 A circuit at 120V carries 1920 VA of lighting, and a circuit over that is reported with the figures. The load counted is what the drivers deliver; a driver is not perfectly efficient, so where a supply carries an efficiency the figure is grossed up by it and where it does not the row says the losses are not counted rather than pretending the two sides are equal. A driver on no circuit is reported too, because nothing then checks what feeds it.'],
+      ['Voltage drop','Feed points come from the product\u2019s maximum run, which is the drop along the strip itself. The whip from the driver to the run is a different conductor and was not checked at all: its length is measured off the drawing and its load is known, so the only thing missing was the wire size. Set that and the allowance in Settings \u203a Drivers, and every whip reports its current, its drop in volts and as a percentage, and whether it is past the allowance. The figures use the DC resistance of copper at 20 \u00b0C, so a hot conductor is a little worse than reported.'],
       ['Home-run wire','A placed driver knows how far it is from each run it feeds, so that distance is measured off the sheet and multiplied by the whips that run needs \u2014 one per feed point, per identical run. Slack per whip, a spare percentage and a rate per foot are in Settings \u203a Drivers, and the total lands in the BOM and the cost. Where a run has several feed points the extra whips are taken at the same measured distance, and the row says so; a run on another sheet from its driver is counted but reported as not measured, never guessed.'],
       ['Dimming','A run is specified to dim a particular way and a supply either does that or it does not, so the protocols live on the supply and the run names the one it needs. A mismatch is flagged on the treatment and on the driver. Where a catalogue page does not state the protocols the list is left unset and the calculator says compatibility cannot be checked, rather than assuming it is fine. A driver carrying runs that want two different protocols is flagged too \u2014 one driver dims one way.'],
       ['Order codes','A part number is a fixed run of positions, and each product carries the format its own cutsheet prints — so a product without one gets no code rather than a guessed one. The positions are filled from the choices already made: build, colour temperature, both connectors, wire colour and type, and the piece\u2019s own cut length. Every physical piece therefore gets its own orderable code, on the Pieces tab and in both exports. A position that is not filled in comes out as ? and is named, so an incomplete code reads as incomplete instead of plausible. Rules the sheet states are enforced: CL2P only with bare-wire leads, and a barrel takes N/A for wire colour.'],
@@ -12474,6 +12754,10 @@ function settingsHtml(){
     +'</div><div class="setgrp"><h4>Drivers</h4>'
     +setRow('Longest home run','A placed driver further than this from what it feeds is flagged.',
       '<input type="text" data-set="maxHome" value="'+esc(fmtLen(+P.maxHome||240))+'">')
+    +setRow('Home-run wire size','Voltage drop is worked out on this. DC resistance of copper at 20 °C, '
+      +'so a hot conductor is a little worse than reported.',setSel('whipAwg',AWG_OPTS,String(P.whipAwg||'18')))
+    +setRow('Most voltage drop allowed','A whip over this is flagged. 3% is the usual figure for a branch circuit.',
+      setNum('vdMax',P.vdMax??3,0.5,10,0.5,'%'))
     +setRow('Slack per whip','Added to every home run for terminations and dressing.',
       '<input type="text" data-set="whipSlack" value="'+esc(fmtLen(+P.whipSlack||0))+'">')
     +setRow('Spare wire','A percentage on the whole schedule.',setNum('whipSpare',P.whipSpare||0,0,100,1,'%'))
@@ -12638,6 +12922,8 @@ function applySetting(el){
     case 'prec': P.prec=Math.max(0,+val||0); boot(true); break;
     case 'nestBy': P.nestBy=val; renderBom(); break;
     case 'buyBy': P.buyBy=(val==='reel'?'reel':'cut'); renderTreatments(); renderBom(); stats(); break;
+    case 'whipAwg': P.whipAwg=String(val); renderBom(); break;
+    case 'vdMax': P.vdMax=clamp(+val||3,0.5,10); renderBom(); break;
     case 'tiles': P.tiles=val; if(!val) tileClear(); renderSettings(); break;
     case 'gpu': P.gpu=val; tileClear(); scheduleRepaint(true); renderSettings(); break;
     case 'rowCap': P.rowCap=clamp(+val||250,10,1e6);
@@ -12803,6 +13089,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   specs,specOf,specLine,specCode,specMatches,applySpec,editSpec,libMatch,libHay,
   fitCh,fitPsu,fitOf,fixFam,chCode,codeHits,compatList,reconcileFix,wireCombo,comboOn,comboMatch,libHayFor,
   pickScale,checkScale,parseScale,scales:SCALES,paperName,pageInches,delDoc,docCost,
+  schedData,circuitData,circuits,manageCircuits,vDrop,awgOhms,awg:AWG,
+
   bendOf,bendCurves,bendCorners,
   reelPlan,reelsOf,reelable,closedOf,buyBy:BUY_BY,feedCodes:FEEDS.map(x=>x.v),
 

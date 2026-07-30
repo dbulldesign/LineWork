@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.59.0**
+**Version 1.60.0**
 
 ## What it does
 
@@ -79,6 +79,33 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   About. An installed copy opens from its own cache, so it also checks what is on
   the server: the chip turns amber with an arrow when a newer build is waiting,
   and the answer is always to close the app fully and reopen it.
+
+## The schedule, the panel, and the wire
+
+**Fixture schedule.** The table a lighting drawing is issued with — one row per TYPE
+— in the printed report and as its own workbook sheet. Everything in it was already
+known; this only gathers it. A TYPE is meant to be one thing, so where two runs share
+a designation but not their product, colour temperature or driver, the row says
+**mixed** and names which field disagrees. A schedule that quietly reports one of two
+different products is worse than one that admits the drawing contradicts itself.
+
+**Circuits and the panel schedule.** A driver has a load; a circuit is the breaker
+feeding it. Name a circuit against its panel, give it a breaker and a voltage, and
+put drivers on it from the driver's own panel. A breaker is not loaded past 80%
+continuously, so a 20 A circuit at 120 V carries 1920 VA — and a circuit over that is
+reported with the figures. The load counted is what the drivers deliver; a driver is
+not perfectly efficient, so where a supply carries an efficiency the figure is
+**grossed up** by it, and where it does not the row says the losses are not counted
+rather than pretending the two sides are equal. A driver on no circuit is reported
+too, because nothing then checks what feeds it.
+
+**Voltage drop.** Feed points come from the product's maximum run, which is the drop
+along the strip itself. The whip from the driver to the run is a different conductor
+and was not checked at all — yet its length is measured off the drawing and its load
+is known, so the only thing missing was the wire size. Set that and the allowance in
+Settings › Drivers and every whip reports its current, its drop in volts and as a
+percentage, and whether it is past the allowance. The figures use the DC resistance
+of copper at 20 °C, so a hot conductor is a little worse than reported.
 
 ## Bending, and checking the scale
 
