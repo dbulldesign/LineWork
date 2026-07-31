@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.71.0**
+**Version 1.71.1**
 
 ## What it does
 
@@ -338,6 +338,15 @@ second row rather than hiding what will not fit — it used to hold itself to on
 and scroll the tools inside whatever space the controls after it left over, which on
 a narrower window was almost none, so most of the drawing tools simply were not
 there. Settings › Tools turns off the ones you do not use.
+
+**A rail scrolls up and down, never sideways.** It used to be plain `overflow:auto`,
+so anything inside it that came out wider — the tab strip with seven tabs across, a
+row of buttons, a row of fields whose inputs each want their default twenty
+characters — pushed the whole rail sideways and took every label off the left edge
+with it. On an iPad, where the fields are 16 px and the rail is a narrow overlay,
+that happened as soon as a run card was open. The strip and those rows wrap now, the
+field rows reflow onto fewer columns in a narrow rail, and sideways is shut. The wide
+tables that genuinely need to scroll across still do, inside their own scroller.
 
 **The rails resize.** Drag the inner edge of either one; double-click it to put that
 rail back to its usual width. A takeoff rail wide enough to read a cut list across is

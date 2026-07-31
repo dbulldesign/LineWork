@@ -116,7 +116,19 @@ textarea{resize:vertical;min-height:52px}
 .hint{color:var(--faint);font-size:11px;line-height:1.5}
 
 /* ---------- panels ---------- */
-aside{background:var(--s1);overflow:auto;display:flex;flex-direction:column}
+/* A rail scrolls up and down and never sideways. It used to be plain `overflow:auto`,
+   and anything inside that came out wider than the rail — a row of fields whose
+   inputs each want their default twenty characters — pushed it sideways instead,
+   taking every label off the left edge with it. The wide tables that genuinely need
+   to scroll across have their own scroller (.tw), so nothing is lost by shutting
+   this one. min-width:0 on the children is the other half: without it a flex item
+   is at least as wide as its own content, so the rail could still be forced open
+   from the inside. */
+aside{background:var(--s1);overflow-x:hidden;overflow-y:auto;display:flex;flex-direction:column}
+aside>*{min-width:0}
+/* a row of buttons in a rail wraps too, for the same reason */
+aside .body[style*="flex"]{flex-wrap:wrap}
+aside .btn{min-width:0}
 aside.left{border-right:1px solid var(--line2);grid-column:1;grid-row:2}
 aside.right{border-left:1px solid var(--line2);grid-column:3;grid-row:2}
 main{grid-column:2;grid-row:2}
@@ -230,8 +242,11 @@ footer .f.r{margin-left:auto;border-right:0;border-left:1px solid var(--line)}
 footer b{color:var(--amber);font-weight:500}
 
 /* ---------- tabs ---------- */
-.tabs{display:flex;background:var(--s2);border-bottom:1px solid var(--line2);position:sticky;top:0;z-index:3}
-.tab{flex:1;padding:9px 6px;background:none;border:0;border-right:1px solid var(--line);border-bottom:2px solid transparent;cursor:pointer;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
+/* Seven tabs will not fit across a rail narrowed to a tablet's overlay, and a tab
+   you cannot see is a pane you cannot reach — so the strip wraps onto a second row
+   rather than running off the edge and taking the rail's whole width with it. */
+.tabs{display:flex;flex-wrap:wrap;background:var(--s2);border-bottom:1px solid var(--line2);position:sticky;top:0;z-index:3}
+.tab{flex:1 1 auto;min-width:0;padding:9px 6px;background:none;border:0;border-right:1px solid var(--line);border-bottom:2px solid transparent;cursor:pointer;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint)}
 .tab:hover{color:var(--txt)}
 .tab.on{color:var(--amber);border-bottom-color:var(--amber);background:var(--s1)}
 .pane{display:none}
@@ -271,6 +286,15 @@ input.up{text-transform:uppercase}
 .card.on .bd{display:block}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+/* a grid track is at least as wide as the widest thing in it unless told otherwise,
+   and an <input> asks for about twenty characters whatever the room */
+.grid2>*,.grid3>*{min-width:0}
+.f{min-width:0}
+.f input,.f select,.f textarea,.f .combo{width:100%;max-width:100%}
+/* a run card in a narrow rail — a tablet's overlay, or one dragged in — reflows its
+   rows onto fewer columns rather than making the rail wider than the screen */
+.card .bd .grid3{grid-template-columns:repeat(auto-fit,minmax(94px,1fr))}
+.card .bd .grid2{grid-template-columns:repeat(auto-fit,minmax(118px,1fr))}
 .f label{display:block;font-size:8.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--faint);margin-bottom:3px}
 .out{background:var(--bg);border:1px solid var(--line);margin-top:10px}
 .out h4{margin:0;padding:6px 9px;font-size:8.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);border-bottom:1px solid var(--line);background:var(--s2)}
@@ -1046,7 +1070,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.71.0';
+const APP_VER='1.71.1';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
