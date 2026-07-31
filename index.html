@@ -74,6 +74,19 @@ header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1)
    selector is deliberate: `.tb .mark span` sets the faint colour and would
    otherwise out-specify a class here. */
 #verTag.upd,.ver.upd{color:var(--amber);border-color:var(--amber)}
+/* The update button only exists when there is something to update to, so it can
+   afford to be loud. It sits beside the name because that is where the version is,
+   and nothing else in the titleblock should be pushed about by it. */
+#btnUpd{padding:1px 7px;min-height:0;font-size:10px;letter-spacing:.04em;vertical-align:2px;
+  white-space:nowrap;animation:updPulse 2.4s ease-in-out infinite}
+/* the name, the version and the button stay on one line, so the titleblock does not
+   grow taller the moment an update turns up */
+.tb .mark>div{white-space:nowrap}
+.tb .mark>div>span:last-child{white-space:normal}
+#btnUpd[hidden]{display:none}
+@keyframes updPulse{0%,100%{box-shadow:0 0 0 0 rgba(242,169,59,.55)}
+  55%{box-shadow:0 0 0 5px rgba(242,169,59,0)}}
+@media(pointer:coarse){ #btnUpd{padding:5px 10px;font-size:11px} }
 .tb .mark span{font-size:9px;letter-spacing:.16em;color:var(--faint);text-transform:uppercase;line-height:1.1}
 .glyph{width:22px;height:22px;flex:none}
 .cell{padding:7px 14px;border-right:1px solid var(--line);display:flex;flex-direction:column;justify-content:center;min-width:0}
@@ -668,7 +681,9 @@ body.haspen #penFlag{display:inline}
 <header class="tb">
   <div class="mark">
     <svg class="glyph" viewBox="0 0 24 24" fill="none" stroke="#F2A93B" stroke-width="1.5"><path d="M3 6h18M3 6v3M21 6v3" stroke="#6E6357"/><rect x="4" y="12" width="16" height="4" rx="1"/><path d="M6 16v2M12 16v2M18 16v2" stroke="#F2A93B" opacity=".5"/></svg>
-    <div><b>LINEWORK</b> <span id="verTag" class="ver">v—</span><br><span>Linear lighting takeoff</span></div>
+    <div><b>LINEWORK</b> <span id="verTag" class="ver">v—</span>
+      <button class="btn sm pri upd" id="btnUpd" hidden>⟳ Update</button>
+      <br><span>Linear lighting takeoff</span></div>
   </div>
   <div class="cell opt" style="min-width:190px"><label>Project</label><input class="val" id="projName" value="Untitled Project"></div>
   <div class="cell opt" style="min-width:110px"><label>Job no.</label><input class="val" id="projNo" placeholder="—"></div>
@@ -1031,7 +1046,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.70.0';
+const APP_VER='1.71.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1065,31 +1080,109 @@ function probeInsets(){
    An installed copy opens from cache, so a stale version can sit there quietly.
    Ask the network what the current one is and say so rather than leaving someone
    to wonder why a fix has not arrived. */
-async function checkForUpdate(){
-  if(!location.protocol.startsWith('http')) return null;
-  try{
-    const r=await fetch('index.html',{cache:'no-store'});
-    if(!r.ok) return null;
-    const t=await r.text();
-    const m=/const APP_VER='([^']+)'/.exec(t);
-    UPDATE.checked=true;
-    if(!m||m[1]===APP_VER){ UPDATE.latest=null; syncVerTag(); return null; }
-    UPDATE.latest=m[1];
-    syncVerTag();
-    toast('Version '+m[1]+' is available — close and reopen LineWork to load it');
-    return m[1];
-  }catch(e){ return null; }
+/* Where the version on the server is read from. sw.js first, and deliberately:
+   the service worker is cache-first for the shell, so asking it for index.html
+   gets the copy already on the device and the answer is always "up to date" —
+   which is exactly why an installed copy could sit on an old build for ever. The
+   worker's own script is never served from the cache, by any version of it, so it
+   is the one file whose version can be trusted. index.html is tried after, for a
+   plain browser tab with no worker at all. */
+async function serverVer(){
+  const tries=[['sw.js',/linework-v([0-9][^']*)'/],
+               ['index.html',/const APP_VER='([^']+)'/]];
+  for(const [url,re] of tries){
+    try{
+      const r=await fetch(url+'?v='+Date.now(),{cache:'no-store'});
+      if(!r.ok) continue;
+      const mm=re.exec(await r.text());
+      if(mm&&mm[1]) return mm[1];
+    }catch(e){}
+  }
+  return null;
 }
-const UPDATE={checked:false,latest:null};
+async function checkForUpdate(quiet){
+  if(!location.protocol.startsWith('http')) return null;
+  const v=await serverVer();
+  if(v==null) return null;
+  UPDATE.checked=true;
+  if(v===APP_VER){ UPDATE.latest=null; syncVerTag(); return null; }
+  UPDATE.latest=v;
+  syncVerTag();
+  if(!quiet) toast('Version '+v+' is available \u2014 press Update by the name to load it');
+  return v;
+}
+const UPDATE={checked:false,latest:null,at:0};
+/* Nobody goes hunting in Settings for a version check, so it checks itself: once
+   shortly after opening, whenever the app is brought back to the front, and every
+   half hour it is left open. Quietly — the button is the thing that speaks. */
+const UPD_EVERY=30*60*1000;
+function updateWatch(){
+  const go=()=>{ if(UPDATE.latest) return;
+    if(Date.now()-UPDATE.at<60000) return;
+    UPDATE.at=Date.now(); checkForUpdate(true); };
+  setTimeout(go,4000);
+  setInterval(go,UPD_EVERY);
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden) go(); });
+}
 function syncVerTag(){
-  const el=$('#verTag'); if(!el) return;
+  const el=$('#verTag');
   const newer=UPDATE.latest;
-  el.classList.toggle('upd',!!newer);
-  el.textContent='v'+APP_VER+(newer?' →':'');
-  el.title=newer
-    ? 'Running '+APP_VER+' from this device\u2019s cache — '+newer+' is on the server. Close and reopen LineWork to load it.'
-    : 'Linework '+APP_VER+'  ·  build '+APP_BUILD+'  ·  project file schema v'+FILE_VER
-      +(UPDATE.checked?'  ·  up to date':'')+'  —  tap for details';
+  if(el){
+    el.classList.toggle('upd',!!newer);
+    el.textContent='v'+APP_VER+(newer?' \u2192':'');
+    el.title=newer
+      ? 'Running '+APP_VER+' from this device\u2019s cache \u2014 '+newer
+        +' is on the server. Press Update to load it.'
+      : 'Linework '+APP_VER+'  \u00b7  build '+APP_BUILD+'  \u00b7  project file schema v'+FILE_VER
+        +(UPDATE.checked?'  \u00b7  up to date':'')+'  \u2014  tap for details';
+  }
+  const b=$('#btnUpd');
+  if(b){
+    b.hidden=!newer;
+    b.textContent='\u27f3 Update to '+(newer||'');
+    b.title=newer?('Load version '+newer+'. Your work is saved first, and the page reloads.'):'';
+  }
+}
+/* ---- taking the update ----
+   An installed copy opens from its own cache, so a new build sits on the server
+   until something clears that cache. Telling someone to close the app fully and
+   reopen it was true and useless; this does it for them. The work is written down
+   first, because the page is about to go. */
+let updating=false;
+async function applyUpdate(){
+  if(updating) return;
+  updating=true;
+  const b=$('#btnUpd');
+  if(b){ b.textContent='\u27f3 Updating\u2026'; b.disabled=true; }
+  try{ flushSave(); }catch(_){}
+  /* one last look, so pressing it on a stale check does not throw the cache away
+     for nothing and leave someone offline with no shell */
+  let ok=true;
+  const v=await serverVer();
+  if(v==null||v===APP_VER) ok=false;
+  if(!ok){
+    updating=false;
+    UPDATE.latest=null; syncVerTag();
+    if(b) b.disabled=false;
+    toast('Nothing new on the server after all \u2014 already running '+APP_VER);
+    return;
+  }
+  /* the shell is what goes stale, so the shell is what gets thrown away */
+  try{
+    const ks=await caches.keys();
+    await Promise.all(ks.filter(k=>/^linework-/.test(k)).map(k=>caches.delete(k)));
+  }catch(_){}
+  /* And let the old worker go. Left registered it handles the reload itself, misses
+     the cache we just emptied, fetches from the network and puts the answer straight
+     back under its own old name — so the stale shell reappears. Unregistered, the
+     reload goes to the network untouched and the page that comes back registers a
+     fresh worker. The network has just answered, so this costs nothing. */
+  try{
+    const rs=await navigator.serviceWorker.getRegistrations();
+    await Promise.all(rs.map(r=>r.unregister().catch(()=>{})));
+  }catch(_){}
+  saved=true;                       /* just written down, so nothing to warn about */
+  location.reload();
 }
 
 const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
@@ -14466,6 +14559,8 @@ document.addEventListener('keydown',e=>{
 /* the version is a button: it opens About, which says what is running, what the
    project-file schema is, and whether a newer build is waiting */
 $('#verTag').onclick=()=>{ setTab='about'; openSettings(); };
+$('#btnUpd').onclick=applyUpdate;
+updateWatch();
 $('#manVer').textContent='v'+APP_VER;
 syncVerTag();
 const BLANK_H2=$('#blank').querySelector('h2').textContent;
@@ -14693,7 +14788,8 @@ function manualSections(){
       'Turn a measurement into a treatment — the inspector\u2019s "Create treatment from this", or From selection in the takeoff rail.',
       'Give the treatment its TYPE and Zone #, pick its product, channel and supply, and read the cut list.',
     ]},
-    {p:'Drawings are kept in this browser, so reopening a job needs no re-import. The project file is the portable copy: it carries sheets, calibration, markups, treatments and libraries, but never the PDFs.'}]},
+    {p:'Drawings are kept in this browser, so reopening a job needs no re-import. The project file is the portable copy: it carries sheets, calibration, markups, treatments and libraries, but never the PDFs.'},
+    {p:'When a newer build goes up, an Update button appears beside the name at the top. Press it: your work is written down first, the cached copy of the app is thrown away, and the page comes back on the new version with the job still open. It looks for one by itself \u2014 shortly after opening, whenever you come back to it, and every half hour it is left open.'}]},
   {id:'measure',t:'Measuring',blocks:[
     {rows:[
       ['Dimension (L)','Two taps: one where it starts, one where it ends, and that is the measurement \u2014 nothing to press afterwards. Drag instead and it traces a curve freehand. Either way it snaps to the drawing\u2019s own corners and endpoints. For a run that turns corners, use poly (G), which keeps going until you finish it.'],
@@ -14850,7 +14946,7 @@ function manualSections(){
       ['The sheet goes soft while panning','It is catching up. A cheap full-page layer always covers the view, and the sharp layer swaps in when it is ready — it never blanks.'],
       ['A number is missing','Unset is deliberate: the product\u2019s cutsheet has not been read. Open the item in the library and use read specs.'],
       ['Markups did not come back','Open the project file, then re-import the same PDFs — markups reattach by filename and size.'],
-      ['The version is behind','An installed copy opens from its own cache. The version chip turns amber when a newer build is on the server; close the app fully and reopen it.'],
+      ['The version is behind','An installed copy opens from its own cache, and it used to ask that same cache what the current version was — so the answer was always the version it already had. It now reads the version out of the service worker\u2019s own file, which no cache is allowed to answer for. It checks by itself — shortly after opening, when you come back to it, and every half hour it is left open — and an <b>Update</b> button appears beside the name when there is a newer build on the server. Press it: your work is written down first, the cached copy of the app is thrown away, and the page comes back on the new version. There is nothing to close and reopen.'],
     ]}]},
   ];
 }
@@ -15303,6 +15399,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   scaleRgns,srgnAt,srgnOf,annScale,annPerPt,scaleAtPt,rgnScaleDlg,readScale,treatFromAnn,
   rulerOn,toggleRuler,rulerGeom,rulerEdge,guide,drawRuler,rulerLen,rulerTickStep,
   toggleCpad,drawCpad,cpadValue,cpadState,cpadInsert,cpadToTreat,cpadEquals,
+  checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
   calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,

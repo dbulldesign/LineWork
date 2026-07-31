@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.70.0**
+**Version 1.71.0**
 
 ## What it does
 
@@ -173,10 +173,21 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 - Tap targets are sized for a thumb, form fields are 16 px so iOS never zooms the
   page when you tap into one, and the titleblock clears the clock and battery when
   the app is installed to the home screen.
-- **The version is in the titleblock**, next to the name, and tapping it opens
-  About. An installed copy opens from its own cache, so it also checks what is on
-  the server: the chip turns amber with an arrow when a newer build is waiting,
-  and the answer is always to close the app fully and reopen it.
+- **An Update button, beside the name.** When a newer build is on the server the
+  button appears — `⟳ Update to 1.72.0` — and pressing it does the whole thing:
+  your work is written down, the cached copy of the app is thrown away, the old
+  service worker is let go, and the page comes back on the new version with the job
+  still open. Nothing to close and reopen.
+  - **It looks by itself**: shortly after opening, whenever you come back to the
+    app, and every half hour it is left open. The version chip also goes amber with
+    an arrow, and tapping it still opens About.
+  - **Why it never used to notice.** An installed copy opens from its own cache, and
+    the check asked that same cache what the current version was — so the answer was
+    always the version already on the device. It now reads the version out of the
+    service worker's own file, which no cache is allowed to answer for, and the
+    worker passes any no-store request straight to the network.
+  - Pressing it when there is nothing new says so instead of clearing the cache for
+    nothing and leaving you offline with no app.
 
 ## The Power pane
 
