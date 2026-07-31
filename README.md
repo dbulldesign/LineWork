@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.65.0**
+**Version 1.66.0**
 
 ## What it does
 
@@ -79,6 +79,18 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 - **Two fingers tapped is undo, three is redo**, the way iPadOS does it everywhere
   else. Tapped, not dragged: the fingers have to go down together, come up quickly
   and not travel, so a pinch still zooms. Both can be turned off.
+- **A ruler to draw against.** ▭ Ruler in the toolbar, or ⇧R, lays a straightedge
+  on the drawing the way it lies on a board. Draw against either edge and the marks
+  land on it exactly, so a freehand drag along it comes out dead straight at the
+  ruler's angle. **One finger moves it, two fingers on it turn it** about the point
+  between them — the ruler takes those two fingers, so the sheet does not zoom under
+  them. The angle is magnetic every 15° so level, plumb and 45° land exactly, and ⌥
+  gives any angle; the wheel turns it with a mouse and the grip at its right end
+  drags it round. It is **ticked in real units** off the scale in force where it sits
+  — a scale region's own scale included — so it doubles as a scale rule, and the chip
+  above it reads the angle and how long the ruler is on the drawing. The drawing's
+  own corners still beat it: where there is a snap point the mark goes to the corner,
+  and the ruler takes over where there is none. It never appears in an export.
 - **What the Pencil is about to do.** Where iPadOS reports the Pencil hovering, a
   dot shows where the point would land before it touches down and turns green over
   a corner it will snap to — and part way through a run it says what the next
