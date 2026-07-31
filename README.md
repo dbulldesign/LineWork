@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.66.0**
+**Version 1.67.0**
 
 ## What it does
 
@@ -79,6 +79,28 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 - **Two fingers tapped is undo, three is redo**, the way iPadOS does it everywhere
   else. Tapped, not dragged: the fingers have to go down together, come up quickly
   and not travel, so a pinch still zooms. Both can be turned off.
+- **Write the sum on the drawing.** Adding feet and inches is most of a takeoff,
+  and the answer belongs beside the thing it is about. Pick the sum tool, write
+  `12'6" + 3'4" =` with the Pencil, and `15'-10"` appears in the same kind of line
+  you wrote in. An `=` closes the sum; so does a pause, or the tick on the draw bar.
+  Keep writing beside one to add to it.
+  - **Feet and inches are real units.** A length times a number is a length; a
+    length divided by a length is a plain number; two lengths multiplied is an
+    area; and a length plus a bare number is **refused rather than guessed at** —
+    in a takeoff that is precisely the mistake worth catching.
+  - **Names and runs.** `cove = 42'6"` saves the answer under that name, and every
+    other sum using `cove` follows when it changes. A run's zone stands for its
+    length, so `Z4 × 2` is a real question. The answer drops straight onto a run as
+    its stated length.
+  - **How it reads your writing, honestly.** Apple's Math Notes is an OS feature
+    with a trained model behind it, and no browser can call it. This matches each
+    symbol's *shape* against built-in ones — fine for digits and operators written
+    plainly, and not good enough to be trusted quietly. So it shows what it made of
+    your writing, marks what it was unsure of, and takes a correction: retype it and
+    it both re-reads the sum and **remembers those shapes as yours**, weighing them
+    above its own from then on. Correct a 7 once and your 7 reads as a 7. What it
+    learns travels in the project.
+  - It is a note on the sheet. It measures nothing and orders nothing by itself.
 - **A ruler to draw against.** ▭ Ruler in the toolbar, or ⇧R, lays a straightedge
   on the drawing the way it lies on a board. Draw against either edge and the marks
   land on it exactly, so a freehand drag along it comes out dead straight at the

@@ -964,7 +964,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.66.0';
+const APP_VER='1.67.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1781,6 +1781,8 @@ function applyProject(d){
     !((a.type==='area'||a.type==='cloud'||a.type==='space'||a.type==='srgn')&&a.pts.length<3)
     /* a scale region with no scale on it says nothing about anything */
     &&!(a.type==='srgn'&&!(+a.ratio>0))
+    /* a sum needs at least one stroke to be a sum */
+    &&!(a.type==='calc'&&a.pts.length<2)
     /* the new markups have fixed shapes: two points for a box-like one, three for
        an angle or a radius. Anything else could not be drawn or measured. */
     &&!(/^(arrow|hl|ell)$/.test(a.type)&&a.pts.length<2)
@@ -2920,7 +2922,7 @@ function offsetPts(pts,dPt,closed){
    difference is shown, and the run says which one it is ordering to. */
 const statedOf=a=>{ const v=+((a||{}).stated); return v>0?v:0; };
 function annLen(a){
-  if(a&&a.type==='srgn') return null;            /* a scale region is not a thing you order */
+  if(a&&(a.type==='srgn'||a.type==='calc')) return null;   /* neither is a thing you order */
   const st=statedOf(a);
   if(st>0) return st;
   const k=annPerPt(a); if(!k||!a.pts||a.pts.length<2) return null;
@@ -2955,7 +2957,7 @@ function annSegs(a){
 }
 /* what it traces, ignoring any stated override — for showing the two side by side */
 function annMeasured(a){
-  if(!a||a.type==='srgn') return null;
+  if(!a||a.type==='srgn'||a.type==='calc') return null;
   const k=annPerPt(a); if(!k||!a.pts||a.pts.length<2) return null;
   if(a.type==='arc'){ const g=arcOf(a); return g?g.len*k:null; }
   if(a.type==='area'){ const m=areaMetrics(a); return m?m.cove:null; }
@@ -3402,7 +3404,7 @@ function assembleOverlay(){
     body+=p.body;
     p.chips.forEach(r=>q.push(r));
   }
-  ov.innerHTML=body+layoutChips(q)+snapCursorSvg()+marqueeSvg();
+  ov.innerHTML=body+calcPendSvg()+layoutChips(q)+snapCursorSvg()+marqueeSvg();
 }
 /* an explicit redraw makes no promises about what changed, so it rebuilds all */
 function drawOverlay(){
@@ -3466,7 +3468,7 @@ function drawAnn(a,selected,isDraft,multi){
     const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]);
     g+='<rect x="'+(Math.min(...xs)-9)+'" y="'+(Math.min(...ys)-9)+'" width="'+(Math.max(...xs)-Math.min(...xs)+18)+'" height="'+(Math.max(...ys)-Math.min(...ys)+18)+'" fill="none" stroke="#F2A93B" stroke-dasharray="3 3" stroke-width="1"/>';
     /* draggable handles — one per vertex, so a committed markup can be reshaped */
-    if(!isDraft&&a.type!=='ink'&&!(a.type==='line'&&a.free))
+    if(!isDraft&&a.type!=='ink'&&a.type!=='calc'&&!(a.type==='line'&&a.free))
       g+=pts.map(p=>'<rect x="'+(p[0]-4.5).toFixed(1)+'" y="'+(p[1]-4.5).toFixed(1)+'" width="9" height="9" '
         +'fill="#F2A93B" stroke="#20170A" stroke-width="1.2"/>').join('');
   }
@@ -3817,6 +3819,9 @@ function drawAnn(a,selected,isDraft,multi){
   if(a.type==='ink'){
     g+=inkPath(pts,a.pts,(a.w||2)*V.zoom*1.5,col);
   }
+  if(a.type==='calc'){
+    g+=calcSvg(a,col,W,selected);
+  }
   if(a.type==='box'){
     const x=Math.min(pts[0][0],pts[1][0]),y=Math.min(pts[0][1],pts[1][1]);
     const w=Math.abs(pts[1][0]-pts[0][0]),h=Math.abs(pts[1][1]-pts[0][1]);
@@ -3950,6 +3955,13 @@ function hitTest(sx,sy,tol){
     if(a.type==='arrow'||a.type==='ang'||a.type==='rad'){
       const seq=a.type==='rad'?arcPts(a).map(sp):(a.type==='ang'?[pts[1],pts[0],pts[2]]:pts);
       for(let i=1;i<seq.length;i++) if(distSeg([X,Y],seq[i-1],seq[i])<tol) return a;
+      continue;
+    }
+    if(a.type==='calc'){
+      for(let i=1;i<pts.length;i++){
+        if((a.pts[i][2]||0)!==(a.pts[i-1][2]||0)) continue;   /* do not join one symbol to the next */
+        if(distSeg([X,Y],pts[i-1],pts[i])<tol+(a.w||2)*V.zoom/2) return a;
+      }
       continue;
     }
     if(a.type==='line'||a.type==='cal'||a.type==='ink'||a.type==='arc'||a.type==='area'||a.type==='cloud'){
@@ -4294,7 +4306,7 @@ function hitHandle(sx,sy,tol){
   if(!V.sel||!V.vp) return null;
   const a=P.ann.find(x=>x.id===V.sel);
   if(!a||a.doc!==V.docId||a.page!==V.page||isFlat(a)) return null;
-  if(a.type==='ink'||(a.type==='line'&&a.free)) return null;   /* freehand moves as a whole */
+  if(a.type==='ink'||a.type==='calc'||(a.type==='line'&&a.free)) return null;   /* freehand moves as a whole */
   const deg=rotatable(a)?rotOf(a):0;
   const c=deg?rotCentre(a):null;
   const pts=a.pts.map(p=>{ const q=sp(p); return deg?rotPt(q,c,deg):q; });
@@ -4818,6 +4830,7 @@ const TOOLS=[
   {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
   {k:'rad',g:'Measure',key:'U',t:"Radius — three points on a curve gives R, D and the arc",svg:'<svg viewBox="0 0 24 24"><path d="M3 18a12 12 0 0118 0"/><path d="M12 6.2V18"/><circle cx="12" cy="18" r="1.6"/></svg>'},
   {k:'space',g:'Review',key:'Z',t:"Space — name a room or zone, and what falls in it belongs to it",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l7-4 7 4v13z"/><path d="M10 20v-6h4v6"/><path d="M17 11h4v9h-4"/></svg>'},
+  {k:'calc',g:'Review',key:'',t:"Write a sum \u2014 write the arithmetic and read the answer back",svg:'<svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M7 7.5h10"/><path d="M8 12h2M14 12h2M8 16h2M14 16h2"/></svg>'},
   {k:'srgn',g:'Review',key:'',t:"Scale region \u2014 an enlarged plan or detail at its own scale",svg:'<svg viewBox="0 0 24 24"><path d="M3 4h8v8H3z" stroke-dasharray="3 2"/><path d="M13 12h8v8h-8z" stroke-dasharray="3 2"/><path d="M6.5 8.5L21 4"/></svg>'},
   {k:'vs',g:'Review',key:'I',t:"Find a symbol — box one, count the rest",svg:'<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5L21 21"/><path d="M8 10.5h5M10.5 8v5"/></svg>'},
   {k:'legend',g:'Review',key:'',t:"Legend — a key of what is on the sheet",svg:'<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="1"/><rect x="6" y="8" width="3" height="3"/><rect x="6" y="14" width="3" height="3"/><path d="M12 9.5h6M12 15.5h6"/></svg>'},
@@ -4910,6 +4923,7 @@ function setTool(t){
     ell:'Ellipse — drag out a round cove; it measures round its edge',
     ang:'Angle — click the corner, then a point down each leg',
     rad:'Radius — click three points along the curve'};
+  if(typeof CALC!=='undefined'&&CALC.pend.length&&t!=='calc') calcFlush();
   $('#stTool').textContent=names[t]; V.draft=null; stroke=null; press=null; drawOverlay(); syncDrawbar();
 }
 /* ---- pinned tool palettes ----
@@ -5053,6 +5067,587 @@ const RING=[
   {a:'more',  t:'More…'}
 ];
 let ringOn=false;
+/* ============================================================
+   WRITING A SUM
+   Write the arithmetic on the sheet with the Pencil and read the answer back in
+   the same ink. A quantity surveyor adds feet and inches on the drawing all day,
+   and the answer belongs beside the thing it is about rather than in a calculator
+   on the other side of the desk.
+
+   What this is, plainly: a template-matching recogniser, not the model Apple runs
+   on the device. Apple's Math Notes is an OS feature, and no browser can call it.
+   So the shapes below are matched with the $P point-cloud algorithm against a set
+   of built-in templates, and — this is the part that makes it usable — against
+   whatever it has been taught of YOUR hand. Correct it once and it keeps the
+   correction, so the second time it reads that 7 the way you write it.
+
+   Everything it reads is shown as text before it is used, and can be retyped. A
+   number in a takeoff is not a place for a machine to guess quietly.
+   ============================================================ */
+
+/* ---- the glyphs ----
+   One table doing two jobs: the shapes to recognise, and the shapes to write the
+   answer in, so the answer comes out in the same kind of line as the sum. Each
+   glyph is a list of strokes in a 0..1 box, y down. The ones marked draw-only are
+   for writing answers and are never matched against — nobody hand-writes "sq" in
+   the middle of a sum. */
+const GARC=(cx,cy,rx,ry,a0,a1,n)=>{ const o=[]; n=n||14;
+  for(let i=0;i<=n;i++){ const t=a0+(a1-a0)*i/n; o.push([cx+rx*Math.cos(t),cy+ry*Math.sin(t)]); } return o; };
+const GLYPH={
+  '0':[GARC(.5,.5,.33,.47,-Math.PI/2,Math.PI*1.5,20)],
+  '1':[[[.30,.20],[.52,.04],[.52,.96]]],
+  '2':[[[.14,.24],[.24,.09],[.46,.04],[.70,.12],[.74,.32],[.58,.53],[.18,.94],[.84,.94]]],
+  '3':[[[.16,.14],[.40,.04],[.68,.11],[.70,.30],[.46,.46],[.72,.55],[.74,.80],[.46,.96],[.16,.86]]],
+  '4':[[[.66,.04],[.10,.68],[.90,.68]],[[.64,.34],[.64,.96]]],
+  '5':[[[.74,.06],[.26,.06],[.20,.44],[.44,.37],[.72,.46],[.78,.72],[.52,.95],[.20,.86]]],
+  '6':[[[.74,.07],[.42,.19],[.22,.50],[.20,.78],[.40,.95],[.66,.90],[.76,.68],[.60,.50],[.34,.52],[.22,.66]]],
+  '7':[[[.12,.08],[.86,.08],[.42,.96]]],
+  '8':[[[.50,.05],[.26,.16],[.30,.36],[.52,.48],[.74,.62],[.72,.86],[.50,.96],[.28,.87],[.26,.65],[.48,.49],[.68,.36],[.70,.16],[.50,.05]]],
+  '9':[[[.76,.44],[.54,.58],[.30,.50],[.26,.26],[.46,.08],[.70,.14],[.78,.40],[.68,.72],[.42,.95]]],
+  '+':[[[.08,.50],[.92,.50]],[[.50,.10],[.50,.90]]],
+  '-':[[[.06,.50],[.94,.50]]],
+  '=':[[[.06,.34],[.94,.34]],[[.06,.66],[.94,.66]]],
+  '×':[[[.12,.14],[.88,.86]],[[.88,.14],[.12,.86]]],
+  '÷':[[[.06,.50],[.94,.50]],GARC(.5,.20,.07,.07,0,6.3,8),GARC(.5,.80,.07,.07,0,6.3,8)],
+  '/':[[[.86,.06],[.14,.94]]],
+  '(':[GARC(.80,.5,.58,.48,Math.PI*0.62,Math.PI*1.38,14)],
+  ')':[GARC(.20,.5,.58,.48,-Math.PI*0.38,Math.PI*0.38,14)],
+  '.':[GARC(.5,.88,.07,.07,0,6.3,8)],
+  "'":[[[.55,.04],[.45,.34]]],
+  '"':[[[.38,.04],[.30,.34]],[[.68,.04],[.60,.34]]],
+  /* draw-only, for writing units into an answer */
+  'm':[[[.06,.92],[.06,.40]],[[.06,.48],[.22,.38],[.36,.48],[.36,.92]],[[.36,.48],[.52,.38],[.66,.48],[.66,.92]]],
+  's':[[[.62,.46],[.40,.37],[.18,.42],[.16,.56],[.42,.64],[.62,.72],[.58,.88],[.34,.93],[.14,.86]]],
+  'q':[GARC(.42,.62,.26,.26,-Math.PI/2,Math.PI*1.5,16),[[.68,.36],[.68,1.06]]],
+  'f':[[[.62,.06],[.44,.08],[.38,.24],[.38,.96]],[[.18,.40],[.62,.40]]],
+  't':[[[.44,.06],[.44,.80],[.62,.94],[.76,.88]],[[.20,.34],[.68,.34]]],
+  'i':[[[.50,.38],[.50,.94]],GARC(.5,.16,.06,.06,0,6.3,8)],
+  'n':[[[.20,.94],[.20,.38]],[[.20,.48],[.40,.37],[.60,.46],[.60,.94]]],
+  '²':[[[.14,.20],[.26,.09],[.44,.12],[.46,.26],[.16,.50],[.50,.50]]],
+};
+/* shapes worth matching against; the rest are drawn only */
+const GLYPH_MATCH='0123456789+×÷/()'.split('');
+/* second ways of writing the same character — matched, never drawn */
+const GLYPH_ALT=[['1',[[[.5,.04],[.5,.96]]]],
+                 ['7',[[[.12,.08],[.86,.08],[.42,.96]],[[.24,.52],[.66,.48]]]],
+                 ['4',[[[.66,.04],[.10,.68],[.90,.68],[.66,.04],[.64,.96]]]],
+                 ['9',[[[.74,.30],[.50,.42],[.30,.30],[.36,.10],[.62,.08],[.74,.30],[.66,.96]]]]];
+/* the ones a rule decides instead of the matcher, because normalising a shape to a
+   square throws away exactly what tells them apart */
+const NP=32;
+
+/* ---- $P, the point-cloud matcher ----
+   Stroke order and direction do not matter, which is what you want: nobody writes
+   a 4 the same way twice. Rotation does matter, because + and × are the same shape
+   turned, and telling those two apart is the whole job. */
+function ptsOf(strokes){ const o=[]; strokes.forEach((s,i)=>s.forEach(p=>o.push([p[0],p[1],i]))); return o; }
+function cloudLen(pts){ let d=0;
+  for(let i=1;i<pts.length;i++) if(pts[i][2]===pts[i-1][2]) d+=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);
+  return d; }
+function cloudResample(pts,n){
+  const I=cloudLen(pts)/(n-1); if(!(I>0)) return pts.slice(0,n);
+  let D=0; const out=[pts[0].slice()];
+  const src=pts.map(p=>p.slice());
+  for(let i=1;i<src.length;i++){
+    if(src[i][2]!==src[i-1][2]){ out.push(src[i].slice()); continue; }
+    let d=Math.hypot(src[i][0]-src[i-1][0],src[i][1]-src[i-1][1]);
+    if(D+d>=I){
+      const t=(I-D)/d;
+      const q=[src[i-1][0]+t*(src[i][0]-src[i-1][0]),src[i-1][1]+t*(src[i][1]-src[i-1][1]),src[i][2]];
+      out.push(q); src.splice(i,0,q.slice()); D=0;
+    } else D+=d;
+  }
+  while(out.length<n) out.push(src[src.length-1].slice());
+  return out.slice(0,n);
+}
+function cloudNorm(pts){
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+  const w=Math.max(...xs)-Math.min(...xs), h=Math.max(...ys)-Math.min(...ys);
+  const s=Math.max(w,h)||1;                       /* uniform: aspect is information */
+  let cx=0,cy=0; pts.forEach(p=>{cx+=p[0];cy+=p[1]});
+  cx/=pts.length; cy/=pts.length;
+  return pts.map(p=>[(p[0]-cx)/s,(p[1]-cy)/s,p[2]]);
+}
+const cloudOf=strokes=>cloudNorm(cloudResample(ptsOf(strokes),NP));
+function cloudDist(a,b,start){
+  const n=a.length, used=new Array(n).fill(false);
+  let sum=0, i=start, w=n;
+  do{
+    let best=Infinity, idx=-1;
+    for(let j=0;j<n;j++){ if(used[j]) continue;
+      const d=Math.hypot(a[i][0]-b[j][0],a[i][1]-b[j][1]);
+      if(d<best){ best=d; idx=j; } }
+    used[idx]=true; sum+=best*w; w--;
+    i=(i+1)%n;
+  }while(i!==start);
+  return sum;
+}
+function cloudMatch(a,b){
+  const step=Math.max(1,Math.round(Math.pow(a.length,.5)));
+  let best=Infinity;
+  for(let i=0;i<a.length;i+=step) best=Math.min(best,cloudDist(a,b,i),cloudDist(b,a,i));
+  return best;
+}
+/* built-in templates, plus anything this hand has taught it */
+let TPL=null;
+function templates(){
+  if(!TPL){
+    TPL=[];
+    GLYPH_MATCH.forEach(ch=>TPL.push({ch,c:cloudOf(GLYPH[ch]),taught:false}));
+    GLYPH_ALT.forEach(([ch,g])=>TPL.push({ch,c:cloudOf(g),taught:false}));
+  }
+  const learned=(P.hand||[]).map(t=>({ch:t.ch,c:cloudNorm(t.c.map(p=>p.slice())),taught:true}));
+  return TPL.concat(learned);
+}
+const forgetTemplates=()=>{ TPL=null; };
+
+/* ---- reading what was written ---- */
+function inkBox(strokes){
+  let x1=Infinity,y1=Infinity,x2=-Infinity,y2=-Infinity;
+  strokes.forEach(s=>s.forEach(p=>{ x1=Math.min(x1,p[0]); y1=Math.min(y1,p[1]);
+    x2=Math.max(x2,p[0]); y2=Math.max(y2,p[1]); }));
+  return {x1,y1,x2,y2,w:x2-x1,h:y2-y1,cx:(x1+x2)/2,cy:(y1+y2)/2};
+}
+/* strokes into symbols: left to right, and a stroke joins the symbol before it
+   while it still overlaps that symbol's width. That is what puts the two bars of
+   an = together and keeps 1 and 2 apart. */
+function inkGroups(strokes,H){
+  const items=strokes.map(s=>({s,b:inkBox([s])})).filter(it=>isFinite(it.b.x1));
+  items.sort((a,b)=>a.b.x1-b.b.x1);
+  const gaps=0.10*H;
+  const gs=[];
+  items.forEach(it=>{
+    const g=gs[gs.length-1];
+    if(g&&it.b.x1<g.b.x2+gaps){ g.strokes.push(it.s); g.b=inkBox(g.strokes); }
+    else gs.push({strokes:[it.s],b:it.b});
+  });
+  return gs;
+}
+/* the rules that come before the matcher, each because a normalised shape cannot
+   tell the difference and a proportion can */
+function ruleChar(g,H,top){
+  const b=g.b, n=g.strokes.length;
+  const flat=x=>x.w>Math.max(x.h*2.6,0.18*H);
+  const dot=x=>x.h<0.22*H&&x.w<0.22*H;
+  const tiny=b.h<0.34*H&&b.w<0.34*H;
+  if(n===1&&flat(b)) return '-';
+  if(n===2){
+    const [a,c]=g.strokes.map(s=>inkBox([s]));
+    if(flat(a)&&flat(c)&&Math.abs(a.cy-c.cy)>0.12*H) return '=';
+  }
+  if(n===3){
+    const bx=g.strokes.map(s=>inkBox([s]));
+    /* a bar with a dot over it and a dot under it, and nothing else */
+    if(bx.filter(flat).length===1&&bx.filter(dot).length===2) return '÷';
+  }
+  if(tiny) return (b.cy-top>0.55*H)?'.':"'";
+  /* a prime is a small mark riding high; two of them make an inch mark */
+  if(b.h<0.5*H&&b.cy-top<0.45*H&&b.w<0.3*H) return n>=2?'"':"'";
+  return null;
+}
+/* everything above, then the matcher, for one symbol */
+function readSym(g,H,top){
+  const r=ruleChar(g,H,top);
+  if(r) return {ch:r,score:0,sure:true};
+  const c=cloudOf(g.strokes);
+  let best=null;
+  templates().forEach(t=>{
+    const d=cloudMatch(c,t.c)*(t.taught?0.82:1);   /* your own hand counts for more */
+    if(!best||d<best.d) best={ch:t.ch,d};
+  });
+  const sure=!!best&&best.d<NP*NP*0.42;
+  if(sure) return {ch:best.ch,score:best.d,sure:true};
+  /* nothing fits: a tall narrow mark with nothing better to be is a 1, which is
+     what a hurried 1 with no flag on it looks like to any matcher */
+  const b=g.b;
+  if(g.strokes.length===1&&b.h>b.w*2.2&&b.w<0.30*H&&b.h>0.55*H)
+    return {ch:'1',score:0,sure:false};
+  return best?{ch:best.ch,score:best.d,sure:false}:{ch:'?',score:1e9,sure:false};
+}
+/* the whole line: strokes in, an expression string out, with what it was unsure of */
+function readInk(raw){
+  if(!raw||!raw.length) return {expr:'',syms:[],doubt:[]};
+  /* ink is stored the way a PDF measures, with y going up the page; the glyph table
+     is written the way a page reads, with y going down it. Everything from here on
+     is in the reading frame, so "the top third" means the top of the writing. */
+  const strokes=raw.map(s=>s.map(p=>[p[0],-p[1]]));
+  const all=inkBox(strokes);
+  const H=Math.max(all.h,1e-6);
+  const gs=inkGroups(strokes,H);
+  let syms=gs.map(g=>Object.assign({g},readSym(g,H,all.y1)));
+  /* the two ticks of an inch mark are written apart enough to arrive as two
+     symbols; side by side and close, they are one */
+  for(let i=1;i<syms.length;i++){
+    if(syms[i].ch==="'"&&syms[i-1].ch==="'"&&syms[i].g.b.x1-syms[i-1].g.b.x2<0.35*H){
+      syms[i-1]={ch:'"',score:0,sure:true,
+        g:{strokes:syms[i-1].g.strokes.concat(syms[i].g.strokes),
+           b:inkBox(syms[i-1].g.strokes.concat(syms[i].g.strokes))}};
+      syms.splice(i,1); i--;
+    }
+  }
+  let out='', doubt=[];
+  syms.forEach((s,i)=>{
+    const prev=syms[i-1];
+    /* digits and the point between them run together into one number; everything
+       else stands alone. Two numbers side by side with nothing between them is not
+       arithmetic, so there is no case where they should be kept apart. */
+    const join=/[0-9.]/.test(s.ch)&&prev&&/[0-9.]/.test(prev.ch);
+    if(i&&!join) out+=' ';
+    out+=s.ch;
+    if(!s.sure) doubt.push(i);
+  });
+  return {expr:out.replace(/\s+/g,' ').trim(),syms,doubt};
+}
+
+/* ---- working it out ----
+   No eval anywhere near this. A tokeniser and a small precedence parser, with
+   feet and inches as first-class values, because that is what gets added up. */
+function mathTokens(src){
+  const t=[]; let i=0; const s=String(src);
+  while(i<s.length){
+    const c=s[i];
+    if(/\s/.test(c)){ i++; continue; }
+    if(/[0-9.]/.test(c)){ let j=i; while(j<s.length&&/[0-9.]/.test(s[j])) j++;
+      t.push({k:'n',v:parseFloat(s.slice(i,j))}); i=j; continue; }
+    if(/[A-Za-z_]/.test(c)){ let j=i; while(j<s.length&&/[A-Za-z0-9_]/.test(s[j])) j++;
+      t.push({k:'id',v:s.slice(i,j)}); i=j; continue; }
+    if(c==='’'||c==="'"){ t.push({k:'ft'}); i++; continue; }
+    if(c==='”'||c==='"'){ t.push({k:'in'}); i++; continue; }
+    if('+-*/=()'.includes(c)){ t.push({k:c==='*'?'×':c==='/'?'÷':c}); i++; continue; }
+    if(c==='×'||c==='x'||c==='X'){ t.push({k:'×'}); i++; continue; }
+    if(c==='÷'){ t.push({k:'÷'}); i++; continue; }
+    if(c==='−'||c==='–'||c==='—'){ t.push({k:'-'}); i++; continue; }
+    return {err:'“'+c+'” is not something it can work out'};
+  }
+  return {t};
+}
+const NUM=n=>({n,u:''});
+const LEN=n=>({n,u:'len'});
+const ARE=n=>({n,u:'area'});
+function mathBin(op,a,b){
+  const au=a.u, bu=b.u;
+  if(op==='+'||op==='-'){
+    if(au!==bu) return {err:au==='len'||bu==='len'
+      ? 'a length and a plain number cannot be added — write 3′ or 3″ if you mean a length'
+      : 'those two do not add up: '+(au||'a number')+' and '+(bu||'a number')};
+    const n=op==='+'?a.n+b.n:a.n-b.n;
+    return {n,u:au};
+  }
+  if(op==='×'){
+    if(!au) return {n:a.n*b.n,u:bu};
+    if(!bu) return {n:a.n*b.n,u:au};
+    if(au==='len'&&bu==='len') return ARE(a.n*b.n);
+    return {err:'those two cannot be multiplied'};
+  }
+  if(op==='÷'){
+    if(b.n===0) return {err:'divided by nothing'};
+    if(au===bu) return NUM(a.n/b.n);
+    if(!bu) return {n:a.n/b.n,u:au};
+    if(au==='area'&&bu==='len') return LEN(a.n/b.n);
+    return {err:'those two cannot be divided'};
+  }
+  return {err:'unknown operator'};
+}
+/* an identifier is a name this job knows: something written down earlier, or a run */
+function mathName(id,seen){
+  const key=String(id).toLowerCase();
+  const def=(P.ann||[]).find(a=>a.type==='calc'&&String(a.name||'').toLowerCase()===key);
+  if(def){
+    if(seen.has(def.id)) return {err:'“'+id+'” is defined in terms of itself'};
+    seen.add(def.id);
+    const r=mathRun(calcSrc(def).rhs,seen);
+    seen.delete(def.id);
+    return r;
+  }
+  const t=(P.treat||[]).find(x=>tagOf(x).toLowerCase()===key||String(x.zone||'').toLowerCase()===key);
+  if(t){ const L=lenOf(t); return L>0?LEN(L):{err:'“'+tagOf(t)+'” has no length yet'}; }
+  return {err:'nothing here is called “'+id+'”'};
+}
+function mathRun(src,seen){
+  const tk=mathTokens(src||''); if(tk.err) return tk;
+  const t=tk.t; let i=0;
+  const peek=()=>t[i];
+  const eat=k=>{ if(t[i]&&t[i].k===k){ i++; return true; } return false; };
+  let bad=null;
+  function primary(){
+    if(bad) return null;
+    if(eat('(')){ const v=expr(); if(!eat(')')) bad=bad||'a bracket was left open'; return v; }
+    if(eat('-')){ const v=primary(); return v&&!bad?{n:-v.n,u:v.u}:v; }
+    if(eat('+')) return primary();
+    const p=peek();
+    if(!p){ bad=bad||'it stops before there is anything to work out'; return null; }
+    if(p.k==='id'){ i++; const v=mathName(p.v,seen); if(v.err){ bad=v.err; return null; } return v; }
+    if(p.k!=='n'){ bad=bad||'“'+(p.k)+'” is in the wrong place'; return null; }
+    i++;
+    let v=NUM(p.v);
+    if(eat('ft')){
+      v=LEN(p.v*12);
+      /* 12' 6" — the inches that follow a feet mark belong to it */
+      if(peek()&&peek().k==='n'&&t[i+1]&&t[i+1].k==='in'){ v=LEN(v.n+t[i].v); i+=2; }
+      else if(peek()&&peek().k==='-'&&t[i+1]&&t[i+1].k==='n'&&t[i+2]&&t[i+2].k==='in'){
+        v=LEN(v.n+t[i+1].v); i+=3; }
+    } else if(eat('in')) v=LEN(p.v);
+    return v;
+  }
+  function term(){
+    let a=primary();
+    while(!bad&&peek()&&(peek().k==='×'||peek().k==='÷')){
+      const op=peek().k; i++;
+      const b=primary(); if(bad) return null;
+      const r=mathBin(op,a,b); if(r.err){ bad=r.err; return null; }
+      a=r;
+    }
+    return a;
+  }
+  function expr(){
+    let a=term();
+    while(!bad&&peek()&&(peek().k==='+'||peek().k==='-')){
+      const op=peek().k; i++;
+      const b=term(); if(bad) return null;
+      const r=mathBin(op,a,b); if(r.err){ bad=r.err; return null; }
+      a=r;
+    }
+    return a;
+  }
+  const v=expr();
+  if(bad) return {err:bad};
+  if(i<t.length) return {err:'it does not read as one sum'};
+  if(!v||!isFinite(v.n)) return {err:'that does not come out to a number'};
+  return v;
+}
+/* what a written note is actually saying: a name being defined, or a sum to do */
+function calcSrc(a){
+  const src=String((a.fix!=null&&a.fix!=='')?a.fix:(a.expr||'')).trim();
+  const eq=src.indexOf('=');
+  if(eq<0) return {lhs:src,rhs:src,def:null};
+  const lhs=src.slice(0,eq).trim(), rhs=src.slice(eq+1).trim();
+  /* "cove = 12' 6\"" defines cove; "12' + 3' =" is just a sum with its = written */
+  if(/^[A-Za-z_][A-Za-z0-9_]*$/.test(lhs)&&rhs) return {lhs,rhs,def:lhs};
+  return {lhs,rhs:lhs,def:null};
+}
+function calcOf(a){
+  const s=calcSrc(a);
+  if(!s.rhs) return {err:'nothing read yet'};
+  const v=mathRun(s.rhs,new Set([a.id]));
+  return v.err?v:Object.assign({},v,{def:s.def});
+}
+function calcText(v){
+  if(!v||v.err) return null;
+  if(v.u==='len') return P.units==='metric'?fmtRun(v.n):fmtFtIn(v.n);
+  if(v.u==='area') return fmtArea(v.n);
+  const r=Math.round(v.n*1e4)/1e4;
+  return String(r);
+}
+
+/* ---- writing the answer back ----
+   In the same glyphs, at the size the sum was written, so the whole line reads as
+   one thing. A character the table has no shape for falls back to a typeset one
+   rather than being dropped. */
+function calcStrokes(a){
+  const out=[]; let cur=null, ci=-1;
+  (a.pts||[]).forEach(p=>{ const k=p.length>2?p[2]:0;
+    if(k!==ci){ cur=[]; out.push(cur); ci=k; } cur.push([p[0],p[1]]); });
+  return out.filter(s=>s.length);
+}
+/* the answer, laid out in PDF space to the right of what was written */
+function calcAnswer(a){
+  const v=calcOf(a);
+  const txt=calcText(v);
+  const box=inkBox(calcStrokes(a));
+  if(!isFinite(box.x1)) return null;
+  const H=Math.max(box.h,4);
+  const adv=H*0.68, gapc=H*0.10;
+  const started=String((a.fix!=null&&a.fix!=='')?a.fix:(a.expr||'')).includes('=');
+  const lead=(v&&!v.err&&v.def)?'':(started?'':'=');
+  const show=(lead?lead+' ':'')+(txt==null?'?':txt);
+  let x=box.x2+H*0.45;
+  const yTop=box.y2;
+  const strokes=[], misses=[];
+  [...show].forEach(ch=>{
+    if(ch===' '){ x+=adv*0.55; return; }
+    const gl=GLYPH[ch];
+    if(!gl){ misses.push({ch,x}); x+=adv*0.62; return; }
+    gl.forEach(st=>strokes.push(st.map(q=>[x+q[0]*adv,yTop-q[1]*H])));
+    x+=adv+gapc;
+  });
+  return {v,txt,strokes,misses,H,x0:box.x2+H*0.45,x1:x,yTop};
+}
+function calcSvg(a,col,W,selected){
+  let g='';
+  calcStrokes(a).forEach(st=>{
+    const q=st.map(sp);
+    g+='<polyline points="'+q.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
+      +'" fill="none" stroke="'+col+'" stroke-width="'+Math.max(1,(a.w||2)*V.zoom*1.4).toFixed(2)
+      +'" stroke-linecap="round" stroke-linejoin="round"/>';
+  });
+  const ans=calcAnswer(a);
+  if(!ans) return g;
+  const bad=ans.v&&ans.v.err;
+  const ac=bad?'var(--flag)':col;
+  ans.strokes.forEach(st=>{
+    const q=st.map(sp);
+    g+='<polyline points="'+q.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
+      +'" fill="none" stroke="'+ac+'" stroke-width="'+Math.max(1,(a.w||2)*V.zoom*1.4).toFixed(2)
+      +'" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".95"/>';
+  });
+  ans.misses.forEach(m=>{
+    const q=sp([m.x,ans.yTop-ans.H*0.5]);
+    g+='<text x="'+q[0].toFixed(1)+'" y="'+(q[1]+ans.H*V.zoom*0.36).toFixed(1)+'" fill="'+ac
+      +'" font-family="var(--mono)" font-size="'+(ans.H*V.zoom*0.8).toFixed(1)+'">'+esc(m.ch)+'</text>';
+  });
+  /* what it read, small, under the writing — a number in a takeoff is not a place
+     for a machine to guess quietly */
+  const src=String((a.fix!=null&&a.fix!=='')?a.fix:(a.expr||''));
+  const doubt=(a.syms||[]).some(x=>!x.sure)&&!a.fix;
+  const tell=P.calcRead==='always'||selected||bad||doubt;
+  if(src&&tell&&P.calcRead!=='never'){
+    const b=inkBox(calcStrokes(a));
+    g+=chip((sp([b.x1,b.y1])[0]+sp([b.x2,b.y1])[0])/2,sp([b.x1,b.y1])[1]+CHIP_H*.8,
+      (a.fix?'typed: ':(doubt?'read (unsure): ':'read: '))+src+(bad?'  ·  '+ans.v.err:''),
+      bad?'#E4694F':col,null,a,'sub',lblRotFor(a,'sub'));
+  }
+  return g;
+}
+/* ---- teaching it your hand ----
+   One correction is worth more than any number of built-in shapes, because it is
+   yours. Each symbol that was misread is stored as a template against the
+   character it should have been; the matcher weighs those above its own. */
+function calcTeach(a,typed){
+  const src=String(typed||'').replace(/\s+/g,'');
+  const syms=(a.syms||[]).length?a.syms:readInk(calcStrokes(a)).syms;
+  const got=syms.map(s=>s.ch).join('');
+  if(!syms.length||src.length!==syms.length) return 0;   /* only when they line up one to one */
+  P.hand=P.hand||[];
+  let n=0;
+  syms.forEach((s,i)=>{
+    const want=src[i];
+    if(want===s.ch) return;
+    if(!/[0-9+\-×÷=().'"/]/.test(want)) return;
+    const strokes=(s.g&&s.g.strokes)||null;
+    if(!strokes) return;
+    P.hand.push({ch:want,c:cloudOf(strokes).map(p=>[+p[0].toFixed(4),+p[1].toFixed(4),p[2]])});
+    n++;
+  });
+  /* a hand does not need a thousand samples of the same 7 */
+  if(P.hand.length>400) P.hand=P.hand.slice(-400);
+  if(n) forgetTemplates();
+  return n;
+}
+/* ---- the tool ----
+   Strokes go into the note under the pen if there is one, so a sum can be written
+   on, corrected and added to; otherwise they start a new one. */
+function calcNear(strokes){
+  const b=inkBox(strokes);
+  if(!isFinite(b.x1)) return null;
+  const pad=Math.max(b.h,10)*1.4;
+  return P.ann.find(x=>x.type==='calc'&&x.doc===V.docId&&(x.page||1)===(V.page||1)&&!isFlat(x)&&
+    (()=>{ const o=inkBox(calcStrokes(x));
+      return isFinite(o.x1)&&b.x1>o.x1-pad&&b.x1<o.x2+pad*2.2&&b.cy>o.y1-pad&&b.cy<o.y2+pad; })());
+}
+function calcReread(a){
+  const r=readInk(calcStrokes(a));
+  a.expr=r.expr; a.syms=r.syms;
+  if(a.fix!=null&&a.fix!==''&&!a.fixKeep) a.fix='';   /* new writing supersedes an old correction */
+  const s=calcSrc(a);
+  a.name=s.def||'';
+  return r;
+}
+function calcCommit(strokes){
+  if(!strokes||strokes.length<1) return null;
+  const host=calcNear(strokes);
+  snap(host?'Add to a sum':'Write a sum');
+  let a=host;
+  if(!a){
+    a={id:uid('a_'),type:'calc',doc:V.docId,page:V.page,color:V.color,w:V.width,
+      pts:[],expr:'',fix:'',name:''};
+    P.ann.push(a);
+  }
+  const base=a.pts.length?Math.max(...a.pts.map(p=>p.length>2?p[2]:0))+1:0;
+  strokes.forEach((st,i)=>st.forEach(q=>a.pts.push([q[0],q[1],base+i])));
+  calcReread(a);
+  V.sel=a.id;
+  invalidateAnns(); drawOverlay(); renderAnnList(); showInspector(a); markDirty();
+  const v=calcOf(a);
+  toast(v.err?('Read “'+(a.expr||'nothing')+'” — '+v.err)
+             :('“'+a.expr+'” = '+calcText(v)+(a.name?'  ·  saved as '+a.name:'')));
+  return a;
+}
+/* retyping is both the correction and the lesson */
+async function calcFix(a){
+  const cur=String((a.fix!=null&&a.fix!=='')?a.fix:(a.expr||''));
+  const r=await dlg({title:'What does it say?',fields:[
+    {k:'src',label:'The sum',val:cur,ph:"12' 6\" + 3' 4\" =",
+      hint:'Feet and inches with ′ and ″. A name on the left of = saves the answer under that name.'},
+    {k:'teach',type:'check',cap:'Remember these shapes as mine',val:true}
+  ],ok:'Read it that way',cancel:'Cancel',
+    note:'It read “'+(a.expr||'nothing')+'”. Correcting it here is what teaches it your hand — '
+      +'the next 7 you write like that is read as a 7.'});
+  if(!r) return false;
+  snap('Correct a sum');
+  const typed=String(r.src||'').trim();
+  let taught=0;
+  if(r.teach&&typed) taught=calcTeach(a,typed);
+  a.fix=typed; a.fixKeep=true;
+  a.name=calcSrc(a).def||'';
+  invalidateAnns(); drawOverlay(); renderAnnList(); showInspector(a); markDirty();
+  const v=calcOf(a);
+  toast((v.err?'“'+typed+'” — '+v.err:'“'+typed+'” = '+calcText(v))
+    +(taught?'  ·  learned '+taught+' shape'+(taught===1?'':'s'):''));
+  return true;
+}
+/* the answer is worth having somewhere other than on the sheet */
+function calcToTreat(a){
+  const v=calcOf(a);
+  if(v.err||v.u!=='len'){ toast('Only a length can be a run’s length — this one is '+(v.err||'a plain number')); return; }
+  const t=V.sel&&P.treat.find(x=>x.annId===V.sel);
+  const list=P.treat.filter(x=>x.docId===a.doc&&(x.page||1)===(a.page||1));
+  const one=t||(list.length===1?list[0]:null);
+  if(!one){ toast(list.length?'Open the run you mean, then use its stated length':'No run on this page to give it to'); return; }
+  snap('Stated length from a sum');
+  one.manual=v.n; one.annId=one.annId||null;
+  renderTreatments(); renderBom(); stats(); markDirty();
+  toast(tagOf(one)+' is now ordering to '+fmtLen(v.n)+' — a stated length, from the sum');
+}
+
+
+/* ---- when a sum is finished ----
+   Writing is a stream of strokes with pauses in it, so the pause is the signal: a
+   moment after the pen stops, what has been written is read. Writing an = ends it
+   at once, because that is what an = means, and ⏎ or the tick on the draw bar do
+   it without waiting. */
+const CALC={pend:[],t:null,ms:1100};
+function calcStroke(){
+  let st=(V.draft&&V.draft.pts||[]).map(q=>[q[0],q[1]]);
+  V.draft=null; stroke=null;
+  if(!st.length){ drawOverlay(); return; }
+  /* a decimal point is one tap and one point; give it a length so it is a mark */
+  if(st.length===1) st=[st[0],[st[0][0]+0.3,st[0][1]+0.3]];
+  CALC.pend.push(st);
+  drawOverlay();
+  /* an = closes the sum the moment it is written */
+  const r=readInk(CALC.pend);
+  if(/=\s*$/.test(r.expr)){ calcFlush(); return; }
+  clearTimeout(CALC.t);
+  CALC.t=setTimeout(calcFlush,CALC.ms);
+}
+function calcFlush(){
+  clearTimeout(CALC.t); CALC.t=null;
+  const st=CALC.pend; CALC.pend=[];
+  if(!st.length) return;
+  calcCommit(st);
+}
+/* the strokes waiting to be read are drawn as they are written */
+function calcPendSvg(){
+  if(!CALC.pend.length||!V.vp) return '';
+  let g='';
+  CALC.pend.forEach(st=>{
+    const q=st.map(sp);
+    g+='<polyline points="'+q.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')
+      +'" fill="none" stroke="'+V.color+'" stroke-width="'+Math.max(1,(V.width||2)*V.zoom*1.4).toFixed(2)
+      +'" stroke-linecap="round" stroke-linejoin="round" stroke-opacity=".75"/>';
+  });
+  return g;
+}
 /* ============================================================
    THE RULER
    A straightedge on the drawing. Put it where the line goes, draw against its
@@ -5500,6 +6095,9 @@ stage.addEventListener('pointerdown',e=>{
   }
   press={id:e.pointerId,x0:e.clientX,y0:e.clientY,p0:p,moved:false,vertex:!!V.draft,free:null};
   if(V.tool==='ink'){ snap(); const q0=guide(p); stroke={id:uid('a_'),type:'ink',doc:V.docId,page:V.page,pts:[[q0[0],q0[1],e.pressure||.5]],color:V.color,w:V.width}; V.draft=stroke; drawOverlay(); }
+  else if(V.tool==='calc'){ clearTimeout(CALC.t); CALC.t=null;
+    stroke={id:'cw',type:'ink',doc:V.docId,page:V.page,pts:[[p[0],p[1],e.pressure||.5]],color:V.color,w:V.width};
+    V.draft=stroke; drawOverlay(); }
   else if(V.tool==='erase'){ eraseAt(sc); }
   else if(/^(box|tbox|arrow|hl|ell|vs)$/.test(V.tool)){ V.draft={id:'d',type:V.tool,doc:V.docId,page:V.page,pts:[p,p.slice()],color:V.color,w:V.width,size:11,text:''}; }
 },{passive:false});
@@ -5538,7 +6136,7 @@ stage.addEventListener('pointermove',e=>{
 
   if(press&&e.pointerId===press.id){
     if(!press.moved&&Math.hypot(e.clientX-press.x0,e.clientY-press.y0)>7) press.moved=true;
-    if(V.tool==='ink'&&stroke){ evs.forEach(ev=>{ const q=guide(toPt(ev)), l=stroke.pts[stroke.pts.length-1];
+    if((V.tool==='ink'||V.tool==='calc')&&stroke){ evs.forEach(ev=>{ const q=V.tool==='calc'?toPt(ev):guide(toPt(ev)), l=stroke.pts[stroke.pts.length-1];
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>0.9) stroke.pts.push([q[0],q[1],ev.pressure||.5]); });
       drawOverlayFor(); return; }
     if(V.tool==='erase'){ evs.forEach(ev=>eraseAt(toS(ev))); return; }
@@ -5616,6 +6214,7 @@ function endPointer(e){
   if(!press||e.pointerId!==press.id) return;
   const pr=press, tool=V.tool, p=toPt(e); press=null;
   if(tool==='ink'){ commitInk(); return; }
+  if(tool==='calc'){ calcStroke(); return; }
   if(tool==='erase') return;
   if(/^(box|tbox|arrow|hl|ell|vs)$/.test(tool)){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
   if(tool==='ang'||tool==='rad'){ tapThree(p); return; }
@@ -5650,7 +6249,7 @@ stage.addEventListener('pointerleave',e=>{ if(e.pointerType==='pen') penOff(); }
    green, and where a run is part-traced it says what that segment would add. So the
    snap is confirmed before the mark is made rather than after. */
 const annName=a=>{
-  const n={line:'dimension',poly:'poly length',arc:'arc',area:'region',space:'space',srgn:'scale region',cloud:'revision cloud',
+  const n={line:'dimension',poly:'poly length',arc:'arc',area:'region',space:'space',srgn:'scale region',calc:'sum',cloud:'revision cloud',
     count:'count stamp',text:'text',box:'box',note:'note',ink:'ink',arrow:'arrow',hl:'highlight',
     ell:'ellipse',ang:'angle',rad:'radius',legend:'legend',link:'link',driver:'driver',
     feed:'feed point',splice:'splice',whip:'home run',photo:'photo'}[a&&a.type];
@@ -6059,7 +6658,7 @@ const ANN_NAMES={line:'Dimension',box:'Area box',note:'Callout note',link:'Drawi
   cal:'Calibration',ink:'Ink stroke',text:'Text',tbox:'Text box',arc:'Arc length',
   area:'Region',count:'Count',cloud:'Revision cloud',driver:'Driver',
   feed:'Feed point',splice:'Splice',whip:'Home run',photo:'Photo',legend:'Legend',space:'Space',
-  srgn:'Scale region'};
+  srgn:'Scale region',calc:'Sum'};
 async function offsetAnn(a){
   if(!vertexType(a)||a.free||a.pts.length<2){ toast('Offset works on a run or a region'); return; }
   const k=annPerPt(a);
@@ -6156,6 +6755,13 @@ function ctxForAnn(a){
   if(a.type==='space') items.push({id:'sn',t:'Rename this space…',fn:()=>nameSpace(a,false)});
   if(a.type==='srgn') items.push({id:'rs',t:'Scale for this region ('+(a.label||'not set')+')…',
     fn:()=>rgnScaleDlg(a,false)});
+  if(a.type==='calc'){
+    const cv=calcOf(a);
+    items.push({id:'cf',t:'What does it say? (read “'+(a.expr||'nothing')+'”)…',fn:()=>calcFix(a)});
+    if(!cv.err) items.push({id:'cc',t:'Copy the answer ('+calcText(cv)+')',
+      fn:()=>copyText(calcText(cv),'Answer copied')});
+    if(!cv.err&&cv.u==='len') items.push({id:'cl',t:'Use as a run’s stated length',fn:()=>calcToTreat(a)});
+  }
   if(vertexType(a)&&!a.free&&ctxPt){
     const sc=V.vp?sp(ctxPt):null;
     const vi=sc?a.pts.findIndex(q=>{ const s2=sp(q); return Math.hypot(s2[0]-sc[0],s2[1]-sc[1])<12; }):-1;
@@ -6312,6 +6918,7 @@ $('#btnFinger').onclick=()=>{
                      :'One finger moves the sheet; draw with the Apple Pencil'); };
 
 async function finishDraft(){
+  if(V.tool==='calc'&&CALC.pend.length){ calcFlush(); return; }
   const d=V.draft; if(!d) return; V.draft=null;
   syncDrawbar();
   if(d.type==='line'){
@@ -7545,6 +8152,23 @@ function showInspector(a){
     h+='<button class="btn" data-act="spn">Rename or delete…</button>';
     h+='<div class="hint">Everything whose middle falls inside is attributed to it. Where spaces nest, the smallest wins.</div>';
   }
+  if(a.type==='calc'){
+    const v=calcOf(a), src=calcSrc(a);
+    h+='<div class="kv"><span>'+(a.fix?'Typed':'Read')+'</span><b class="hi">'
+      +esc(String(a.fix||a.expr||'\u2014'))+'</b></div>';
+    h+='<div class="kv"><span>Comes to</span><b'+(v.err?' style="color:var(--flag)"':'')+'>'
+      +esc(v.err?v.err:calcText(v))+'</b></div>';
+    if(a.name) h+='<div class="kv"><span>Saved as</span><b>'+esc(a.name)
+      +'</b></div><div class="hint">Write that name in another sum and it stands for this answer. '
+      +'Change this one and every sum using it follows.</div>';
+    const doubt=(a.syms||[]).filter(x=>!x.sure).length;
+    if(doubt&&!a.fix) h+='<div class="hint">It was unsure of '+doubt+' symbol'+(doubt===1?'':'s')
+      +'. Retyping it is what teaches it your hand.</div>';
+    h+='<button class="btn" data-act="cfix">What does it say?\u2026</button>';
+    if(!v.err&&v.u==='len') h+='<button class="btn" data-act="clen">Use as a run\u2019s stated length</button>';
+    h+='<div class="hint">Keep writing beside it to add to the sum. It is a note on the sheet \u2014 '
+      +'it measures nothing and orders nothing by itself.</div>';
+  }
   if(a.type==='srgn'){
     const k=annPerPt(a);
     const page=scaleOf(a.doc,a.page);
@@ -7819,6 +8443,8 @@ function showInspector(a){
     if(act==='rnd') roundCorners(a);
     if(act==='spn') nameSpace(a,false);
     if(act==='rsc') rgnScaleDlg(a,false);
+    if(act==='cfix') calcFix(a);
+    if(act==='clen') calcToTreat(a);
     if(act==='det'){
       const list=P.treat.filter(t=>t.docId===a.doc&&(t.page||1)===a.page);
       if(!list.length){ toast('No treatments on this page'); return; }
@@ -7953,7 +8579,7 @@ function renderCodeKey(){
    Notes and text get in the way while measuring, so each kind can be hidden.
    Hidden markups still count in the takeoff — this is about the view only. */
 const LAYERS=[['line','Dimensions'],['arc','Arcs'],['area','Regions'],['count','Counts'],
-  ['cloud','Revision clouds'],['space','Spaces'],['srgn','Scale regions'],['legend','Legends'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
+  ['cloud','Revision clouds'],['space','Spaces'],['srgn','Scale regions'],['calc','Sums'],['legend','Legends'],['driver','Drivers'],['feed','Feed points'],['splice','Splices'],
   ['whip','Home runs'],['photo','Photos'],['ell','Ellipses'],['ang','Angles'],['rad','Radii'],
   ['arrow','Arrows'],['hl','Highlights'],['box','Boxes'],['text','Text'],['tbox','Text boxes'],
   ['note','Notes'],['link','Links'],['ink','Ink']];
@@ -8302,6 +8928,10 @@ function markSubject(a){
   if(a.type==='count') return (a.grp||'COUNT')+' '+countIndex(a);
   if(a.type==='cloud') return 'rev '+(a.rev||'1');
   if(a.type==='legend') return a.text||legByLabel(a.by||'type');
+  if(a.type==='calc'){
+    const v=calcOf(a), src=String(a.fix||a.expr||'').trim();
+    return (src||'a sum')+(v.err?'  ·  '+v.err:'  =  '+calcText(v));
+  }
   return a.text?String(a.text).slice(0,40):(ANN_NAMES[a.type]||a.type);
 }
 function markRows(){
@@ -8355,6 +8985,8 @@ function renderAnnList(){
       :a.type==='count'?((a.grp||'COUNT')+' '+countIndex(a))
       :a.type==='cloud'?('rev '+(a.rev||'1')+(a.text?'  ·  '+a.text:''))
       :a.type==='driver'?((a.name||'PS')+'  ·  '+driverLabel(a,driverLoad(a)))
+      :a.type==='calc'?markSubject(a)
+      :a.type==='srgn'?((a.name?a.name+'  ·  ':'')+(a.label||'no scale'))
       :(String(a.text||'').replace(/\n/g,' ').trim()||(a.type==='tbox'?'empty text box':a.type));
     const kind=a.type==='line'&&a.poly?'poly':a.type;
     const el=document.createElement('div'); el.className='item'+(a.id===V.sel||inMulti(a.id)?' on':'');
@@ -13155,7 +13787,10 @@ document.addEventListener('keydown',e=>{
   if((e.metaKey||e.ctrlKey)&&k==='a'&&V.vp){ e.preventDefault();
     setMulti(pageAnns().filter(annVisible).map(a=>a.id));
     toast((V.multi.length||(V.sel?1:0))+' markup(s) selected on this page'); return; }
-  if(k==='escape'){ closeCtx(); closeRails(); V.draft=null; V.threeN=0; V.arcN=0; V.sel=null; V.multi=[]; V.marq=null;
+  if(k==='escape'){ closeCtx(); closeRails();
+    if(CALC.pend.length){ CALC.pend=[]; clearTimeout(CALC.t); CALC.t=null; V.draft=null; drawOverlay();
+      toast('Dropped what was part-written'); return; }
+    V.draft=null; V.threeN=0; V.arcN=0; V.sel=null; V.multi=[]; V.marq=null;
     if(V.addSel){ V.addSel=false; syncMultiBtn(); }
     showInspector(null);
     if(V.tool!=='pan') setTool('pan'); else { drawOverlay(); syncDrawbar(); }
@@ -13409,6 +14044,7 @@ const TOUCH=[
   ['Press and hold a markup',"That markup’s own menu — its length, its treatment, its points, its arcs — because those actions are specific and named. On a label it is the label’s menu."],
   ['Press and hold a row',"The same in the rails: a sheet, a markup, a run, a library product or a cut-list piece each give the menu of things you would do to that row, including copying the order code."],
   ['Double tap',"Finishes a run, retypes a text markup, or breaks a run at that point."],
+  ['Writing a sum',"Pick the sum tool and write the arithmetic on the sheet: 12′6″ + 3′4″ = and the answer arrives in the same hand. An = closes it, or a pause does, or the tick on the draw bar. Feet and inches add up as feet and inches. It reads your writing by matching shapes, which is not what Apple's Math Notes does on the device — Apple's is an OS feature no browser can reach — so it shows what it made of it, and correcting it once teaches it your hand."],
   ['The ruler',"Press ▭ Ruler, or ⇧R. Draw against either edge and the marks land on it exactly — a traced run comes out dead straight at the ruler's angle. One finger moves it, two fingers on it turn it about the point between them, and the angle is magnetic every 15° so level and plumb land exactly; hold ⌥ for any angle. It is ticked in real units off the scale where it sits, so it reads as a scale rule too. The ✕ at its left end puts it away."],
   ['Apple Pencil hovering',"On a Pencil that reports hover, a dot shows where the point would land before it touches down, and turns green over a corner it will snap to. Part way through a run it also shows what the next segment would add, so the snap is confirmed before the mark is made."],
   ['The eraser end',"Turn the Pencil over and the markup under it goes, named in the message so you know what went. A run measured off it keeps its length as a typed figure rather than losing it. Where iPadOS does not report the eraser this does nothing — Delete and the menus still work."],
@@ -13438,6 +14074,8 @@ function manualSections(){
       ['Poly length (G)','Tap each corner; every segment is measured and labelled separately, and the run can be closed into a loop.'],
       ['Arc length (A)','Three points — start, anywhere along the curve, then the end. Reports the arc, its radius and its included angle.'],
       ['Region (R)','Trace a room for its area, its perimeter, and the cove run at a set distance in from the wall. That inset is real geometry: each corner shortens the adjoining edges by d/tan(θ/2), so a 6" inset on a rectangle takes exactly 8d off.'],
+      ['Writing a sum','Adding feet and inches on the drawing is most of a takeoff, and the answer belongs beside the thing it is about. Pick the sum tool and write it: 12\u20326\u2033 + 3\u20324\u2033 = and 15\u2032-10\u2033 appears in the same kind of line you wrote in. An \u003d closes the sum, and so does a pause or the tick on the draw bar; keep writing beside one to add to it. Feet and inches are real units \u2014 a length times a number is a length, a length divided by a length is a plain number, two lengths multiplied is an area, and a length plus a bare number is refused rather than guessed at, because in a takeoff that is exactly the mistake worth catching. A name on the left of the \u003d saves the answer under that name, and any other sum using it follows when it changes; a run\u2019s zone stands for its length, so Z4 \u00d7 2 is a real question with a real answer. The answer can be dropped straight onto a run as its stated length. It is a note on the sheet: it measures nothing and orders nothing by itself.'],
+      ['How it reads your writing','Honestly, and not the way Apple does it. Math Notes on an iPad is an OS feature with a trained model behind it, and no browser can call it. This matches the shape of each symbol against a set of built-in ones \u2014 which is good enough for digits and operators written plainly, and not good enough to be trusted quietly. So it shows what it made of your writing, marks the symbols it was unsure of, and takes a correction: retype what it says and it both re-reads the sum and remembers those shapes as yours, weighing them above its own from then on. Correct a 7 once and your 7 reads as a 7. What it has learned travels in the project.'],
       ['The ruler (⇧R)','A straightedge lying on the drawing, the way it lies on a board: put it where the line goes and draw against its edge. Points drawn within a finger of an edge land on that edge exactly, so a freehand drag along it comes out dead straight at the ruler\u2019s angle — and there is nothing left for the smoothing to simplify away. One finger moves it; two fingers on it turn it about the point between them, which is how the hand actually does it; the wheel turns it with a mouse and the grip at its right end drags it round. The angle is magnetic every 15\u00b0 so level, plumb and 45\u00b0 land exactly, and \u2325 gives any angle. It is ticked in real units off the scale in force where it sits — including a scale region\u2019s own scale — so it doubles as a scale rule, and the chip above it reads the angle and how long the ruler itself is on the drawing. The drawing\u2019s own corners still beat it: where there is a snap point the mark goes to the corner, and the ruler takes over where there is none. It is an aid to placing marks and nothing else — it never appears in an export, and it changes no number that was not drawn against it.'],
       ['Parallel run','Offset a traced path sideways — one row or several, either side, optionally copying the treatment too.'],
       ['Editing','Drag a markup to move it, a handle to reshape it. Double-click a run to break it at that point, ⌥-click a handle to remove one.'],
@@ -13662,6 +14300,9 @@ function settingsHtml(){
       setChk('arcDetail',P.arcDetail!==false,P.arcDetail!==false?'Shown':'Hidden'))
     +setRow('Length label angle','Flat reads at a glance; along the run keeps a sloping cove readable.',
       setSel('lblAlign',[{v:'flat',t:'Flat'},{v:'run',t:'Along the run'}],P.lblAlign==='run'?'run':'flat'))
+    +setRow('What a sum was read as','The small line under a written sum saying what it made of it.',
+      setSel('calcRead',[{v:'',t:'When it is unsure, wrong, or selected'},
+        {v:'always',t:'Always'},{v:'never',t:'Never — the inspector still says'}],P.calcRead||''))
     +setRow('Count labels','Every stamp named and numbered, or just the symbol.',
       setChk('cntLabels',P.cntLabels!==false,P.cntLabels!==false?'Shown':'Symbol only'))
     +'</div><div class="setgrp"><h4>Size</h4>'
@@ -13858,6 +14499,7 @@ function applySetting(el){
     case 'segLabels': P.segLabels=val; drawOverlay(); break;
     case 'arcDetail': P.arcDetail=val; drawOverlay(); break;
     case 'cntLabels': P.cntLabels=val; drawOverlay(); break;
+    case 'calcRead': P.calcRead=val||''; invalidateAnns(); drawOverlay(); break;
     case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'whipSlack': { const v=parseLen(val); P.whipSlack=(isFinite(v)&&v>0)?v:0;
@@ -14028,6 +14670,9 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   spaces,spaceArea,spaceAt,spaceOf,spaceName,treatSpace,nameSpace,annCentre,
   scaleRgns,srgnAt,srgnOf,annScale,annPerPt,scaleAtPt,rgnScaleDlg,readScale,treatFromAnn,
   rulerOn,toggleRuler,rulerGeom,rulerEdge,guide,drawRuler,rulerLen,rulerTickStep,
+  readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
+  calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,
+  calcPending:()=>CALC.pend.length,
   markRows,markMatch,markValue,markSubject,renderMarks,manageCols,manageStatuses,
   statusList,colDefs,colVal,setColVal,colTypes:COL_TYPES,markScopes:MARK_SCOPES,
   visualSearch,runVisualSearch,inkOf,integral,boxSum,matchOn,suppress,vsPages,vsScale:VS_SCALE,
