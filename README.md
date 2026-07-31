@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.67.0**
+**Version 1.68.0**
 
 ## What it does
 
@@ -79,6 +79,19 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 - **Two fingers tapped is undo, three is redo**, the way iPadOS does it everywhere
   else. Tapped, not dragged: the fingers have to go down together, come up quickly
   and not travel, so a pinch still zooms. Both can be turned off.
+- **A floating calculator (⇧C).** On the desk rather than in the app: it floats
+  over the drawing where you put it, works in feet and inches, and — the part that
+  makes it worth having here rather than reaching for a phone — **the answer goes
+  into the box you were in**. Click into a run's length, a waste percentage, a wire
+  allowance; work it out; press *Use*. The button names the box it is about to
+  fill, and the app takes the figure exactly as if it had been typed. A length goes
+  into a text box as feet and inches; into a box with no unit on it a length is
+  **refused rather than guessed at**. It runs on the same arithmetic the written
+  sums do, so it knows lengths, the names sums have saved, and every run by its
+  zone — `Z4 × 2` is a real question, and *Selected run* puts the zone in for you.
+  *To the run* states the answer as the selected run's length. The last eight
+  answers stay on the tape. Where it sits, what is in it and its tape travel in the
+  project.
 - **Write the sum on the drawing.** Adding feet and inches is most of a takeoff,
   and the answer belongs beside the thing it is about. Pick the sum tool, write
   `12'6" + 3'4" =` with the Pencil, and `15'-10"` appears in the same kind of line

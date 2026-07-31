@@ -496,6 +496,32 @@ body.padtop header.tb{padding-top:24px}
   transform:translate(10px,-26px);font:600 11px/1.5 var(--mono);white-space:nowrap;
   background:var(--ovl);color:var(--txt);border:1px solid var(--line2);border-radius:3px;padding:2px 6px}
 #penHint.show{display:block}
+/* ---- the calculator ----
+   A floating panel, sized for a thumb, that stays where it is put. */
+#cpad{position:fixed;z-index:47;display:none;width:264px;background:var(--s2);
+  border:1px solid var(--line2);border-radius:8px;box-shadow:0 12px 38px rgba(0,0,0,.55);overflow:hidden}
+#cpad.show{display:block}
+.cpadbody{padding:8px;display:flex;flex-direction:column;gap:7px}
+#cpadIn{width:100%;font:600 15px/1.5 var(--mono);text-align:right}
+.cpadout{font:700 17px/1.3 var(--mono);text-align:right;color:var(--amber);
+  padding:2px 4px;min-height:24px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpadout.bad{color:var(--flag);font-size:11px;font-weight:600;white-space:normal;text-align:left}
+.cpadkeys{display:grid;grid-template-columns:repeat(4,1fr);gap:5px}
+.cpadkeys button{padding:11px 0;font:600 15px/1 var(--mono);background:var(--s3);
+  border:1px solid var(--line2);border-radius:5px;color:var(--txt);cursor:pointer}
+.cpadkeys button:hover{border-color:var(--amber);color:var(--ink)}
+.cpadkeys button.pri{background:var(--amber);border-color:var(--amber);color:#1a1510}
+.cpadrow{display:flex;gap:5px}
+.cpadrow .btn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cpadtape{display:flex;flex-direction:column;gap:2px;max-height:104px;overflow:auto}
+.cpadtape button{text-align:right;background:none;border:0;color:var(--dim);cursor:pointer;
+  font:400 11px/1.7 var(--mono);padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cpadtape button:hover{color:var(--ink);background:var(--s3)}
+.cpadtape b{color:var(--amber)}
+.cpadinto{font:600 10px/1.5 var(--mono);color:var(--amber);white-space:nowrap;
+  overflow:hidden;text-overflow:ellipsis;padding:0 2px}
+.cpadinto.none{color:var(--faint);font-weight:400}
+@media (pointer:coarse){ #cpad{width:290px} .cpadkeys button{padding:14px 0;font-size:16px} }
 /* ---- the ruler ----
    A straightedge lying on the drawing, the way it lies on a board: put it where the
    line goes, then draw against its edge. It sits inside the stage so it stays over
@@ -672,6 +698,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn sm ghost" id="btnFinger" title="What one finger does">✋ Finger pans</button>
     <button class="btn sm ghost" id="btnSnap" title="Snap to the drawing's own geometry">⊹ Snap</button>
     <button class="btn sm ghost" id="btnRuler" title="A straightedge to draw against (⇧R)">▭ Ruler</button>
+    <button class="btn sm ghost" id="btnCalc" title="A calculator that works in feet and inches, and puts the answer in the box you were in (⇧C)">🖩 Calc</button>
     <button class="btn sm ghost" id="btnScroll" title="What the scroll wheel does">⊕ Scroll zooms</button>
     <span class="sep"></span>
     <select id="scalePreset" style="width:auto;padding:4px 6px;font-size:11px"><option value="">Set scale…</option></select>
@@ -920,6 +947,7 @@ body.haspen #penFlag{display:inline}
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div id="pals"></div>
+<div id="cpad"></div>
 <div class="ring" id="ring"><div class="rbg"></div><div class="rc" id="ringC"></div></div>
 <div class="toast" id="toast"></div>
 <div class="prog" id="prog" role="status" aria-live="polite">
@@ -964,7 +992,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.67.0';
+const APP_VER='1.68.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -5311,8 +5339,8 @@ function mathTokens(src){
       t.push({k:'n',v:parseFloat(s.slice(i,j))}); i=j; continue; }
     if(/[A-Za-z_]/.test(c)){ let j=i; while(j<s.length&&/[A-Za-z0-9_]/.test(s[j])) j++;
       t.push({k:'id',v:s.slice(i,j)}); i=j; continue; }
-    if(c==='’'||c==="'"){ t.push({k:'ft'}); i++; continue; }
-    if(c==='”'||c==='"'){ t.push({k:'in'}); i++; continue; }
+    if(c==='’'||c==="'"||c==='\u2032'){ t.push({k:'ft'}); i++; continue; }
+    if(c==='”'||c==='"'||c==='\u2033'){ t.push({k:'in'}); i++; continue; }
     if('+-*/=()'.includes(c)){ t.push({k:c==='*'?'×':c==='/'?'÷':c}); i++; continue; }
     if(c==='×'||c==='x'||c==='X'){ t.push({k:'×'}); i++; continue; }
     if(c==='÷'){ t.push({k:'÷'}); i++; continue; }
@@ -5609,6 +5637,225 @@ function calcToTreat(a){
   toast(tagOf(one)+' is now ordering to '+fmtLen(v.n)+' — a stated length, from the sum');
 }
 
+
+/* ============================================================
+   THE CALCULATOR
+   A calculator on the desk, not in the app: it floats over the drawing where you
+   put it, works in feet and inches, and — the part that makes it worth having
+   here rather than reaching for a phone — the answer goes into the field you were
+   in. Click into a run's stated length, work it out, press Use.
+   It runs on the same arithmetic the written sums use, so it knows lengths, the
+   names sums have saved, and the runs on the job by their zone.
+   ============================================================ */
+const CPAD_KEYS=[
+  ['7','8','9','÷'],
+  ['4','5','6','×'],
+  ['1','2','3','−'],
+  ['0','.','(',')'],
+];
+/* the field the answer would go into: whatever number or length box was last in
+   focus, remembered so that opening the calculator does not lose it */
+let CTARGET=null;
+function calcFieldName(el){
+  if(!el) return '';
+  /* which run's box, not just which kind of box — a job has thirty of each */
+  const card=el.closest('.card');
+  const t=card&&P.treat.find(x=>x.id===card.dataset.id);
+  const pre=t?tagOf(t)+' · ':'';
+  const lab=el.closest('.f')&&el.closest('.f').querySelector('label');
+  if(lab&&lab.textContent.trim()) return pre+lab.textContent.trim();
+  const row=el.closest('.setrow');
+  if(row&&row.querySelector('.lab b')) return pre+row.querySelector('.lab b').textContent.trim();
+  return pre+(el.getAttribute('aria-label')||el.placeholder||el.dataset.t||el.dataset.set||'a field');
+}
+const calcFieldOk=el=>!!el&&el.tagName==='INPUT'&&/^(number|text|search)$/.test(el.type||'text')
+  &&!el.closest('#cpad')&&!el.readOnly&&!el.disabled;
+document.addEventListener('focusin',e=>{
+  if(!calcFieldOk(e.target)) return;
+  if(e.target.type==='search') return;              /* a filter box is not a place for a figure */
+  CTARGET={el:e.target,name:calcFieldName(e.target)};
+  syncCpad();
+});
+function cpadState(){
+  P.cpad=P.cpad||{x:null,y:null,open:false,src:'',tape:[]};
+  return P.cpad;
+}
+function cpadValue(){
+  const c=cpadState();
+  const src=String(c.src||'').trim();
+  if(!src) return null;
+  return mathRun(calcSrc({fix:src}).rhs,new Set());
+}
+/* into a text box a length goes as feet and inches, because that is what the box
+   reads back; into a number box only a plain number can go, since the box has no
+   unit and guessing one is how a takeoff goes wrong */
+function cpadInsert(){
+  const v=cpadValue();
+  if(!v||v.err){ toast(v?v.err:'Nothing to use yet'); return; }
+  if(!CTARGET||!document.body.contains(CTARGET.el)){
+    toast('Click into the box you want it in first, then press Use'); return; }
+  const el=CTARGET.el;
+  if(el.type==='number'&&v.u){
+    toast('“'+CTARGET.name+'” takes a plain number, and this is '
+      +(v.u==='len'?'a length':'an area')+' — divide it out first'); return; }
+  el.value=v.u==='len'?(P.units==='metric'?fmtRun(v.n):fmtFtIn(v.n))
+    :v.u==='area'?fmtArea(v.n)
+    :String(Math.round(v.n*1e6)/1e6);
+  el.dispatchEvent(new Event('input',{bubbles:true}));
+  el.dispatchEvent(new Event('change',{bubbles:true}));
+  try{ el.focus(); el.select&&el.select(); }catch(_){}
+  toast(el.value+' into '+CTARGET.name);
+}
+function cpadToTreat(){
+  const v=cpadValue();
+  if(!v||v.err){ toast(v?v.err:'Nothing to use yet'); return; }
+  if(v.u!=='len'){ toast('A run orders to a length — this is '+(v.u==='area'?'an area':'a plain number')); return; }
+  const sel=V.sel&&P.ann.find(x=>x.id===V.sel);
+  const t=(sel&&sel.treat&&P.treat.find(x=>x.id===sel.treat))
+    ||(V.tsel&&V.tsel.size===1&&P.treat.find(x=>V.tsel.has(x.id)))
+    ||null;
+  if(!t){ toast('Select the run first — a markup on the sheet or one run ticked in the list'); return; }
+  snap('Stated length from the calculator');
+  t.manual=v.n;
+  renderTreatments(); renderBom(); stats(); markDirty();
+  toast(tagOf(t)+' is now ordering to '+fmtLen(v.n)+' — a stated length');
+}
+function cpadPush(s){
+  const c=cpadState();
+  c.src=String(c.src||'')+s;
+  drawCpad(); markDirty();
+}
+function cpadEquals(){
+  const c=cpadState(), v=cpadValue();
+  if(!v||v.err){ drawCpad(); return; }
+  c.tape=(c.tape||[]).concat([{src:c.src,txt:calcText(v)}]).slice(-8);
+  c.src=calcText(v).replace(/ ft$| sq ft$|²/,'');   /* the answer becomes what you carry on from */
+  drawCpad(); markDirty();
+}
+function drawCpad(){
+  const el=$('#cpad'); if(!el) return;
+  const c=cpadState();
+  if(!c.open){ el.classList.remove('show'); syncCpadBtn(); return; }
+  el.classList.add('show');
+  if(c.x!=null) el.style.left=c.x+'px';
+  if(c.y!=null) el.style.top=c.y+'px';
+  const v=cpadValue();
+  const out=v?(v.err?v.err:calcText(v)):'';
+  const inp=$('#cpadIn');
+  if(inp&&inp.value!==String(c.src||'')) inp.value=String(c.src||'');
+  const res=$('#cpadOut');
+  res.textContent=out||'—';
+  res.classList.toggle('bad',!!(v&&v.err));
+  $('#cpadTape').innerHTML=(c.tape||[]).slice().reverse().map((r,i)=>
+    '<button data-tape="'+((c.tape.length-1)-i)+'" title="Use this again">'
+    +esc(r.src)+'  =  <b>'+esc(r.txt)+'</b></button>').join('')
+    ||'<span class="hint">Nothing worked out yet.</span>';
+  const tgt=$('#cpadUse');
+  const live=CTARGET&&document.body.contains(CTARGET.el);
+  tgt.disabled=!live||!v||!!v.err;
+  /* the target gets its own line: a run tag and a field name together are longer
+     than a button, and truncating them is how you put a figure in the wrong box */
+  const into=$('#cpadInto');
+  into.textContent=live?('\u2192  '+CTARGET.name):'Click into a box to put the answer in one';
+  into.classList.toggle('none',!live);
+  into.title=live?CTARGET.name:'';
+  syncCpadBtn();
+}
+const syncCpad=()=>{ if(cpadState().open) drawCpad(); };
+function syncCpadBtn(){
+  const b=$('#btnCalc'); if(!b) return;
+  b.classList.toggle('pri',!!cpadState().open);
+}
+function toggleCpad(on){
+  const c=cpadState();
+  c.open=on==null?!c.open:!!on;
+  if(c.open&&c.x==null){ c.x=Math.max(12,innerWidth-330); c.y=140; }
+  drawCpad(); markDirty();
+  if(c.open){
+    const inp=$('#cpadIn'); if(inp) setTimeout(()=>inp.focus(),20);
+  }
+}
+/* one place that knows every button on it */
+function wireCpad(){
+  const el=$('#cpad'); if(!el||el.dataset.on) return;
+  el.dataset.on='1';
+  el.innerHTML='<div class="palhd" id="cpadHd"><span>Calculator</span>'
+    +'<button class="x" id="cpadX" title="Put it away">×</button></div>'
+    +'<div class="cpadbody">'
+    +'<input id="cpadIn" spellcheck="false" placeholder="12′ 6″ + 3′ 4″" aria-label="The sum">'
+    +'<div class="cpadout" id="cpadOut">—</div>'
+    +'<div class="cpadkeys">'
+    + CPAD_KEYS.map(row=>row.map(k=>'<button data-k="'+k+'">'+k+'</button>').join('')).join('')
+    +'<button data-k="′">′</button><button data-k="″">″</button>'
+    +'<button data-k="+">+</button><button class="pri" data-k="=">=</button>'
+    +'</div>'
+    +'<div class="cpadrow">'
+    +'<button class="btn sm" data-k="back">⌫</button>'
+    +'<button class="btn sm" data-k="clear">C</button>'
+    +'<button class="btn sm" id="cpadSel" title="Put the selected run’s length in">Selected run</button>'
+    +'</div>'
+    +'<div class="cpadtape" id="cpadTape"></div>'
+    +'<div class="cpadinto" id="cpadInto"></div>'
+    +'<div class="cpadrow">'
+    +'<button class="btn sm pri" id="cpadUse">Use</button>'
+    +'<button class="btn sm" id="cpadTreat" title="Order the selected run to this length">To the run</button>'
+    +'<button class="btn sm" id="cpadCopy">Copy</button>'
+    +'</div>'
+    +'<div class="hint">Feet and inches with ′ and ″. A run’s zone stands for its length, '
+    +'and so does a name a written sum has saved.</div>'
+    +'</div>';
+  $('#cpadX').onclick=()=>toggleCpad(false);
+  $('#btnCalc').onclick=()=>toggleCpad();
+  $('#cpadIn').addEventListener('input',e=>{ cpadState().src=e.target.value; drawCpad(); markDirty(); });
+  $('#cpadIn').addEventListener('keydown',e=>{
+    e.stopPropagation();
+    if(e.key==='Enter'){ e.preventDefault(); cpadEquals(); }
+    if(e.key==='Escape'){ e.preventDefault(); toggleCpad(false); }
+  });
+  $$('[data-k]',el).forEach(b=>b.onclick=()=>{
+    const k=b.dataset.k;
+    const c=cpadState();
+    if(k==='clear'){ c.src=''; drawCpad(); markDirty(); return; }
+    if(k==='back'){ c.src=String(c.src||'').slice(0,-1); drawCpad(); markDirty(); return; }
+    if(k==='='){ cpadEquals(); return; }
+    cpadPush(k==='−'?'-':k);
+  });
+  $('#cpadSel').onclick=()=>{
+    const sel=V.sel&&P.ann.find(x=>x.id===V.sel);
+    const t=(sel&&sel.treat&&P.treat.find(x=>x.id===sel.treat))
+      ||(V.tsel&&V.tsel.size===1&&P.treat.find(x=>V.tsel.has(x.id)))||null;
+    if(t&&String(t.zone||'').trim()){ cpadPush(String(t.zone).trim()); return; }
+    const L=t?lenOf(t):(sel?annLen(sel):null);
+    if(!(L>0)){ toast('Select a run or a measured markup first'); return; }
+    cpadPush(fmtFtIn(L).replace(/\s+/g,''));
+  };
+  $('#cpadUse').onclick=cpadInsert;
+  $('#cpadTreat').onclick=cpadToTreat;
+  $('#cpadCopy').onclick=()=>{
+    const v=cpadValue();
+    if(!v||v.err){ toast('Nothing to copy yet'); return; }
+    copyText(calcText(v),'Copied '+calcText(v));
+  };
+  $('#cpadTape').addEventListener('click',e=>{
+    const b=e.target.closest('[data-tape]'); if(!b) return;
+    const r=(cpadState().tape||[])[+b.dataset.tape]; if(!r) return;
+    cpadState().src=r.txt.replace(/ ft$| sq ft$|²/,''); drawCpad(); markDirty();
+  });
+  /* drag it by its bar, like a palette; where it sits is part of the job */
+  $('#cpadHd').onpointerdown=e=>{
+    if(e.target.id==='cpadX') return;
+    const c=cpadState(), hd=$('#cpadHd');
+    const x0=e.clientX, y0=e.clientY, px=+c.x||0, py=+c.y||0;
+    try{ hd.setPointerCapture(e.pointerId); }catch(_){}
+    const mv=ev=>{
+      c.x=Math.max(0,Math.min(innerWidth-80,px+ev.clientX-x0));
+      c.y=Math.max(0,Math.min(innerHeight-46,py+ev.clientY-y0));
+      el.style.left=c.x+'px'; el.style.top=c.y+'px';
+    };
+    const up=()=>{ hd.removeEventListener('pointermove',mv); hd.removeEventListener('pointerup',up); markDirty(); };
+    hd.addEventListener('pointermove',mv); hd.addEventListener('pointerup',up);
+  };
+}
 
 /* ---- when a sum is finished ----
    Writing is a stream of strokes with pauses in it, so the pause is the signal: a
@@ -13796,7 +14043,10 @@ document.addEventListener('keydown',e=>{
     if(V.tool!=='pan') setTool('pan'); else { drawOverlay(); syncDrawbar(); }
     return; }
   if(k==='enter'&&V.draft) finishDraft();
-  if(k==='v') setTool('pan'); if(k==='c') setTool('cal'); if(k==='l') setTool('line');
+  if(k==='v') setTool('pan');
+  if(k==='c'&&!e.shiftKey&&!(e.metaKey||e.ctrlKey)) setTool('cal');
+  else if(k==='c'&&e.shiftKey&&!(e.metaKey||e.ctrlKey)) toggleCpad();
+  if(k==='l') setTool('line');
   if(k==='g') setTool('poly'); if(k==='a') setTool('arc');
   if(k==='b') setTool('box'); if(k==='n') setTool('note'); if(k==='k') setTool('link');
   if(k==='p') setTool('ink'); if(k==='e') setTool('erase');
@@ -13863,6 +14113,7 @@ function boot(keepDoc){
   setDrawScale(1);
   applyTheme(); applyPanels();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
+  wireCpad(); drawCpad(); syncRulerBtn();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(V.vp) drawOverlay();      /* markups are state too — keep the sheet in step */
   /* the inspector belongs to the selection, so a re-render must not leave a panel
@@ -14031,6 +14282,7 @@ const KEYS=[
   {g:'View',k:'[ / ]',t:'Hide or show the sheets rail / the takeoff rail'},
   {g:'View',k:'\\',t:'Swap the rails over'},
   {g:'While measuring',k:'\u21e7R',t:'The ruler \u2014 a straightedge to draw against'},
+  {g:'While measuring',k:'\u21e7C',t:'The calculator \u2014 the answer goes into the box you were in'},
   {g:'Files',k:'⌘S / ⌘O',t:'Save / open a project file'},
   {g:'Files',k:'⌘,',t:'Settings'},
   {g:'Files',k:'?',t:'This manual'},
@@ -14074,6 +14326,7 @@ function manualSections(){
       ['Poly length (G)','Tap each corner; every segment is measured and labelled separately, and the run can be closed into a loop.'],
       ['Arc length (A)','Three points — start, anywhere along the curve, then the end. Reports the arc, its radius and its included angle.'],
       ['Region (R)','Trace a room for its area, its perimeter, and the cove run at a set distance in from the wall. That inset is real geometry: each corner shortens the adjoining edges by d/tan(θ/2), so a 6" inset on a rectangle takes exactly 8d off.'],
+      ['The calculator (\u21e7C)','A calculator on the desk rather than in the app: it floats over the drawing where you put it, works in feet and inches, and \u2014 the part that makes it worth having here rather than reaching for a phone \u2014 <b>the answer goes into the box you were in</b>. Click into a run\u2019s length, a waste percentage, a wire allowance, anything; work it out; press Use. The button says which box it is about to fill, and the app takes the figure exactly as if it had been typed. A length goes into a text box as feet and inches; into a box with no unit on it, a length is refused rather than guessed at, because that is how a takeoff goes wrong. It runs on the same arithmetic a written sum does, so it knows lengths, the names sums have saved, and every run by its zone \u2014 Z4 \u00d7 2 is a real question, and the Selected run button puts the zone in for you. To the run states the answer as the selected run\u2019s length. The last eight answers stay on the tape; press one to carry on from it. Where it sits, what is in it and its tape all travel in the project.'],
       ['Writing a sum','Adding feet and inches on the drawing is most of a takeoff, and the answer belongs beside the thing it is about. Pick the sum tool and write it: 12\u20326\u2033 + 3\u20324\u2033 = and 15\u2032-10\u2033 appears in the same kind of line you wrote in. An \u003d closes the sum, and so does a pause or the tick on the draw bar; keep writing beside one to add to it. Feet and inches are real units \u2014 a length times a number is a length, a length divided by a length is a plain number, two lengths multiplied is an area, and a length plus a bare number is refused rather than guessed at, because in a takeoff that is exactly the mistake worth catching. A name on the left of the \u003d saves the answer under that name, and any other sum using it follows when it changes; a run\u2019s zone stands for its length, so Z4 \u00d7 2 is a real question with a real answer. The answer can be dropped straight onto a run as its stated length. It is a note on the sheet: it measures nothing and orders nothing by itself.'],
       ['How it reads your writing','Honestly, and not the way Apple does it. Math Notes on an iPad is an OS feature with a trained model behind it, and no browser can call it. This matches the shape of each symbol against a set of built-in ones \u2014 which is good enough for digits and operators written plainly, and not good enough to be trusted quietly. So it shows what it made of your writing, marks the symbols it was unsure of, and takes a correction: retype what it says and it both re-reads the sum and remembers those shapes as yours, weighing them above its own from then on. Correct a 7 once and your 7 reads as a 7. What it has learned travels in the project.'],
       ['The ruler (⇧R)','A straightedge lying on the drawing, the way it lies on a board: put it where the line goes and draw against its edge. Points drawn within a finger of an edge land on that edge exactly, so a freehand drag along it comes out dead straight at the ruler\u2019s angle — and there is nothing left for the smoothing to simplify away. One finger moves it; two fingers on it turn it about the point between them, which is how the hand actually does it; the wheel turns it with a mouse and the grip at its right end drags it round. The angle is magnetic every 15\u00b0 so level, plumb and 45\u00b0 land exactly, and \u2325 gives any angle. It is ticked in real units off the scale in force where it sits — including a scale region\u2019s own scale — so it doubles as a scale rule, and the chip above it reads the angle and how long the ruler itself is on the drawing. The drawing\u2019s own corners still beat it: where there is a snap point the mark goes to the corner, and the ruler takes over where there is none. It is an aid to placing marks and nothing else — it never appears in an export, and it changes no number that was not drawn against it.'],
@@ -14670,6 +14923,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   spaces,spaceArea,spaceAt,spaceOf,spaceName,treatSpace,nameSpace,annCentre,
   scaleRgns,srgnAt,srgnOf,annScale,annPerPt,scaleAtPt,rgnScaleDlg,readScale,treatFromAnn,
   rulerOn,toggleRuler,rulerGeom,rulerEdge,guide,drawRuler,rulerLen,rulerTickStep,
+  toggleCpad,drawCpad,cpadValue,cpadState,cpadInsert,cpadToTreat,cpadEquals,
+  calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
   calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,
   calcPending:()=>CALC.pend.length,
