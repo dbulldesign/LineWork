@@ -487,6 +487,9 @@ body.padtop header.tb{padding-top:24px}
 @media(pointer:coarse){#ctx button{padding:10px}}
 
 /* ---------- pen & touch ---------- */
+/* both of these live inside #stage and are placed in stage coordinates, which is
+   what penHover works in. They used to sit in #viewport, where the same numbers
+   put them however far the sheet is from the corner of the window out of place. */
 #penDot{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border:1.5px solid var(--flag);border-radius:50%;pointer-events:none;display:none;z-index:4;mix-blend-mode:difference}
 #penDot.show{display:block}
 /* the Pencil is hovering over something it would grab: say which, before contact */
@@ -730,9 +733,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn sm" id="calNagGo">Trace a dimension</button>
   </div>
   <div id="viewport" class="pan">
-    <div id="stage" style="display:none"><canvas id="pdfBase"></canvas><canvas id="pdfCanvas"></canvas><canvas id="pdfCanvas2"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg><div id="ruler"><div class="rslab"></div><svg id="rulerTicks" xmlns="http://www.w3.org/2000/svg"></svg><div class="rang" id="rulerAng">0&deg;</div><button class="rgrip rx" id="rulerX" title="Put the ruler away">&times;</button><div class="rgrip rrot" id="rulerRot" title="Drag to turn it — hold ⌥ for any angle">&#8635;</div></div></div>
-    <div id="penDot"></div>
-    <div id="penHint"></div>
+    <div id="stage" style="display:none"><canvas id="pdfBase"></canvas><canvas id="pdfCanvas"></canvas><canvas id="pdfCanvas2"></canvas><svg id="overlay" xmlns="http://www.w3.org/2000/svg"></svg><div id="ruler"><div class="rslab"></div><svg id="rulerTicks" xmlns="http://www.w3.org/2000/svg"></svg><div class="rang" id="rulerAng">0&deg;</div><button class="rgrip rx" id="rulerX" title="Put the ruler away">&times;</button><div class="rgrip rrot" id="rulerRot" title="Drag to turn it — hold ⌥ for any angle">&#8635;</div></div><div id="penDot"></div><div id="penHint"></div></div>
     <div class="blank" id="blank">
       <div class="dropzone" id="drop">
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#6E6357" stroke-width="1.2"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 14h6M9 17h4"/></svg>
@@ -1000,7 +1001,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.69.0';
+const APP_VER='1.69.1';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -4265,12 +4266,24 @@ const PT=new Map();
 /* ---- two and three finger taps ---- */
 const TAP={n:0,at:0,moved:false,ids:new Set()};
 const TAP_MS=350, TAP_SLOP=16;
+const TAP_TOGETHER=140;    /* how far apart in time two fingers may land */
+const TAP_SPREAD=260;      /* and how far apart on the glass */
+const TAP_PEN=2000;        /* how long after the Pencil a finger tap is still ignored */
 function tapDown(e){
   const now=Date.now();
-  if(now-TAP.at>TAP_MS||!TAP.ids.size){ TAP.n=0; TAP.moved=false; TAP.ids.clear();
-    /* remembered here because a second finger starts a pinch, and starting a pinch
-       throws the run away — by the time the fingers come up V.draft is already null */
-    TAP.draft=!!V.draft; }
+  if(now-TAP.at>TAP_MS||!TAP.ids.size){
+    TAP.n=0; TAP.moved=false; TAP.ids.clear(); TAP.first=now; TAP.far=false;
+    TAP.x0=e.clientX; TAP.y0=e.clientY;
+    TAP.draft=!!V.draft;
+    /* a hand resting near a drawing is normal, so a finger tap counts only when the
+       Pencil has been away for a while. Undoing someone's work by accident is worse
+       than making them press the button. */
+    TAP.pen=now-lastPenAt<TAP_PEN;
+  }
+  /* both fingers have to land together and close by, or it is a hand being put down
+     rather than a gesture */
+  if(TAP.ids.size&&now-TAP.first>TAP_TOGETHER) TAP.far=true;
+  if(Math.hypot(e.clientX-TAP.x0,e.clientY-TAP.y0)>TAP_SPREAD) TAP.far=true;
   TAP.at=now; TAP.ids.add(e.pointerId); TAP.n=Math.max(TAP.n,TAP.ids.size);
   TAP.x=e.clientX; TAP.y=e.clientY;
 }
@@ -4287,10 +4300,19 @@ function tapUp(e){
   const n=TAP.n; TAP.n=0;
   /* two fingers down always starts a pinch — that is what a pinch begins as. It is
      only not a tap once the fingers actually spread or travel. */
-  if(TAP.moved||!quick||V.draft||TAP.draft||(pinch&&pinch.did)) return;
+  if(TAP.moved||!quick||V.draft||TAP.draft||TAP.far||TAP.pen||(pinch&&pinch.did)) return;
   if(P.fingerTap===false) return;
-  if(n===2){ if(undo()) closeRing(); }
-  else if(n===3){ redo(); closeRing(); }
+  /* it says what it did, so a gesture nobody meant to make is obvious rather than
+     a line quietly going missing */
+  if(n===2){
+    const what=HIST.length?HIST[HIST.length-1].l:'';
+    if(undo(true)){ closeRing(); toast('Two fingers tapped — undid '+(what||'the last change')); }
+    else toast('Two fingers tapped — nothing to undo');
+  }
+  else if(n===3){
+    const what=FUT.length?FUT[FUT.length-1].l:'';
+    if(redo(true)){ closeRing(); toast('Three fingers tapped — put back '+(what||'the last change')); }
+  }
 }
 let pan=null, press=null, stroke=null, pinch=null, wz=null, activePen=null, lastPenAt=0;
 let suppressCtx=false, ctxPt=null, CLIP=null, edit=null;
@@ -4857,7 +4879,7 @@ const isPolyDraft=d=>!!d&&(d.type==='line'||d.type==='cal'||d.type==='area'||d.t
 const TOOLS=[
   {k:'pan',g:'Select',key:'V',t:"Select / pan",svg:'<svg viewBox="0 0 24 24"><path d="M4 3l6.5 16 2-6.5L19 10.5z"/></svg>',core:1},
   {k:'cal',g:'Select',key:'C',t:"Calibrate scale",svg:'<svg viewBox="0 0 24 24"><rect x="2" y="8" width="20" height="8" rx="1"/><path d="M6 8v4M10 8v3M14 8v4M18 8v3"/></svg>',core:1},
-  {k:'line',g:'Measure',key:'L',t:"Dimension / linear run",svg:'<svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg>'},
+  {k:'line',g:'Measure',key:'L',t:"Dimension \u2014 tap one end, tap the other; drag to trace a curve",svg:'<svg viewBox="0 0 24 24"><path d="M3 12h18M3 8v8M21 8v8"/></svg>'},
   {k:'arc',g:'Measure',key:'A',t:"Arc length \u2014 click start, a point along the curve, then the end",svg:'<svg viewBox="0 0 24 24"><path d="M3 19a16 16 0 0118 0"/><circle cx="3" cy="19" r="1.9"/><circle cx="12" cy="11.6" r="1.9"/><circle cx="21" cy="19" r="1.9"/></svg>'},
   {k:'poly',g:'Measure',key:'G',t:"Poly length \u2014 click each corner, per-segment lengths",svg:'<svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg>'},
   {k:'area',g:'Measure',key:'R',t:"Region \u2014 trace a room for its area, perimeter and cove run",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg>'},
@@ -6409,7 +6431,7 @@ stage.addEventListener('pointerdown',e=>{
      signal and buttons bit 32 is the same thing while it is down. Support comes and
      goes between versions, so this is a bonus that degrades to nothing rather than a
      way of erasing anyone has to rely on — the tools and Delete still work. */
-  if(e.pointerType==='pen'&&(e.button===5||(e.buttons&32))){
+  if(e.pointerType==='pen'&&(e.button===5||e.buttons===32)){
     e.preventDefault();
     const sc=toS(e);
     const h=hitTest(sc[0],sc[1],20);
@@ -6452,7 +6474,7 @@ stage.addEventListener('pointerdown',e=>{
       }
     }
   }
-  if(touchPts().length>=2){ press=null; stroke=null; pan=null; cancelLongPress(); startPinch(); return; }
+  if(touchPts().length>=2){ cancelLongPress(); startPinch(); pan=null; return; }
   if(pinch) return;
   e.preventDefault();
   try{ stage.setPointerCapture(e.pointerId); }catch(_){}
@@ -6671,7 +6693,10 @@ function endPointer(e){
   if(isLineTool(tool)){
     if(tool==='poly') tapVertex(p,e);              /* poly is click-only: a slight drag is still a vertex */
     else if(pr.free&&pr.free.length>2) commitFreehand(pr.free);
-    else if(!pr.moved) tapVertex(p,e);
+    /* Once a run is part-placed, every touch is a corner. A tap on glass always
+       slides a few pixels, and treating that as "abandon the run" is how a line
+       disappears halfway through drawing it. */
+    else if(!pr.moved||pr.vertex) tapVertex(p,e);
     else { V.draft=null; drawOverlay(); }
     syncDrawbar(); }
 }
@@ -6741,6 +6766,12 @@ function tapVertex(p,e){
       V.draft.bulge[seg]=Math.tan(Math.PI/8)*bowSign(V.draft,seg);
     }
     V.draft.pts.push(V.draft.pts[V.draft.pts.length-1].slice());
+    /* A dimension is one segment: tap where it starts, tap where it ends, and that
+       is the measurement — no finishing gesture to remember. Poly (G) is the tool
+       that keeps going, and a drag with this one still traces freehand.
+       The preview point goes on first, because finishing drops the last one as the
+       corner that was never placed. */
+    if(V.tool==='line'){ finishDraft(); return; }
   }
   drawOverlayFor(); liveLen(V.draft);
 }
@@ -6894,7 +6925,16 @@ function startPinch(){
   const t=touchPts();
   const mx=(t[0].x+t[1].x)/2, my=(t[0].y+t[1].y)/2;
   pinch=zGrab(mx,my); pinch.d0=Math.max(24,Math.hypot(t[0].x-t[1].x,t[0].y-t[1].y));
-  V.draft=null; edit=null; drawOverlay();
+  /* Zooming in the middle of tracing a run is what you do on a tablet, and losing
+     the run for it is not acceptable. A run built by tapping corners survives the
+     pinch and can be carried on afterwards. Only a shape still being dragged out is
+     dropped, because the finger that was holding it has gone. */
+  const d=V.draft;
+  const dragging=!!stroke||!!(press&&press.free)
+    ||!!(d&&/^(box|tbox|arrow|hl|ell|vs|ink)$/.test(d.type));
+  press=null; stroke=null; edit=null;
+  if(dragging) V.draft=null;
+  drawOverlay(); syncDrawbar();
 }
 function movePinch(){
   const t=touchPts(); if(t.length<2||!pinch) return;
@@ -14428,7 +14468,7 @@ const KEYS=[
   {g:'Everything',k:'⌘K',t:'Command palette — every tool, action, setting and run, searched'},
   {g:'Tools',k:'V',t:'Select and pan'},
   {g:'Tools',k:'C',t:'Calibrate the scale'},
-  {g:'Tools',k:'L',t:'Dimension — drag to trace a curve, or tap each corner'},
+  {g:'Tools',k:'L',t:'Dimension — tap one end, tap the other; drag to trace a curve'},
   {g:'Tools',k:'G',t:'Poly length — every segment measured separately'},
   {g:'Tools',k:'A',t:'Arc length — start, a point along the curve, then the end'},
   {g:'Tools',k:'R',t:'Region — area, perimeter and the cove run inside it'},
@@ -14477,8 +14517,8 @@ const KEYS=[
 ];
 const TOUCH=[
   ['One finger',"Draws while a drawing tool is chosen, otherwise moves the sheet. The first Apple Pencil stroke switches the finger back to panning; the ✋ button in the toolbar overrides either way."],
-  ['Two fingers',"Pinch to zoom, drag to move the sheet — at any time, whatever tool is chosen."],
-  ['Two fingers tapped',"Undo. Tapped, not dragged: the fingers have to go down together, come up quickly and not travel, so a pinch still zooms."],
+  ['Two fingers',"Pinch to zoom, drag to move the sheet — at any time, whatever tool is chosen. A run you are part way through tapping out survives the pinch, so you can zoom in and carry on with it."],
+  ['Two fingers tapped',"Undo, and it says what it undid. Tapped, not dragged: both fingers have to land within a moment of each other and close together, come up quickly, and not travel — and it is ignored for two seconds after the Pencil was near the glass, because a hand resting on a drawing is not a gesture."],
   ['Three fingers tapped',"Redo. Both taps can be turned off in Settings › Input."],
   ['Press and hold on paper',"A ring of the tools you reach for, around your finger: Select, Dimension, Poly, Region, Count, Note, Undo, and More… for the full list. Lift and tap one, or tap away to dismiss it. Settings › Input swaps the ring back for the plain list."],
   ['Press and hold a markup',"That markup’s own menu — its length, its treatment, its points, its arcs — because those actions are specific and named. On a label it is the label’s menu."],
@@ -14510,7 +14550,7 @@ function manualSections(){
     {p:'Drawings are kept in this browser, so reopening a job needs no re-import. The project file is the portable copy: it carries sheets, calibration, markups, treatments and libraries, but never the PDFs.'}]},
   {id:'measure',t:'Measuring',blocks:[
     {rows:[
-      ['Dimension (L)','Drag to trace a curve freehand, or tap each corner. Snaps to the drawing\u2019s own corners and endpoints.'],
+      ['Dimension (L)','Two taps: one where it starts, one where it ends, and that is the measurement \u2014 nothing to press afterwards. Drag instead and it traces a curve freehand. Either way it snaps to the drawing\u2019s own corners and endpoints. For a run that turns corners, use poly (G), which keeps going until you finish it.'],
       ['Poly length (G)','Tap each corner; every segment is measured and labelled separately, and the run can be closed into a loop.'],
       ['Arc length (A)','Three points — start, anywhere along the curve, then the end. Reports the arc, its radius and its included angle.'],
       ['Region (R)','Trace a room for its area, its perimeter, and the cove run at a set distance in from the wall. That inset is real geometry: each corner shortens the adjoining edges by d/tan(θ/2), so a 6" inset on a rectangle takes exactly 8d off.'],

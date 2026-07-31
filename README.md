@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.69.0**
+**Version 1.69.1**
 
 ## What it does
 
@@ -77,8 +77,16 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
   you still get the list, because those actions are specific and named. Settings ›
   Input swaps the ring back for the list if you would rather.
 - **Two fingers tapped is undo, three is redo**, the way iPadOS does it everywhere
-  else. Tapped, not dragged: the fingers have to go down together, come up quickly
-  and not travel, so a pinch still zooms. Both can be turned off.
+  else, and it says what it undid. Tapped, not dragged: both fingers must land
+  within a moment of each other and close together, come up quickly, and not
+  travel — and it is ignored for two seconds after the Pencil was near the glass,
+  because a hand resting on a drawing is not a gesture. Both can be turned off.
+- **Pinching to zoom keeps the run you are tracing.** Two fingers landing part way
+  through tapping out a run used to throw it away; now you can zoom in and carry on
+  with it. Only a shape still being dragged out is dropped, since the finger
+  holding it has gone.
+- **A tap that slides is still a corner.** A tap on glass always travels a few
+  pixels, and that used to abandon the run half-drawn.
 - **Units, and converting between them.** Write the unit after the number and the
   arithmetic keeps it: `500 mm`, `2.5 m`, `60 W`, `0.5 kW`, `4.2 A`, `250 mA`,
   `24 V`, `3 W/ft`, `150 lm/ft`, `120 sqft`, `15%`. Feet, inches, millimetres and
@@ -311,6 +319,13 @@ a typed figure**: the takeoff is what was priced, and losing a drawing is not a
 reason to change it. Untick that and they go too. The PDF is dropped from this
 browser as well, so undo brings the sheet, its markups and its runs back, but the
 drawing needs re-importing — and the row says so.
+
+## Two taps for a dimension
+
+The dimension tool is one segment: **tap where it starts, tap where it ends**, and
+that is the measurement — nothing to press afterwards. Drag instead and it traces a
+curve freehand, as it always did. Poly (`G`) is the tool that keeps going until you
+finish it, for a run that turns corners.
 
 ## Reading the drawings
 
