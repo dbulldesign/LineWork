@@ -46,7 +46,16 @@ button,input,select,textarea{font-family:inherit;font-size:inherit;color:inherit
 ::-webkit-scrollbar-track{background:var(--bg)}
 
 /* ---------- titleblock header ---------- */
-.sheet{display:grid;grid-template-columns:260px 1fr 400px;grid-template-rows:auto 1fr auto;height:100vh}
+.sheet{display:grid;grid-template-columns:var(--wL,260px) 1fr var(--wR,400px);
+  grid-template-rows:auto 1fr auto;height:100vh}
+/* Drag the inner edge of either rail. Fixed rather than inside the rail, because a
+   rail scrolls and the handle must not. Where the rails slide over the sheet
+   instead of flanking it there is nothing to resize, so they are not drawn. */
+.grab{position:fixed;width:9px;z-index:44;cursor:col-resize;display:none;
+  touch-action:none;background:transparent}
+body.canGrab .grab{display:block}
+.grab::after{content:'';position:absolute;left:4px;top:0;bottom:0;width:1px;background:transparent}
+.grab:hover::after,.grab.on::after{background:var(--amber)}
 /* Installed to the home screen with a translucent status bar, the app owns the
    whole screen — including the strip the clock and battery sit in. Pad by the
    safe-area inset so the titleblock starts below them; in a browser tab the
@@ -133,11 +142,14 @@ body.swap.hideL.hideR .sheet{grid-template-columns:0 1fr 0}
 main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min-width:0;min-height:0}
 .tools{display:flex;align-items:center;gap:4px;padding:6px 8px;background:var(--s1);
   border-bottom:1px solid var(--line2);flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden}
-/* However many tools are turned on, the toolbar stays one row: the tool strip
-   yields space to the controls after it and scrolls sideways inside itself, so the
-   zoom and page controls never move and never end up under a panel. */
-#toolbtns{display:flex;align-items:center;gap:4px;flex:1 1 0;min-width:44px;
-  overflow-x:auto;overflow-y:hidden;scrollbar-width:none}
+/* With a mouse the toolbar wraps: however many tools are on, every one of them is
+   on screen. It used to hold itself to one row and let the tool strip scroll inside
+   whatever space the controls after it left over — which on a narrower window was
+   almost none, so the drawing tools were simply not there. A tablet keeps the one
+   swipeable row, further down, because there the height matters more. */
+.tools{flex-wrap:wrap;overflow:visible}
+#toolbtns{display:flex;align-items:center;gap:4px;flex:1 1 100%;min-width:0;
+  flex-wrap:wrap;overflow:visible;scrollbar-width:none}
 #toolbtns::-webkit-scrollbar{display:none}
 #toolbtns .tool{flex:0 0 auto}
 #toolbtns .sep{flex:0 0 auto}
@@ -176,6 +188,19 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
   border:1px solid var(--line2);box-shadow:0 12px 34px rgba(0,0,0,.55);border-radius:2px;display:none;
   max-height:var(--insMax,60vh);flex-direction:column;overflow:hidden}
 #inspector.show{display:flex}
+/* Folded, it is a bar with the figure on it. That is the state a tablet starts in,
+   because a panel the height of the screen over the drawing you are measuring is
+   worse than one more tap. */
+#inspector.small .bd{display:none}
+#inspector.small{max-height:none}
+#inspector .hd b{color:var(--amber);font-family:var(--mono);font-size:11px;
+  letter-spacing:0;text-transform:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#inspector .hd #insTitle{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:96px}
+#insFold{padding:0 6px}
+/* while a run is being traced it gets out of the way entirely — you are looking at
+   the drawing, not at a panel */
+body.drafting #inspector{display:none}
+@media(pointer:coarse){ #inspector{width:230px;right:10px;bottom:10px} }
 #inspector .bd{overflow-y:auto;overflow-x:hidden;min-height:0}
 #inspector .hd{padding:7px 10px;background:var(--s2);border-bottom:1px solid var(--line);font-size:9px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim);display:flex;gap:8px;align-items:center}
 #inspector .bd{padding:10px;display:grid;gap:8px}
@@ -601,7 +626,8 @@ body.haspen #penFlag{display:inline}
 @media(pointer:coarse){
   .tool{width:44px;height:42px;flex:0 0 auto}
   /* one swipe should reach every control, so the strip does not scroll separately */
-  #toolbtns{flex:0 0 auto;overflow:visible;min-width:0}
+  #toolbtns{flex:0 0 auto;overflow:visible;min-width:0;flex-wrap:nowrap}
+  .tools{flex-wrap:nowrap}
   .tool svg{width:21px;height:21px}
   .btn{padding:9px 13px;min-height:40px}
   .btn.sm{padding:7px 10px;min-height:34px;font-size:12px}
@@ -747,7 +773,9 @@ body.haspen #penFlag{display:inline}
        would drift with the content instead of staying pinned to the viewer -->
   <div id="drawbar"><span class="rd" id="dbLen">—</span><button class="btn sm" id="dbClose">Close loop</button><button class="btn sm" id="dbUndoPt">Undo point</button><button class="btn sm" id="dbCancel">Cancel</button><button class="btn sm pri" id="dbFinish">Finish run</button></div>
   <div id="inspector">
-    <div class="hd"><span id="insTitle">Markup</span><button class="btn sm ghost" id="insClose" style="margin-left:auto;padding:0 6px">✕</button></div>
+    <div class="hd"><span id="insTitle">Markup</span><b id="insSum"></b>
+      <button class="btn sm ghost" id="insFold" title="Fold it to a bar" style="margin-left:auto">▾</button>
+      <button class="btn sm ghost" id="insClose" title="Close it" style="padding:0 6px">✕</button></div>
     <div class="bd" id="insBody"></div>
   </div>
 </main>
@@ -957,6 +985,8 @@ body.haspen #penFlag{display:inline}
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div id="pals"></div>
 <div id="cpad"></div>
+<div class="grab" id="grabL" title="Drag to resize the sheets rail — double-click to reset"></div>
+<div class="grab" id="grabR" title="Drag to resize the takeoff rail — double-click to reset"></div>
 <div class="ring" id="ring"><div class="rbg"></div><div class="rc" id="ringC"></div></div>
 <div class="toast" id="toast"></div>
 <div class="prog" id="prog" role="status" aria-live="polite">
@@ -1001,7 +1031,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.69.1';
+const APP_VER='1.70.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -7090,7 +7120,7 @@ function ctxForPieceRow(r){
   out.push({id:'cr',t:'Copy the whole row',fn:()=>copyText([r.mark,r.tag,r.item,fmtLen(r.len),r.code||''].
     filter(Boolean).join('\t'),'Row copied')});
   if(r.tid) out.push({hr:1},{id:'op',t:'Open the run it comes from',fn:()=>{
-    $$('.tab').find(x=>x.dataset.pane==='pTreat').click(); openTreat(r.tid); }});
+    showTreatPane(); openTreat(r.tid); }});
   return out;
 }
 function copyText(t,msg){
@@ -7221,7 +7251,7 @@ function ctxForAnn(a){
   if(vertexType(a)&&!a.free&&a.pts.length>1) items.push({id:'of',t:'Parallel run…',fn:()=>offsetAnn(a)});
   if(vertexType(a)&&!a.free&&a.pts.length>2) items.push({id:'rc',t:'Round all corners…',fn:()=>roundCorners(a)});
   if(a.type==='line'||a.type==='arc'||a.type==='area'||a.type==='ell') items.push(t
-    ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{$$('.tab').find(x=>x.dataset.pane==='pTreat').click();openTreat(t.id)}}
+    ? {id:'go',t:'Open treatment '+tagOf(t),fn:()=>{showTreatPane();openTreat(t.id)}}
     : {id:'mk',t:'Create treatment from this',fn:()=>treatFromAnn(a)});
   if(canClose(a)) items.push({id:'lp',t:a.closed?'Open loop':'Close loop',fn:()=>{ snap(); a.closed=!a.closed;
     drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); stats(); if(V.sel===a.id) showInspector(a); markDirty(); }});
@@ -7329,6 +7359,7 @@ window.addEventListener('blur',closeCtx);
 
 /* ---- in-progress run bar + ink controls ---- */
 function syncDrawbar(){
+  document.body.classList.toggle('drafting',!!V.draft);
   const d=V.draft, on=isPolyDraft(d)&&d.pts.length>=2&&!press;
   $('#drawbar').classList.toggle('show',!!on);
   /* closing needs 3 committed vertices — the last point is the live cursor */
@@ -8556,7 +8587,34 @@ function sizeInspector(){
   const m=document.querySelector('main'), tb=document.querySelector('.tools'), ins=$('#inspector');
   if(!m||!ins) return;
   const room=m.clientHeight-(tb?tb.offsetHeight:0)-28;
-  ins.style.setProperty('--insMax',Math.max(160,room)+'px');
+  /* with a mouse it may use the room it has; with a finger it may not, because the
+     drawing under it is the thing being worked on */
+  const cap=coarse?Math.min(room,Math.round(m.clientHeight*0.42),330):room;
+  ins.style.setProperty('--insMax',Math.max(150,cap)+'px');
+}
+/* folded or not — remembered, and folded to begin with on a tablet */
+function insFolded(){
+  if(typeof P.insSmall==='boolean') return P.insSmall;
+  return !!coarse;
+}
+/* the one figure worth seeing without opening it */
+function insHeadline(a){
+  if(!a) return '';
+  if(a.type==='calc'){ const v=calcOf(a); return v.err?'?':calcText(v); }
+  if(a.type==='srgn') return a.label||'no scale';
+  if(a.type==='space') return a.name||'unnamed';
+  if(a.type==='count') return (a.grp||'COUNT')+' '+countIndex(a);
+  if(a.type==='area'){ const m=areaMetrics(a); return m?fmtArea(m.area):''; }
+  const L=annLen(a);
+  return L==null?'':fmtLen(L);
+}
+function syncInsFold(){
+  const box=$('#inspector'); if(!box) return;
+  const small=insFolded();
+  box.classList.toggle('small',small);
+  const b=$('#insFold');
+  if(b){ b.textContent=small?'\u25b8':'\u25be';
+    b.title=small?'Open it out':'Fold it to a bar'; }
 }
 addEventListener('resize',()=>setTimeout(sizeInspector,140));
 function showInspector(a){
@@ -8564,6 +8622,8 @@ function showInspector(a){
   const box=$('#inspector');
   if(!a){ box.classList.remove('show'); return; }
   box.classList.add('show');
+  syncInsFold();
+  $('#insSum').textContent=insHeadline(a);
   const names=ANN_NAMES;
   $('#insTitle').textContent=(a.type==='line'&&a.poly?'Poly length':names[a.type])||'Markup';
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
@@ -8930,12 +8990,13 @@ function showInspector(a){
     }
     if(act==='cnt'){ V.cntGrp=a.grp||'COUNT'; V.cntSym=a.sym||'●'; setTool('count');
       toast('Counting '+V.cntGrp+' — click to stamp'); }
-    if(act==='go'){ $$('.tab').find(x=>x.dataset.pane==='pTreat').click(); openTreat(a.treat); }
+    if(act==='go'){ showTreatPane(); openTreat(a.treat); }
     if(act==='loop'){ snap(); a.closed=!a.closed; showInspector(a); drawOverlay();
       renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty(); }
   });
 }
 $('#insClose').onclick=()=>{ V.sel=null; showInspector(null); drawOverlay(); };
+$('#insFold').onclick=()=>{ P.insSmall=!insFolded(); syncInsFold(); markDirty(); };
 
 /* ---- automatic colour coding ----
    Colouring by type or zone by hand does not survive a busy sheet, so derive it.
@@ -10007,8 +10068,17 @@ function newTreat(annId){
 function treatFromAnn(a){
   const t=newTreat(a.id); a.treat=t.id;
   t.docId=a.doc; t.page=a.page;
-  $$('.tab').find(x=>x.dataset.pane==='pTreat').click();
+  showTreatPane();
   renderTreatments(); renderBom(); drawOverlay(); renderAnnList(); openTreat(t.id,true);
+  toast(tagOf(t)+' created from the markup — give it a type and a product');
+}
+/* Switching to the takeoff pane is not enough where the rail is an overlay: on a
+   tablet the rail is shut, so the tab changed behind it and nothing appeared to
+   happen. Open the rail, and fold the inspector out of the way of it. */
+function showTreatPane(){
+  const b=$$('.tab').find(x=>x.dataset.pane==='pTreat');
+  if(b) b.click();
+  if(narrowUI()){ setRail('right',true); P.insSmall=true; syncInsFold(); }
 }
 function openTreat(id,focus){
   $$('.card').forEach(c=>c.classList.toggle('on',c.dataset.id===id));
@@ -12360,7 +12430,7 @@ function renderIssues(){
       +(g.muted?'Show this kind again':'Quiet this kind')+'</button></div>'
     +'</div>').join('');
   $$('[data-iss]',el).forEach(b=>b.onclick=()=>{
-    $$('.tab').find(x=>x.dataset.pane==='pTreat').click();
+    showTreatPane();
     openTreat(b.dataset.iss,false);
   });
   $$('[data-mute]',el).forEach(b=>b.onclick=()=>{
@@ -14166,7 +14236,80 @@ function applyPanels(){
   if(sw){ sw.classList.toggle('pri',p.swap===true);
     sw.title=p.swap?'Sheets on the right, takeoff on the left — tap to swap back'
                    :'Swap the rails over'; }
+  applyRailW();
   if(V.vp) scheduleRepaint(true);          /* the viewport changed width */
+}
+/* ---- rails you can drag wider ----
+   A takeoff rail wide enough to read a cut list across is worth the sheet being
+   narrower, and which way that trade goes is nobody's business but the person
+   doing the work. The widths travel in the project like the rest of the
+   arrangement. */
+const RAIL_DEF={wL:260,wR:400};
+const RAIL_MIN=190, RAIL_MAX=760;
+function railW(side){
+  const p=P.panels||{};
+  const v=+p[side==='left'?'wL':'wR'];
+  return clamp(isFinite(v)&&v>0?v:RAIL_DEF[side==='left'?'wL':'wR'],RAIL_MIN,RAIL_MAX);
+}
+function applyRailW(){
+  const st=document.documentElement.style;
+  st.setProperty('--wL',railW('left')+'px');
+  st.setProperty('--wR',railW('right')+'px');
+  placeGrabs();
+}
+/* the handles sit on the inner edge of whichever rail is actually a column */
+function placeGrabs(){
+  const can=!narrowUI();
+  document.body.classList.toggle('canGrab',can);
+  if(!can) return;
+  const m=$('#viewport')&&$('#viewport').getBoundingClientRect();
+  if(!m) return;
+  const put=(id,el)=>{
+    const g=$(id); if(!g) return;
+    if(!el||!el.offsetParent){ g.style.display='none'; return; }
+    g.style.display='';
+    const r=el.getBoundingClientRect();
+    const inner=(r.left<m.left)?r.right:r.left;      /* whichever edge faces the sheet */
+    g.style.left=(inner-4)+'px';
+    g.style.top=m.top+'px';
+    g.style.height=m.height+'px';
+  };
+  put('#grabL',$('aside.left'));
+  put('#grabR',$('aside.right'));
+}
+function wireGrabs(){
+  [['#grabL','left'],['#grabR','right']].forEach(([id,side])=>{
+    const g=$(id); if(!g||g.dataset.on) return;
+    g.dataset.on='1';
+    g.addEventListener('pointerdown',e=>{
+      e.preventDefault();
+      const el=$('aside.'+side); if(!el) return;
+      const m=$('#viewport').getBoundingClientRect();
+      const r=el.getBoundingClientRect();
+      /* which way widening lies depends on which side the rail is on, which the
+         swap setting can change under us */
+      const dir=(r.left<m.left)?1:-1;
+      const w0=railW(side), x0=e.clientX;
+      g.classList.add('on');
+      try{ g.setPointerCapture(e.pointerId); }catch(_){}
+      const mv=ev=>{
+        P.panels=P.panels||{};
+        P.panels[side==='left'?'wL':'wR']=clamp(w0+dir*(ev.clientX-x0),RAIL_MIN,RAIL_MAX);
+        applyRailW();
+      };
+      const up=()=>{ g.classList.remove('on');
+        g.removeEventListener('pointermove',mv); g.removeEventListener('pointerup',up);
+        if(V.vp) scheduleRepaint(true);
+        markDirty(); };
+      g.addEventListener('pointermove',mv); g.addEventListener('pointerup',up);
+    });
+    g.addEventListener('dblclick',()=>{
+      P.panels=P.panels||{};
+      delete P.panels[side==='left'?'wL':'wR'];
+      applyRailW(); if(V.vp) scheduleRepaint(true); markDirty();
+      toast((side==='left'?'Sheets':'Takeoff')+' rail back to its usual width');
+    });
+  });
 }
 /* open or close an overlaid rail; only one at a time, or the sheet disappears */
 function setRail(side,on){
@@ -14188,6 +14331,8 @@ $('#railScrim').onclick=closeRails;
 /* rotating the iPad changes which layout applies */
 let laneT=null;
 addEventListener('resize',()=>{ clearTimeout(laneT); laneT=setTimeout(()=>{ applyPanels(); },120); });
+addEventListener('resize',placeGrabs);
+addEventListener('scroll',placeGrabs,true);
 /* the tool strip scrolls on a narrow screen; fade the edge while there is more */
 function syncToolFade(){
   const t=$('#toolbar'); if(!t) return;
@@ -14342,6 +14487,7 @@ function boot(keepDoc){
   applyTheme(); applyPanels();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   wireCpad(); drawCpad(); syncRulerBtn();
+  wireGrabs(); applyRailW();
   renderSheets(); renderAnnList(); renderLinks(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats();
   if(V.vp) drawOverlay();      /* markups are state too — keep the sheet in step */
   /* the inspector belongs to the selection, so a re-render must not leave a panel
@@ -14420,7 +14566,7 @@ function cmdItems(){
   add('View','Hide or show the right rail',()=>setPanel('right',(P.panels||{}).right===false),']');
   SET_TABS.forEach(t=>add('Settings',t.t,()=>{ setTab=t.k; openSettings(); }));
   P.treat.forEach(t=>add('Run',tagOf(t)+(t.name?' · '+t.name:''),()=>{
-    $$('.tab').find(x=>x.dataset.pane==='pTreat').click();
+    showTreatPane();
     openTreat(t.id,false);
     if(t.annId){ const a=P.ann.find(x=>x.id===t.annId); if(a&&a.doc){ openDoc(a.doc,a.page); V.sel=a.id; drawOverlay(); showInspector(a); } }
   }));
@@ -14562,6 +14708,7 @@ function manualSections(){
       ['The ruler (⇧R)','A straightedge lying on the drawing, the way it lies on a board: put it where the line goes and draw against its edge. Points drawn within a finger of an edge land on that edge exactly, so a freehand drag along it comes out dead straight at the ruler\u2019s angle — and there is nothing left for the smoothing to simplify away. One finger moves it; two fingers on it turn it about the point between them, which is how the hand actually does it; the wheel turns it with a mouse and the grip at its right end drags it round. The angle is magnetic every 15\u00b0 so level, plumb and 45\u00b0 land exactly, and \u2325 gives any angle. It is ticked in real units off the scale in force where it sits — including a scale region\u2019s own scale — so it doubles as a scale rule, and the chip above it reads the angle and how long the ruler itself is on the drawing. The drawing\u2019s own corners still beat it: where there is a snap point the mark goes to the corner, and the ruler takes over where there is none. It is an aid to placing marks and nothing else — it never appears in an export, and it changes no number that was not drawn against it.'],
       ['Parallel run','Offset a traced path sideways — one row or several, either side, optionally copying the treatment too.'],
       ['Editing','Drag a markup to move it, a handle to reshape it. Double-click a run to break it at that point, ⌥-click a handle to remove one.'],
+      ['The markup panel','The panel in the corner of the sheet, with what the markup measures and everything you can do to it. Its bar carries the figure, so it is worth reading folded: press the chevron to fold it to that bar or open it out again, and it remembers which. On a tablet it starts folded and stays short, because a panel the height of the screen over the drawing being measured is worse than one more tap. While a run is being traced it goes away entirely \u2014 you are looking at the drawing then, not at a panel \u2014 and comes back when the run is finished.'],
       ['Precision','Lengths can read to the nearest 1/8", 1/4", inch or foot. That is display only: cuts, totals and exports stay exact.'],
     ]}]},
   {id:'markup',t:'Marking up',blocks:[
@@ -14638,6 +14785,8 @@ function manualSections(){
       ['Bending','A flexible product only takes a curve down to a radius, and the drawing already carries the geometry: an arc markup has a radius, and a bulged polyline segment is an arc whose radius follows from its chord and its bulge. Each curve on a run is checked against the radius on the product\u2019s own sheet, and the run card lists them tightest first with a cross against any that are too tight. Where a sheet states no radius the curves are reported as uncheckable rather than passed. Hard corners are treated separately and only on a made-to-length fixture: on cuttable tape a corner is no problem because you cut and rejoin, but a fixture has nothing to cut, so a corner has to be a bend \u2014 which also makes the traced length shorter than the real one. Round the corners to the radius and both are right.'],
       ['Your own colours','Beside the three palettes is Custom: start from whichever is on screen and change what you like, one variable at a time. Editing writes straight to the app, so what you see while you drag is the thing itself rather than a swatch \u2014 and Cancel puts back exactly what was there. Light and dark keep separate sets, so a palette made in the dark does not follow you into the light. It travels in the project like the rest of the arrangement, and in a profile, which is what gets handed round the office. A hand-edited file cannot put anything but a colour into a colour: a value that is not a hex, a variable the app does not have, a mode that does not exist \u2014 all dropped rather than written.'],
       ['Profiles','A profile is the office standard as one file: the settings, the rates, the tool visibility and palettes, and now the workspace too \u2014 including a custom palette. Save it from Settings \u203a Files, hand it over, and loading it puts the arrangement on screen rather than only into the project.'],
+      ['Resizing the rails','Drag the inner edge of either rail. A takeoff rail wide enough to read a cut list across is worth the sheet being narrower, and which way that trade goes is nobody\u2019s business but yours. Double-click the edge to put a rail back to its usual width. The widths travel in the project with the rest of the arrangement, and where the rails slide over the sheet instead of flanking it there is nothing to resize, so no handle is drawn.'],
+      ['The toolbar','However many tools are turned on, every one of them is on the toolbar: with a mouse the strip wraps onto a second row rather than hiding what will not fit. It used to hold itself to one row and scroll the tools inside whatever space the controls after it left over \u2014 which on a narrower window was almost none. Settings \u203a Tools turns off the ones you do not use, and a palette keeps the ones you do within reach.'],
       ['Workspaces','How the window is arranged, under one name. Settings \u203a View has the rows \u2014 Workspace, Appearance, Tools, Takeoff panel, Density \u2014 and \u25eb in the titleblock or \u2318\u21e7W opens the manager, where an arrangement can be saved, exported as a .linework-view.json, or loaded from one someone sent. Three palettes, each with a light and a dark: Bench is the warm drafting palette this app has always had, Paper is a white sheet with one ink accent, Slate is neutral so the amber is the only warm thing on screen. Two layout switches: tools across the top or standing up as a rail down the side, and the takeoff beside the sheet or as a full-width drawer under it where a run table can be read across. The arrangement travels in the project, so a job reopens the way it was left; named workspaces are kept beside the projects, being an office preference rather than job data. A workspace file holds only how the window is arranged \u2014 never sheets, markups or runs \u2014 so applying one can never change a takeoff.'],
       ['Setting the scale','Click the scale in the titleblock. Pick from the standard architectural, civil and metric scales — typed into, like everything else — or write it however the titleblock does: 3/32" = 1’-0", 1" = 30’, 1:75. A bare "1/4" is refused rather than guessed at, because as a ratio it means 1:4 and on a drawing it means 1/4" = 1’-0" — twelve times apart. Apply it to the whole sheet or to this page alone. The dialog shows the page size, named where it is a standard sheet, because a stated scale is only right if the PDF is at its plotted size: a drawing printed to fit a smaller page is wrong by however much it was shrunk, and a letter-sized page is said to be one. Calibrating with the ruler measures what is actually on the sheet, so it is the sure way and worth doing once against a dimension you can read.'],
       ['A scale for part of a sheet','An enlarged plan, a section or a detail sits on the same page as the plan and is drawn at its own scale. Trace a scale region round it and give it that scale: anything whose middle falls inside is measured at it, and the rest of the page carries on at the page’s. Where regions nest the smallest one containing a markup wins, so a blow-up inside an enlarged plan still reads correctly. It is drawn dash-dot in amber with its name and scale on it, so a sheet never measures at a scale you cannot see, and the status bar says how many are on the page. A region with no scale on it is not kept, because it would change nothing. Everything measured now goes through the region-or-page scale, which also means a markup on a sheet you are not looking at is measured at that sheet’s scale rather than the open page’s.'],

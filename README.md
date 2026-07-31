@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.69.1**
+**Version 1.70.0**
 
 ## What it does
 
@@ -319,6 +319,29 @@ a typed figure**: the takeoff is what was priced, and losing a drawing is not a
 reason to change it. Untick that and they go too. The PDF is dropped from this
 browser as well, so undo brings the sheet, its markups and its runs back, but the
 drawing needs re-importing — and the row says so.
+
+## The window
+
+**Every tool is on the toolbar.** However many are turned on, the strip wraps onto a
+second row rather than hiding what will not fit — it used to hold itself to one row
+and scroll the tools inside whatever space the controls after it left over, which on
+a narrower window was almost none, so most of the drawing tools simply were not
+there. Settings › Tools turns off the ones you do not use.
+
+**The rails resize.** Drag the inner edge of either one; double-click it to put that
+rail back to its usual width. A takeoff rail wide enough to read a cut list across is
+worth the sheet being narrower, and which way that trade goes is nobody's business
+but yours. The widths travel in the project.
+
+**The markup panel is foldable.** Its bar carries the figure, so it reads folded:
+press the chevron to fold or open it, and it remembers which. On a tablet it starts
+folded and stays short — a panel the height of the screen, over the drawing you are
+measuring, is worse than one more tap. While a run is being traced it goes away
+entirely and comes back when the run is done.
+
+**Create treatment from this** now brings the takeoff rail in with it. On a tablet
+the rail is an overlay, so switching to the takeoff pane changed the tab behind a
+closed rail and nothing appeared to happen.
 
 ## Two taps for a dimension
 
