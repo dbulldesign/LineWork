@@ -717,7 +717,7 @@ body.haspen #penFlag{display:inline}
   <div class="grow"></div>
   <div class="acts">
     <button class="btn mobtog" id="togL" title="Show or hide the sheets rail">Sheets</button>
-    <input type="file" id="fileInput" accept="application/pdf" multiple hidden>
+    <input type="file" id="fileInput" accept="application/pdf,image/png,image/jpeg,image/webp,.pdf,.png,.jpg,.jpeg,.webp" multiple hidden>
     <button class="btn pri" id="btnOpen">Import PDF</button>
     <button class="btn" id="btnTheme" title="Light or dark">☀︎</button>
     <button class="btn" id="btnSave" title="Save project file (⌘S)">Save</button>
@@ -803,7 +803,7 @@ body.haspen #penFlag{display:inline}
       <div class="dropzone" id="drop">
         <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#6E6357" stroke-width="1.2"><path d="M6 2h8l4 4v16H6z"/><path d="M14 2v4h4"/><path d="M9 14h6M9 17h4"/></svg>
         <h2>Drop a drawing here</h2>
-        <p>Import an architectural PDF, calibrate it against a known dimension, then measure every linear run. On iPad, trace curved coves with the Apple Pencil and write notes straight onto the sheet — your palm stays off. Millwork shop drawings import too, and link back to the plan.</p>
+        <p>Import an architectural PDF, calibrate it against a known dimension, then measure every linear run. A PNG or JPEG comes in as a sheet too, for a photograph of a marked-up print or a screenshot of a plan. On iPad, trace curved coves with the Apple Pencil and write notes straight onto the sheet — your palm stays off. Millwork shop drawings import too, and link back to the plan.</p>
         <button class="btn pri" id="btnOpen2">Import PDF</button>
       </div>
     </div>
@@ -1070,7 +1070,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.71.1';
+const APP_VER='1.72.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1792,7 +1792,9 @@ async function restoreDrawings(){
     try{
       const rec=await pdfLoad(d.id);
       if(!rec||!rec.buf) continue;
-      const pdf=await pdfjsLib.getDocument({data:new Uint8Array(rec.buf)}).promise;
+      const pdf=d.img
+        ? await imgDoc(new Blob([rec.buf],{type:d.mime||'image/png'}))
+        : await pdfjsLib.getDocument({data:new Uint8Array(rec.buf)}).promise;
       FILES[d.id]={pdf};
       d.pages=pdf.numPages;
       n++;
@@ -2304,9 +2306,82 @@ let detIdx=0;                                  /* which detail buffer is on scre
 const shownDetail=()=>DET[detIdx], spareDetail=()=>DET[1-detIdx];
 let renderTask=null;
 
+/* ---- an image as a sheet ----
+   A photograph of a marked-up print, or a screenshot of a plan, measures the same
+   way a PDF does once it has a scale on it. Rather than teach every render, snap,
+   compare and export path about a second kind of sheet, an image is dressed as the
+   one-page document pdf.js would have handed over: the same getPage, the same
+   viewport, the same render call. Everything downstream stays as it was.
+   One pixel is one point, which is arbitrary and said so: an image has no plotted
+   size, so its scale has to be calibrated against something on the drawing. */
+const IMG_TYPES=/^image\/(png|jpeg|jpg|webp|gif|bmp)$/i;
+const IMG_EXT=/\.(png|jpe?g|webp|gif|bmp)$/i;
+const isImgFile=f=>IMG_TYPES.test(f.type||'')||IMG_EXT.test(f.name||'');
+const docImg=id=>{ const d=P.docs.find(x=>x.id===id); return !!(d&&d.img); };
+const curDocImg=()=>docImg(V.docId);
+async function imgBitmap(blob){
+  if(typeof createImageBitmap==='function'){
+    try{ return await createImageBitmap(blob); }catch(e){}
+  }
+  /* older Safari: an <img> does the same job, and revoking the URL after decode
+     keeps the bitmap alive */
+  return await new Promise((res,rej)=>{
+    const url=URL.createObjectURL(blob), im=new Image();
+    im.onload=()=>{ res(im); setTimeout(()=>URL.revokeObjectURL(url),0); };
+    im.onerror=()=>{ URL.revokeObjectURL(url); rej(new Error('not an image')); };
+    im.src=url;
+  });
+}
+async function imgDoc(blob){
+  const bmp=await imgBitmap(blob);
+  const W=bmp.width||bmp.naturalWidth, H=bmp.height||bmp.naturalHeight;
+  if(!(W>0&&H>0)) throw new Error('empty image');
+  const page={
+    /* the same shape pdf.js hands out: y counted up from the bottom, so the image's
+       top row sits at y = H and every markup lands where a PDF's would */
+    getViewport(o){
+      const sc=(o&&+o.scale)||1;
+      const vp={width:W*sc,height:H*sc,scale:sc,rotation:0,
+        transform:[sc,0,0,-sc,0,H*sc],
+        viewBox:[0,0,W,H],
+        convertToViewportPoint:(x,y)=>[x*sc,(H-y)*sc],
+        convertToPdfPoint:(x,y)=>[x/sc,H-y/sc],
+        clone:oo=>page.getViewport({scale:(oo&&+oo.scale)||sc})};
+      return vp;
+    },
+    render(opts){
+      const cx=opts.canvasContext;
+      const vp=opts.viewport||page.getViewport({scale:1});
+      const t=opts.transform;
+      const promise=(async()=>{
+        cx.save();
+        try{
+          if(t) cx.transform(t[0],t[1],t[2],t[3],t[4],t[5]);
+          cx.scale(vp.scale,vp.scale);
+          /* the page's own white, the way pdf.js paints one, so a transparent PNG
+             does not show whatever the canvas held before */
+          cx.fillStyle='#fff'; cx.fillRect(0,0,W,H);
+          try{ cx.imageSmoothingQuality='high'; }catch(_){}
+          cx.drawImage(bmp,0,0,W,H);
+        }finally{ cx.restore(); }
+      })();
+      return {promise,cancel(){}};
+    },
+    /* no text layer and no vector geometry — which the app already knows how to say */
+    getTextContent:async()=>({items:[]}),
+    getOperatorList:async()=>({fnArray:[],argsArray:[]}),
+    cleanup(){},
+  };
+  return {numPages:1,isImg:true,
+    getPage:async n=>{ if(+n!==1) throw new Error('one page'); return page; },
+    destroy(){ try{ bmp.close&&bmp.close(); }catch(_){} },
+  };
+}
 async function openFiles(list){
   if(!PDF_OK&&list.some(f=>/\.pdf$/i.test(f.name)||f.type==='application/pdf')){
-    toast('The PDF engine did not load — check that vendor/pdf.min.js is present'); return;
+    toast('The PDF engine did not load — check that vendor/pdf.min.js is present');
+    if(!list.some(isImgFile)) return;
+    list=list.filter(isImgFile);          /* images need no engine, so still take those */
   }
   /* a dropped .linework.json is a project, not a drawing */
   const proj=list.filter(f=>/\.json$/i.test(f.name)||f.type==='application/json');
@@ -2317,15 +2392,20 @@ async function openFiles(list){
   }
   let firstNew=null;
   for(const f of list){
-    if(!/\.pdf$/i.test(f.name)&&f.type!=='application/pdf'){ toast('Skipped '+f.name+' — PDF only'); continue; }
+    const img=isImgFile(f);
+    const pdfy=/\.pdf$/i.test(f.name)||f.type==='application/pdf';
+    if(!img&&!pdfy){ toast('Skipped '+f.name+' — drawings come in as PDF, PNG, JPEG or WebP'); continue; }
     try{
       const buf=await f.arrayBuffer();
       const copy=buf.slice(0);
-      const pdf=await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
+      const pdf=img
+        ? await imgDoc(new Blob([buf],{type:f.type||'image/png'}))
+        : await pdfjsLib.getDocument({data:new Uint8Array(buf)}).promise;
       let rec=P.docs.find(d=>d.name===f.name&&d.size===f.size);
       if(!rec){
         rec={id:uid('d_'),name:f.name,size:f.size,pages:pdf.numPages,
              kind:/shop|mill|casework|cabinet|detail|elev/i.test(f.name)?'shop':'plan'};
+        if(img){ rec.img=true; rec.mime=f.type||'image/png'; }
         P.docs.push(rec);
       }else{ toast('Relinked '+f.name+' — markups restored'); }
       FILES[rec.id]={pdf};
@@ -2337,8 +2417,10 @@ async function openFiles(list){
           toast('No room to keep the drawings in this browser — they will need re-importing');
         });
       }
-      /* read the titleblock once, on import — cheap, and it saves retyping */
-      if(!rec.sheetNo&&!rec.title){
+      /* read the titleblock once, on import — cheap, and it saves retyping. An
+         image has no text layer to read, so there is nothing to try. */
+      if(img) rec.noText=true;
+      else if(!rec.sheetNo&&!rec.title){
         const tb=await readTitleblock(pdf,1);
         if(tb&&!tb.none){ rec.sheetNo=tb.no||''; rec.title=tb.title||''; }
         else rec.noText=true;
@@ -2803,8 +2885,11 @@ function syncSnapBtn(){
   b.classList.toggle('pri',on&&!!SNAP.grid);
   b.textContent=on?(SNAP.grid?'⊹ Snap '+(SNAP.n>999?(SNAP.n/1000).toFixed(0)+'k':SNAP.n):'⊹ Snap …'):'⊹ Snap off';
   b.title=on
-    ? (SNAP.grid?SNAP.n+' points found on this page'+(SNAP.truncated?' (truncated)':'')+' — measurements snap to the drawing'
-              :'Reading the drawing geometry…')
+    ? (SNAP.grid
+        ? (SNAP.n?SNAP.n+' points found on this page'+(SNAP.truncated?' (truncated)':'')+' — measurements snap to the drawing'
+                 :(curDocImg()?'An image has no geometry to snap to — measurements land where you put them'
+                              :'No geometry found on this page'))
+        :'Reading the drawing geometry…')
     : 'Snapping off — measurements land exactly where you click';
 }
 
@@ -3216,8 +3301,11 @@ async function pickScale(){
       {v:'page',t:'This page only'}],val:'sheet'},
     {k:'check',type:'check',cap:'Then check it against a dimension on the sheet',val:false}
   ],ok:'Set it',cancel:'Cancel',
-    note:(pi?('This page is '+(Math.round(pi.w*100)/100)+' \u00d7 '+(Math.round(pi.h*100)/100)+' in'
-      +(paper?' \u2014 '+paper:'')+'.  '):'')
+    note:(d.img
+      ? 'This is an image, so it has no plotted size and no stated scale can be trusted on it \u2014 '
+        +'calibrate against a dimension you can read with the ruler. '
+      : (pi?('This page is '+(Math.round(pi.w*100)/100)+' \u00d7 '+(Math.round(pi.h*100)/100)+' in'
+      +(paper?' \u2014 '+paper:'')+'.  '):''))
       +'A stated scale is only right if the PDF is at its plotted size; a sheet printed to fit a smaller '
       +'page is wrong by however much it was shrunk'+(paper==='ANSI A'||paper==='A4'?', and this one is letter-sized':'')
       +'. Check it against a dimension you can read before ordering from it \u2014 the Calibrate tool measures '
@@ -14806,7 +14894,7 @@ function manualSections(){
   {id:'start',t:'Getting started',blocks:[
     {p:'Import a PDF, tell it what the scale is, then measure. Everything else follows from those three steps.'},
     {steps:[
-      'Import PDF, or drop one on the window. Sheet numbers and names are read from the titleblock where the PDF has a text layer.',
+      'Import PDF, or drop one on the window. A PNG, JPEG or WebP comes in as a sheet too. Sheet numbers and names are read from the titleblock where the PDF has a text layer.',
       'Set the scale: pick a standard scale from the toolbar, or press C and trace a dimension you can read on the sheet. An uncalibrated sheet says so, because every number downstream depends on it.',
       'Measure a run with L, G or A; trace a room with R.',
       'Turn a measurement into a treatment — the inspector\u2019s "Create treatment from this", or From selection in the takeoff rail.',
@@ -14912,7 +15000,8 @@ function manualSections(){
       ['A scale for part of a sheet','An enlarged plan, a section or a detail sits on the same page as the plan and is drawn at its own scale. Trace a scale region round it and give it that scale: anything whose middle falls inside is measured at it, and the rest of the page carries on at the page’s. Where regions nest the smallest one containing a markup wins, so a blow-up inside an enlarged plan still reads correctly. It is drawn dash-dot in amber with its name and scale on it, so a sheet never measures at a scale you cannot see, and the status bar says how many are on the page. A region with no scale on it is not kept, because it would change nothing. Everything measured now goes through the region-or-page scale, which also means a markup on a sheet you are not looking at is measured at that sheet’s scale rather than the open page’s.'],
       ['Deleting a sheet','The ✕ on a sheet in the list. It counts what goes with it first — markups, runs measured off it, links pointing at it, its scale — and asks twice. Runs measured off it are kept by default with their measured length written in as a typed figure: the takeoff is what was priced, and losing a drawing is not a reason to change it. Untick that and they go too. The PDF is dropped from this browser as well, so undo brings the markups and runs back but the drawing needs re-importing.'],
       ['Scales','A set that mixes scales is normal: Scales… lists every page, says which carry their own scale and which inherit the sheet\u2019s, and sets or clears them over a page range.'],
-      ['Titleblocks','Read from the PDF\u2019s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
+      ['Images as sheets','A PNG, JPEG or WebP opens as a one-page sheet and measures the same way a PDF does \u2014 for a photograph of a marked-up print, a screenshot of a plan, or a drawing that only ever arrived as a picture. Markups, runs, spaces, the cut list, the report: all of it works, because an image is handed to the rest of the app dressed as the one-page document a PDF would have been. What it cannot give you is a titleblock, geometry to snap to, or a plotted size \u2014 there is no text layer to read, no vectors to find corners in, and no paper size to check a stated scale against. So it says all three rather than guessing: the sheet reads "no text layer", the snap button says an image has no geometry, and the scale dialog tells you to calibrate against a dimension with the ruler instead of picking a scale off the titleblock. One pixel counts as one point, which is arbitrary and does not matter once it is calibrated. The bytes are kept in this browser like a PDF\u2019s, so it reopens without re-importing.'],
+      ['Titleblocks','Read from the PDF’s text layer. That is not OCR — a scanned drawing says "no text layer" rather than inventing a number.'],
       ['Compare revisions','Renders two versions of a sheet, diffs them in blocks, clusters what changed and can cloud the lot. Different page sizes are refused rather than stretched.'],
       ['Flatten','Locking markups into the sheet before it goes out. They stay drawn, stop being editable or selectable, and leave the markups list. Choose this page, this sheet or the whole job, and whether to flatten everything, only the notes and review markups, or only the measurements \u2014 so a review can be locked without touching the takeoff. Recovery keeps the option of unflattening, by batch or all at once; without it there is no unflatten, and it asks twice before doing that.'],
       ['What flattening does not do','Two differences from Revu, because they would otherwise cost you numbers: a flattened markup keeps counting in the takeoff, and a run whose markup is flattened keeps measuring it. What flattening takes away is editing, not arithmetic. A layer toggle no longer hides one either, because it is part of the sheet now. For a genuinely flat <em>file</em>, Export marked-up PDF burns everything into the image \u2014 flattening is about the project.'],
@@ -14968,6 +15057,7 @@ function manualSections(){
     {rows:[
       ['Every length is wrong','The scale is wrong. Trace a second dimension you can read to check it, and remember a page can carry its own scale.'],
       ['The sheet goes soft while panning','It is catching up. A cheap full-page layer always covers the view, and the sharp layer swaps in when it is ready — it never blanks.'],
+      ['Nothing snaps on this sheet','If it came in as an image there is no vector geometry to snap to, and the snap button says so. Measurements land exactly where you put them; the ruler is the thing that keeps them straight.'],
       ['A number is missing','Unset is deliberate: the product\u2019s cutsheet has not been read. Open the item in the library and use read specs.'],
       ['Markups did not come back','Open the project file, then re-import the same PDFs — markups reattach by filename and size.'],
       ['The version is behind','An installed copy opens from its own cache, and it used to ask that same cache what the current version was — so the answer was always the version it already had. It now reads the version out of the service worker\u2019s own file, which no cache is allowed to answer for. It checks by itself — shortly after opening, when you come back to it, and every half hour it is left open — and an <b>Update</b> button appears beside the name when there is a newer build on the server. Press it: your work is written down first, the cached copy of the app is thrown away, and the page comes back on the new version. There is nothing to close and reopen.'],
@@ -15424,6 +15514,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   rulerOn,toggleRuler,rulerGeom,rulerEdge,guide,drawRuler,rulerLen,rulerTickStep,
   toggleCpad,drawCpad,cpadValue,cpadState,cpadInsert,cpadToTreat,cpadEquals,
   checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
+  imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
   calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,

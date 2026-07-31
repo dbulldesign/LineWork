@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.71.1**
+**Version 1.72.0**
 
 ## What it does
 
@@ -369,6 +369,24 @@ The dimension tool is one segment: **tap where it starts, tap where it ends**, a
 that is the measurement — nothing to press afterwards. Drag instead and it traces a
 curve freehand, as it always did. Poly (`G`) is the tool that keeps going until you
 finish it, for a run that turns corners.
+
+## Images as sheets
+
+A **PNG, JPEG or WebP** opens as a one-page sheet and measures the same way a PDF
+does — for a photograph of a marked-up print, a screenshot of a plan, or a drawing
+that only ever arrived as a picture. Markups, runs, spaces, the cut list and the
+report all work, because an image is handed to the rest of the app **dressed as the
+one-page document a PDF would have been**: the same `getPage`, the same viewport, the
+same render call. Nothing downstream knows the difference.
+
+What an image cannot give you is a titleblock, geometry to snap to, or a plotted
+size — there is no text layer, no vectors to find corners in, and no paper size to
+check a stated scale against. So it says all three instead of guessing: the sheet
+reads *no text layer*, the snap button says *an image has no geometry to snap to*,
+and the scale dialog tells you to calibrate against a dimension with the ruler rather
+than trusting a scale off the titleblock. One pixel counts as one point — arbitrary,
+and it stops mattering the moment it is calibrated. The bytes are kept in this browser
+like a PDF's, so it reopens without re-importing.
 
 ## Reading the drawings
 
