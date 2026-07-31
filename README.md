@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.72.1**
+**Version 1.73.0**
 
 ## What it does
 
@@ -387,6 +387,47 @@ The dimension tool is one segment: **tap where it starts, tap where it ends**, a
 that is the measurement — nothing to press afterwards. Drag instead and it traces a
 curve freehand, as it always did. Poly (`G`) is the tool that keeps going until you
 finish it, for a run that turns corners.
+
+## Measurements in the line
+
+A measurement is **the number alone**, turned to the direction of the run and sitting
+in it, with a gap the colour of the paper so the line breaks around it — the way a
+drafted dimension has always been drawn. No box, no fill, no border. On a plan with
+thirty runs on it that is the difference between reading the drawing and reading the
+labels.
+
+- A **single measured span** carries its number in the middle of itself. At the end it
+  would only sit on whatever was being measured up to.
+- A **poly** labels each leg on that leg, and keeps the run total at the far end, clear
+  of them.
+- Where a number **will not fit** between two corners it steps just off the run, still
+  along it, rather than spilling over the drawing at either end. Always to the same
+  side, whichever direction the run was traced in, so a row of short segments does not
+  label alternately above and below.
+- In the line means **along** the line, so that is the angle it takes — normalised so it
+  never reads upside down. *Length label angle* can still force flat.
+- A **region's edges** keep their lengths beside them rather than in them: the number
+  belongs to a boundary, not to a measured run, and a small room has four of them to fit
+  round along with its area and perimeter.
+
+The gap is only as tall as **the line it interrupts** — not as tall as the digits. That is
+the difference between breaking a line and covering the drawing, and it is the whole point
+of labelling this way. A number that crosses no line breaks nothing and gets the
+paper-coloured halo alone.
+
+Placement follows from this. Two labels clash by **what is drawn**, not by the box a
+placard would have taken, so a poly's corner no longer throws its two lengths off their
+legs. A number that does clash **slides along its own line** first and steps off the run
+only when the segment has no clear room left. Anything that ends up away from what it
+measures — moved by the layout or by hand — grows a leader back to it. A label is grabbed
+over the number itself and nowhere else, so the run stays pickable either side of it.
+
+The gap is white, because a drawing sheet is white: that is what the PDF renders onto in
+either theme and every palette, and what it prints as. The stage colour behind the page
+is a different thing and deliberately not used.
+
+Settings › Labels › **Measurement labels** offers the old placard back — filled, bordered
+and unmissable — for anyone who wants it.
 
 ## Images as sheets
 

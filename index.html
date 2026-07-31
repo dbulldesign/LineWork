@@ -1070,7 +1070,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.72.1';
+const APP_VER='1.73.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2015,6 +2015,7 @@ function applyProject(d){
   P.minOff=Math.max(0,+P.minOff||0);
   P.rowCap=clamp(+P.rowCap||250,10,1e6);
   if(P.lblAlign!=='run') P.lblAlign='flat';
+  if(P.lblStyle!=='box') P.lblStyle='';
   P.prec=Math.max(0,+P.prec||0);
   if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
@@ -3484,10 +3485,36 @@ function segAngle(A,B){
   if(d>90) d-=180; else if(d<-90) d+=180;
   return d;
 }
+/* The colour of the gap a number makes in the line. It is the colour of the sheet
+   the number sits on, and a drawing sheet is white — that is what the PDF renders
+   onto, in either theme and in every palette, and what it prints and exports as.
+   --paper is deliberately not used: that is the colour of the stage behind the
+   page, which is only ever seen before a page has rendered. */
+const PAPER='#ffffff';
 let CHIPQ=null, LAST_CHIPS=[];
-function chip(x,y,txt,col,anchor,owner,role,rot){
+function chip(x,y,txt,col,anchor,owner,role,rot,seg){
   const rec={x,y,w:chipW(txt),h:CHIP_H,txt,col,anchor,owner:owner||null,role:role||'sub',
     manual:false,rot:+rot||0};
+  /* It sits in the line as long as it fits between the two corners. When it does
+     not, it steps off to the side rather than spilling over the drawing at either
+     end — always to the upper side, whichever direction the run was traced in, so
+     a row of short segments does not label alternately above and below.
+     The run's own direction and length are kept on the record: the layout uses
+     them to slide a number along its line before moving it off it. */
+  if(inkLbl()&&seg&&seg.length===2){
+    const A=seg[0], B=seg[1];
+    const L=Math.hypot(B[0]-A[0],B[1]-A[1]);
+    if(L>0){
+      rec.dir=[(B[0]-A[0])/L,(B[1]-A[1])/L]; rec.segL=L;
+      if(rec.w>L-CHIP_FS*0.9){
+        let nx=-rec.dir[1], ny=rec.dir[0];
+        if(ny>0){ nx=-nx; ny=-ny; }
+        const d=CHIP_H*0.8;
+        rec.x+=nx*d; rec.y+=ny*d;
+        rec.outside=true;
+      }else rec.inline=true;    /* it crosses the line, so it has to break it */
+    }
+  }
   if(CHIPQ){ CHIPQ.push(rec); return ''; }
   return chipSvg(rec);
 }
@@ -3502,11 +3529,22 @@ function setLblRot(a,role,deg){
   }
   a.lblRot=a.lblRot||{}; a.lblRot[role]=normDeg(deg);
 }
+/* ---- how a measurement reads on the sheet ----
+   A filled placard carrying the number is unmissable, and on a busy plan a dozen
+   of them cover the thing being measured. In the line instead: the number alone,
+   in the run's colour, turned to the run's own direction, haloed in the colour of
+   the paper so the line appears to break around it the way a drafted dimension
+   does. Where the number will not fit between two corners it steps off to the
+   side of the run, still along it. The placard is still there for anyone who
+   prefers it. */
+const inkLbl=()=>P.lblStyle!=='box';
 const alignRuns=a=>{
   const m=a&&a.lblAlign;
   if(m==='run') return true;
   if(m==='flat') return false;
-  return P.lblAlign==='run';
+  /* in the line means along the line — that is the whole point of it, so it
+     implies the run angle unless flat has been asked for outright */
+  return P.lblAlign==='run'||(inkLbl()&&P.lblAlign!=='flat');
 };
 /* the angle a label should take before any manual override */
 function autoLblRot(a,role,A,B){
@@ -3543,7 +3581,33 @@ function chipSvg(r){
      labels are outlined — they should not read as equals */
   const tot=r.role==='total';
   const fs=tot?CHIP_FS*1.06:CHIP_FS;
-  return g0+'<g'+(r.owner?' data-lbl="'+r.owner.id+'" data-role="'+r.role+'"':'')+'>'
+  const open=g0+'<g'+(r.owner?' data-lbl="'+r.owner.id+'" data-role="'+r.role+'"':'')+'>';
+  if(inkLbl()){
+    /* The number breaks the line the way a drafted dimension does: a gap in the
+       colour of the paper across the line and no further, with no border of its
+       own. A halo alone is not enough to break it — the spaces and the decimal
+       point have no ink to halo, and the line shows through them and reads as a
+       dash. But the gap only has to be as tall as the line it interrupts, not as
+       tall as the digits: that way the drawing behind the rest of the number is
+       still there, which is the whole point of labelling this way. A number that
+       does not cross a line — a run total at the far end, an area's figures, one
+       that has stepped off a segment too short for it — needs no gap at all and
+       gets the halo alone. */
+    const tw=String(r.txt).length*fs*0.62, pad=fs*0.2, cx=(b.x1+b.x2)/2;
+    const rh=Math.max(fs*0.5,7), hw=Math.max(1.6,fs*0.16);
+    return open
+      +(r.inline?'<rect x="'+(cx-tw/2-pad).toFixed(1)+'" y="'+(r.y-rh/2).toFixed(1)+'"'
+        +' width="'+(tw+pad*2).toFixed(1)+'" height="'+rh.toFixed(1)+'"'
+        +' fill="'+PAPER+'" stroke="none"/>':'')
+      +'<text x="'+cx.toFixed(1)+'" y="'+(r.y+fs*.37).toFixed(1)+'"'
+      +' fill="'+r.col+'" stroke="'+PAPER+'" stroke-width="'+hw.toFixed(1)+'"'
+      +' stroke-linejoin="round" paint-order="stroke fill"'
+      +' font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace"'
+      +' font-weight="'+(tot?'700':'500')+'" font-size="'+fs.toFixed(1)+'"'
+      +' text-anchor="middle"'+(tot?' letter-spacing=".2"':'')
+      +'>'+esc(r.txt)+'</text></g>'+g1;
+  }
+  return open
     +'<rect x="'+b.x1.toFixed(1)+'" y="'+b.y1.toFixed(1)+'" width="'+r.w.toFixed(1)+'" height="'+r.h.toFixed(1)
     +'" rx="'+(tot?3.5:2.5)+'" fill="'+(tot?r.col:OVL)+'" fill-opacity="'+(tot?'.95':'.95')+'"'
     +' stroke="'+(tot?r.col:r.col)+'" stroke-width="'+(tot?2:1)+'" stroke-opacity="'+(r.manual?'1':(tot?'1':'.75'))+'"'
@@ -3552,6 +3616,17 @@ function chipSvg(r){
     +'" font-family="ui-monospace,SF Mono,Menlo,Consolas,monospace" font-weight="'+(tot?'700':'500')
     +'" font-size="'+fs.toFixed(1)+'" text-anchor="middle"'+(tot?' letter-spacing=".2"':'')
     +'>'+esc(r.txt)+'</text></g>'+g1;
+}
+/* What can be grabbed is what is drawn. A placard occupies its whole box, so that
+   is its grip. In the line the label is only the gap the number makes — narrower
+   and shorter than the box the placard would have taken — and the run has to stay
+   grabbable right up to its own number, so the grip is the gap and no more. */
+function chipGrab(r){
+  const b=chipBox(r);
+  if(!inkLbl()) return b;
+  const fs=r.role==='total'?CHIP_FS*1.06:CHIP_FS;
+  const w=String(r.txt).length*fs*0.62+fs*0.4, h=fs*1.06, cx=(b.x1+b.x2)/2;
+  return {x1:cx-w/2,y1:r.y-h/2,x2:cx+w/2,y2:r.y+h/2};
 }
 /* leader line back to the measurement when a label has been moved away */
 function chipLeader(r){
@@ -3571,32 +3646,56 @@ function layoutChips(q){
     const off=r.owner?offFor(r.owner,r.role):null;
     if(off){ r.x+=off[0]*V.zoom; r.y+=off[1]*V.zoom; r.manual=true; }
   });
-  const cbox=r=>{ const b=chipBox(r);
+  /* Two labels overlap when what is drawn overlaps. A placard fills its whole box,
+     so that is the box. A number in the line is smaller than that in both
+     directions, and measuring the clash by the placard's box would push numbers
+     apart that were never touching — a corner of a poly would throw its two
+     lengths right off their legs. */
+  const cbox=r=>{ const b=chipGrab(r);
     return r.rot?rotAABB(b,r.rot,[(b.x1+b.x2)/2,(b.y1+b.y2)/2]):b; };
   const placed=q.filter(r=>r.manual).map(cbox);
   const clash=b=>placed.some(o=>!(b.x2<o.x1-2||b.x1>o.x2+2||b.y2<o.y1-1||b.y1>o.y2+1));
   if(smart){
-    /* try the natural spot, then step alternately below and above */
+    /* Try where it belongs, then step away from it. A number that sits in a line
+       slides along that line first — it stays in the line, which is where it was
+       wanted, and a drafter shifting a dimension along its own line is exactly
+       what this is. Only when there is no clear room left on the segment does it
+       step off to the side. Everything else steps below and above as before. */
     q.filter(r=>!r.manual).sort((a,b)=>a.y-b.y).forEach(r=>{
-      const step=r.h+3, y0=r.y;
+      const step=r.h+3, x0=r.x, y0=r.y;
+      const cands=[[0,0]];
+      if(r.dir){
+        const [dx,dy]=r.dir, room=(r.segL-r.w)/2-2;
+        /* how far it can slide is set by the segment, not by a label height: on a
+           leg with an inch to spare an inch is worth having */
+        if(room>3) for(const f of [.5,1]){ const d=room*f;
+          cands.push([dx*d,dy*d],[-dx*d,-dy*d]); }
+        for(let k=1;k<=5;k++){ const d=k*step;
+          cands.push([-dy*d,dx*d],[dy*d,-dx*d]); }
+      }else for(let k=1;k<7;k++) cands.push([0,k*step],[0,-k*step]);
       let best=null;
-      for(let k=0;k<7&&!best;k++){
-        for(const dy of (k===0?[0]:[k*step,-k*step])){
-          r.y=y0+dy;
-          if(!clash(cbox(r))){ best=cbox(r); break; }
-        }
+      for(const [ox,oy] of cands){
+        r.x=x0+ox; r.y=y0+oy;
+        if(!clash(cbox(r))){ best=cbox(r); break; }
       }
-      if(!best){ r.y=y0; best=cbox(r); }
+      if(!best){ r.x=x0; r.y=y0; best=cbox(r); }
+      /* it has left the line it broke, so it should not pretend to be in one */
+      if(r.inline&&Math.hypot(r.x-x0,r.y-y0)>1&&
+        Math.abs((r.x-x0)*r.dir[1]-(r.y-y0)*r.dir[0])>1) r.inline=false;
       placed.push(best);
     });
   }
   /* every owned label can be grabbed — the total, each segment, and the arc's
      radius readout. Later chips sit on top, so hit-test in reverse. */
   LAST_CHIPS=q.filter(r=>r.owner).map(r=>{
-    const b=chipBox(r);
+    const b=chipGrab(r);
     return {box:b,a:r.owner,role:r.role,rot:normDeg(r.rot),c:[(b.x1+b.x2)/2,(b.y1+b.y2)/2]};
   });
-  return q.map(r=>(r.manual?chipLeader(r):'')+chipSvg(r)).join('');
+  /* the leader is drawn for anything that ended up away from its measurement, not
+     only for a label moved by hand: the layout can move one just as far, and a
+     number floating clear of the run it measures is worse than a crowded one.
+     chipLeader draws nothing while the label is still close to its anchor. */
+  return q.map(r=>chipLeader(r)+chipSvg(r)).join('');
 }
 function withChips(fn){
   const prev=CHIPQ; CHIPQ=[];
@@ -3803,6 +3902,7 @@ function drawAnn(a,selected,isDraft,multi){
     if(a.type==='line'&&!a.free&&pts.length>2)
       g+=pts.map(p=>'<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(1.6+W*.55).toFixed(1)+'" fill="'+OVL+'" stroke="'+col+'" stroke-width="'+(W*.75).toFixed(2)+'"/>').join('');
     /* per-segment lengths — every segment on a poly, skipping ones too short to label */
+    let segLbls=0;
     if(P.segLabels!==false&&!a.free&&(a.poly||pts.length<=8)&&(pts.length>2||isDraft)){
       annSegs(a).forEach((sg,si)=>{
         const A=sp(sg.a),B=sp(sg.b), px=Math.hypot(B[0]-A[0],B[1]-A[1]);
@@ -3817,8 +3917,10 @@ function drawAnn(a,selected,isDraft,multi){
           const m=arcP[Math.floor(arcP.length/2)];
           if(m){ mx=m[0]; my=m[1]; }
         }
-        g+=chip(mx,my-CHIP_H*.72,lbl,col,null,a,'seg:'+si,
-          lblRotFor(a,'seg:'+si,A,B));
+        /* in the line it sits on the line; in a placard it sits above it, as before */
+        g+=chip(mx,my-(inkLbl()?0:CHIP_H*.72),lbl,col,null,a,'seg:'+si,
+          lblRotFor(a,'seg:'+si,A,B),[A,B]);
+        segLbls++;
       });
     }
     const tot=annLen(a);
@@ -3828,8 +3930,15 @@ function drawAnn(a,selected,isDraft,multi){
       const lbl=(tg?tagOf(tg)+'  ':'')+(tot==null?'set scale':fmtLen(tot))
         +(a.poly&&n>1?'  ('+n+' seg'+(loop?', closed':'')+')':'');
       const last=cpts[cpts.length-1], prev=cpts[cpts.length-2]||last;
-      g+=chip(last[0],last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8),lbl,tg?'#F2A93B':col,null,a,'total',
-        lblRotFor(a,'total',prev,last));
+      /* In the line, a single measured span reads best in the middle of itself —
+         that is where a drafted dimension has always put its number, and at the
+         end it would only sit on whatever the run was measuring up to. A run that
+         labels its own segments keeps the total at the far end, clear of them. */
+      const mid2=inkLbl()&&cpts.length===2&&!segLbls;
+      const lx=mid2?(prev[0]+last[0])/2:last[0];
+      const ly=mid2?(prev[1]+last[1])/2:last[1]+(pts.length>2?CHIP_H*1.1:-CHIP_H*.8);
+      g+=chip(lx,ly,lbl,tg?'#F2A93B':col,null,a,'total',
+        lblRotFor(a,'total',prev,last),mid2?[prev,last]:null);
     }else{
       g+=chip((pts[0][0]+pts[1][0])/2,(pts[0][1]+pts[1][1])/2+CHIP_H,'CALIBRATED',col);
     }
@@ -3872,6 +3981,9 @@ function drawAnn(a,selected,isDraft,multi){
         const A=sp(sg.a),B=sp(sg.b), px=Math.hypot(B[0]-A[0],B[1]-A[1]);
         const lbl=sg.len==null?'—':fmtRun(sg.len);
         if(px<chipW(lbl)*.9) return;
+        /* a region's edges keep their labels beside them rather than in them: the
+           number belongs to a boundary, not to a measured run, and a small room
+           has four of them plus its area and perimeter to fit round */
         g+=chip((A[0]+B[0])/2,(A[1]+B[1])/2-CHIP_H*.72,lbl,col,null,a,'seg:'+si,
           lblRotFor(a,'seg:'+si,A,B));
       });
@@ -8822,7 +8934,7 @@ function lblRotRow(a){
   const mode=a.lblAlign||'';
   const manual=rotsOf(a)?Object.keys(rotsOf(a)).length:0;
   return '<div class="f"><label>Length labels</label><select data-lblalign>'
-    +'<option value=""'+(mode?'':' selected')+'>Follow the setting ('+(P.lblAlign==='run'?'along the run':'flat')+')</option>'
+    +'<option value=""'+(mode?'':' selected')+'>Follow the setting ('+(alignRuns(null)?'along the run':'flat')+')</option>'
     +'<option value="flat"'+(mode==='flat'?' selected':'')+'>Flat</option>'
     +'<option value="run"'+(mode==='run'?' selected':'')+'>Along the run</option>'
     +'</select>'
@@ -14190,7 +14302,7 @@ $('#btnCsvZone').onclick=()=>{
    and they were being re-entered each time. A preset is those settings — and
    optionally the product library with them — as one file to start from. */
 const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt','labFeed','labEa',
-  'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblSize','snap',
+  'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblStyle','lblSize','snap',
   'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','buyBy','keepPdf',
   'whipAwg','vdMax','circuits',
   /* the workspace is a preference like any other: an office standard should carry
@@ -14987,8 +15099,9 @@ function manualSections(){
   {id:'labels',t:'Labels',blocks:[
     {p:'Every measurement carries labels you can move, turn and hide.'},
     {rows:[
-      ['Content-aware placement','Labels step aside instead of stacking. Drag any label to place it yourself and a leader ties it back.'],
-      ['Turning labels','Flat, or along the run they belong to — per markup, or as the default in Settings. Right-click or long-press one label to turn just that one.'],
+      ['In the line, or in a placard','By default a measurement is the number alone, turned to the direction of the run and sitting in it, with a gap the colour of the paper so the line breaks around it the way a drafted dimension does. The gap is only as tall as the line it interrupts, so the drawing behind the digits is still there — nothing is boxed and nothing is filled, and a plan with thirty runs on it is still a plan you can read. A single measured span carries its number in the middle of itself; a poly labels each leg on that leg and keeps the run total at the far end, where it crosses nothing and so breaks nothing. Where a number will not fit between two corners it steps just off the run, still along it, rather than spilling over the drawing at either end. A region’s edges keep their lengths beside them rather than in them — the number belongs to a boundary, not to a measured run, and a small room has four of them to fit round along with its area and perimeter. Settings \u203a Labels offers the old placard back for anyone who wants the number unmissable.'],
+      ['Content-aware placement','Labels step aside instead of stacking. A number that sits in a line slides along that line first — it stays where it was wanted, and shifting a dimension along its own line is what a drafter would do — and only steps off the run when the segment has no clear room left. Anything that ends up away from what it measures grows a leader back to it, whether the layout moved it or you did. In the line a label is grabbed over the number itself and nowhere else, so the run is still there to be picked up either side of it.'],
+      ['Turning labels','In the line means along the line, so that is the angle it takes; a placard lies flat unless told otherwise. Either way it can be set per markup or as the default in Settings, and right-click or long-press one label to turn just that one.'],
       ['Size','One setting scales every label; the exporter scales them again for the bitmap it is producing.'],
       ['What is on a label','The run total carries the treatment tag; each segment carries its own length; an arc adds its radius and angle; a region adds its area and perimeter.'],
     ]}]},
@@ -15189,7 +15302,9 @@ function settingsHtml(){
       setChk('segLabels',P.segLabels!==false,P.segLabels!==false?'Shown':'Total only'))
     +setRow('Arc radius and angle','Second label under an arc with its radius and included angle.',
       setChk('arcDetail',P.arcDetail!==false,P.arcDetail!==false?'Shown':'Hidden'))
-    +setRow('Length label angle','Flat reads at a glance; along the run keeps a sloping cove readable.',
+    +setRow('Measurement labels','In the line is the number alone, turned to the run and haloed so the line breaks round it \u2014 far less of the drawing covered. A placard is unmissable and hides more.',
+      setSel('lblStyle',[{v:'',t:'In the line'},{v:'box',t:'In a placard'}],P.lblStyle||''))
+    +setRow('Length label angle','Flat reads at a glance; along the run keeps a sloping cove readable. In the line implies along the run unless this says flat.',
       setSel('lblAlign',[{v:'flat',t:'Flat'},{v:'run',t:'Along the run'}],P.lblAlign==='run'?'run':'flat'))
     +setRow('What a sum was read as','The small line under a written sum saying what it made of it.',
       setSel('calcRead',[{v:'',t:'When it is unsure, wrong, or selected'},
@@ -15392,6 +15507,7 @@ function applySetting(el){
     case 'cntLabels': P.cntLabels=val; drawOverlay(); break;
     case 'calcRead': P.calcRead=val||''; invalidateAnns(); drawOverlay(); break;
     case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
+    case 'lblStyle': P.lblStyle=val==='box'?'box':''; drawOverlay(); break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'whipSlack': { const v=parseLen(val); P.whipSlack=(isFinite(v)&&v>0)?v:0;
       renderDrivers(); renderBom(); renderSettings(); markDirty(); break; }
@@ -15564,6 +15680,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   toggleCpad,drawCpad,cpadValue,cpadState,cpadInsert,cpadToTreat,cpadEquals,
   checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
   imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,straighten,lenHelp,parseScale,
+  inkLbl,alignRuns,chipSvg,chipGrab,chipBox,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
   calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,
