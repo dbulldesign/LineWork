@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.68.0**
+**Version 1.69.0**
 
 ## What it does
 
@@ -79,6 +79,23 @@ Built for iPad as much as for a desktop, and it adapts rather than shrinking:
 - **Two fingers tapped is undo, three is redo**, the way iPadOS does it everywhere
   else. Tapped, not dragged: the fingers have to go down together, come up quickly
   and not travel, so a pinch still zooms. Both can be turned off.
+- **Units, and converting between them.** Write the unit after the number and the
+  arithmetic keeps it: `500 mm`, `2.5 m`, `60 W`, `0.5 kW`, `4.2 A`, `250 mA`,
+  `24 V`, `3 W/ft`, `150 lm/ft`, `120 sqft`, `15%`. Feet, inches, millimetres and
+  metres all add up together, and the answer comes back **in the unit you wrote it
+  in** — nobody types mm to be told feet. Under the answer sits the same figure in
+  the other units of its kind; press one and it becomes that. In writing, `… in mm`
+  or `… to W/ft` says which. One thing to know: `in` straight after a bare number
+  is inches, so **`to` is the one that always means convert**.
+  - **The electrics** are the rules a lighting job actually uses. Volts × amps =
+    watts; watts ÷ volts = amps; watts ÷ amps = volts. **Watts per foot × a length
+    = watts**, watts ÷ a length = watts per foot, and `120 W ÷ 3 W/ft` = `40'-0"`
+    — the sizing question asked directly. Same three for lumens per foot. A
+    percentage multiplies anything.
+  - Everything else is **refused and says why**: volts plus amps don't add up,
+    volts times volts isn't a thing. Two lengths multiplied is an area; an area
+    over a length is a length. A figure with no unit on it is a plain number, and
+    adding one to a length is refused rather than guessed at.
 - **A floating calculator (⇧C).** On the desk rather than in the app: it floats
   over the drawing where you put it, works in feet and inches, and — the part that
   makes it worth having here rather than reaching for a phone — **the answer goes

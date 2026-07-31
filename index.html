@@ -518,6 +518,14 @@ body.padtop header.tb{padding-top:24px}
   font:400 11px/1.7 var(--mono);padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cpadtape button:hover{color:var(--ink);background:var(--s3)}
 .cpadtape b{color:var(--amber)}
+.cpadunits{display:grid;grid-template-columns:repeat(6,1fr);gap:4px}
+.cpadunits button{padding:6px 0;font:600 10px/1 var(--mono);background:transparent;
+  border:1px solid var(--line2);border-radius:4px;color:var(--dim);cursor:pointer}
+.cpadunits button:hover{border-color:var(--amber);color:var(--amber)}
+.cpadalts{display:flex;flex-wrap:wrap;gap:4px}
+.cpadalts button{font:600 10px/1 var(--mono);padding:4px 6px;background:var(--s3);
+  border:1px solid var(--line2);border-radius:4px;color:var(--dim);cursor:pointer}
+.cpadalts button:hover{border-color:var(--amber);color:var(--amber)}
 .cpadinto{font:600 10px/1.5 var(--mono);color:var(--amber);white-space:nowrap;
   overflow:hidden;text-overflow:ellipsis;padding:0 2px}
 .cpadinto.none{color:var(--faint);font-weight:400}
@@ -992,7 +1000,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.68.0';
+const APP_VER='1.69.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -5327,6 +5335,91 @@ function readInk(raw){
   return {expr:out.replace(/\s+/g,' ').trim(),syms,doubt};
 }
 
+/* ---- units ----
+   A takeoff is arithmetic with units on it. Everything here is kept in one base
+   unit per kind — inches, square inches, watts, amps, volts, watts per inch,
+   lumens, lumens per inch — so the arithmetic never has to think about which one
+   was typed, and only the display does.
+   The rules between kinds are the ones a lighting job actually uses: volts times
+   amps is watts, watts over volts is amps, watts per foot times a length is
+   watts. Anything else is refused rather than guessed at. */
+const U_NUM=n=>{ const r=Math.round(n*1e6)/1e6; return String(r); };
+const UKIND={
+  len :{base:'in',   alts:[
+    {k:'ftin',t:'ft-in',fmt:n=>fmtFtIn(n,'imperial')},
+    {k:'ft',  t:'ft',   fmt:n=>U_NUM(n/12)+' ft'},
+    {k:'in',  t:'in',   fmt:n=>U_NUM(n)+'"'},
+    {k:'mm',  t:'mm',   fmt:n=>U_NUM(n*MM)+' mm'},
+    {k:'cm',  t:'cm',   fmt:n=>U_NUM(n*MM/10)+' cm'},
+    {k:'m',   t:'m',    fmt:n=>U_NUM(n*MM/1000)+' m'},
+    {k:'yd',  t:'yd',   fmt:n=>U_NUM(n/36)+' yd'}]},
+  area:{base:'sqin', alts:[
+    {k:'sqft',t:'sq ft',fmt:n=>U_NUM(n/144)+' sq ft'},
+    {k:'sqm', t:'m²',   fmt:n=>U_NUM(n*MM*MM/1e6)+' m²'},
+    {k:'sqin',t:'sq in',fmt:n=>U_NUM(n)+' sq in'}]},
+  w   :{base:'W',    alts:[
+    {k:'W',   t:'W',    fmt:n=>U_NUM(n)+' W'},
+    {k:'kW',  t:'kW',   fmt:n=>U_NUM(n/1000)+' kW'}]},
+  a   :{base:'A',    alts:[
+    {k:'A',   t:'A',    fmt:n=>U_NUM(n)+' A'},
+    {k:'mA',  t:'mA',   fmt:n=>U_NUM(n*1000)+' mA'}]},
+  v   :{base:'V',    alts:[
+    {k:'V',   t:'V',    fmt:n=>U_NUM(n)+' V'},
+    {k:'kV',  t:'kV',   fmt:n=>U_NUM(n/1000)+' kV'}]},
+  wpl :{base:'W/in', alts:[
+    {k:'W/ft',t:'W/ft', fmt:n=>U_NUM(n*12)+' W/ft'},
+    {k:'W/m', t:'W/m',  fmt:n=>U_NUM(n*1000/MM)+' W/m'}]},
+  lm  :{base:'lm',   alts:[
+    {k:'lm',  t:'lm',   fmt:n=>U_NUM(n)+' lm'}]},
+  lmpl:{base:'lm/in',alts:[
+    {k:'lm/ft',t:'lm/ft',fmt:n=>U_NUM(n*12)+' lm/ft'},
+    {k:'lm/m', t:'lm/m', fmt:n=>U_NUM(n*1000/MM)+' lm/m'}]},
+  pct :{base:'%',    alts:[
+    {k:'%',   t:'%',    fmt:n=>U_NUM(n*100)+'%'},
+    {k:'frac',t:'as a fraction',fmt:n=>U_NUM(n)}]},
+  ''  :{base:'',     alts:[
+    {k:'',    t:'plain',fmt:n=>U_NUM(n)},
+    {k:'aspct',t:'as a %',fmt:n=>U_NUM(n*100)+'%'}]},
+};
+/* what can be written after a number, and what one of it is worth in the base */
+const UWORD={
+  mm:['len',1/MM], millimetre:['len',1/MM], millimeter:['len',1/MM],
+  cm:['len',10/MM], m:['len',1000/MM], metre:['len',1000/MM], meter:['len',1000/MM],
+  ft:['len',12], foot:['len',12], feet:['len',12],
+  in:['len',1], inch:['len',1], inches:['len',1], yd:['len',36], yard:['len',36],
+  sqft:['area',144], sf:['area',144], sqin:['area',1], sqm:['area',1e6/(MM*MM)], m2:['area',1e6/(MM*MM)],
+  w:['w',1], watt:['w',1], watts:['w',1], kw:['w',1000],
+  va:['w',1], a:['a',1], amp:['a',1], amps:['a',1], ma:['a',0.001],
+  v:['v',1], volt:['v',1], volts:['v',1], kv:['v',1000],
+  lm:['lm',1], lumen:['lm',1], lumens:['lm',1],
+};
+/* the compound ones, written the way a cutsheet writes them */
+const UPER={ w:'wpl', kw:'wpl', lm:'lmpl' };
+const UPER_DIV={ ft:12, foot:12, feet:12, in:1, inch:1, m:1000/MM, metre:1000/MM, meter:1000/MM };
+const ukindOf=u=>UKIND[u||'']||UKIND[''];
+function uFmt(v){
+  const kind=ukindOf(v.u);
+  const pick=(v.as&&kind.alts.find(x=>x.k===v.as))||kind.alts[0];
+  return pick.fmt(v.n);
+}
+/* the same figure in the other units of its kind, for the row under the answer */
+function uAlts(v){
+  if(!v||v.err) return [];
+  return ukindOf(v.u).alts.map(x=>({k:x.k,t:x.t,txt:x.fmt(v.n)}));
+}
+const uKey=name=>{
+  const s=String(name||'').trim();
+  if(s==='%'||/^(pct|percent)$/i.test(s)) return {u:'pct',as:'%'};
+  if(/^(plain|number|frac|fraction)$/i.test(s)) return {u:'',as:''};
+  for(const k in UKIND) if(UKIND[k].alts.some(x=>x.k.toLowerCase()===s.toLowerCase())) return {u:k,as:
+    UKIND[k].alts.find(x=>x.k.toLowerCase()===s.toLowerCase()).k};
+  const w=UWORD[s.toLowerCase()];
+  if(w){ const kind=UKIND[w[0]];
+    const alt=kind.alts.find(x=>x.k.toLowerCase()===s.toLowerCase())||kind.alts[0];
+    return {u:w[0],as:alt.k}; }
+  return null;
+};
+
 /* ---- working it out ----
    No eval anywhere near this. A tokeniser and a small precedence parser, with
    feet and inches as first-class values, because that is what gets added up. */
@@ -5341,6 +5434,7 @@ function mathTokens(src){
       t.push({k:'id',v:s.slice(i,j)}); i=j; continue; }
     if(c==='’'||c==="'"||c==='\u2032'){ t.push({k:'ft'}); i++; continue; }
     if(c==='”'||c==='"'||c==='\u2033'){ t.push({k:'in'}); i++; continue; }
+    if(c==='%'){ t.push({k:'%'}); i++; continue; }
     if('+-*/=()'.includes(c)){ t.push({k:c==='*'?'×':c==='/'?'÷':c}); i++; continue; }
     if(c==='×'||c==='x'||c==='X'){ t.push({k:'×'}); i++; continue; }
     if(c==='÷'){ t.push({k:'÷'}); i++; continue; }
@@ -5352,27 +5446,44 @@ function mathTokens(src){
 const NUM=n=>({n,u:''});
 const LEN=n=>({n,u:'len'});
 const ARE=n=>({n,u:'area'});
+const UV=(n,u,as)=>({n,u:u||'',as:as||''});
+const UNAME={len:'a length',area:'an area',w:'watts',a:'amps',v:'volts',
+  wpl:'watts per length',lm:'lumens',lmpl:'lumens per length',pct:'a percentage','':'a plain number'};
+const uName=u=>UNAME[u||'']||'that';
+/* what one kind times another comes to. Read both ways round. */
+const UMUL={'v|a':'w','wpl|len':'w','lmpl|len':'lm','pct|len':'len','pct|area':'area',
+  'pct|w':'w','pct|a':'a','pct|v':'v','pct|lm':'lm','pct|wpl':'wpl','pct|pct':'pct','len|len':'area'};
+/* and what one over another comes to */
+const UDIV={'w|v':'a','w|a':'v','w|len':'wpl','w|wpl':'len','lm|len':'lmpl','lm|lmpl':'len',
+  'area|len':'len'};
 function mathBin(op,a,b){
-  const au=a.u, bu=b.u;
+  const au=a.u||'', bu=b.u||'';
+  const as=a.as||b.as||'';
   if(op==='+'||op==='-'){
-    if(au!==bu) return {err:au==='len'||bu==='len'
-      ? 'a length and a plain number cannot be added — write 3′ or 3″ if you mean a length'
-      : 'those two do not add up: '+(au||'a number')+' and '+(bu||'a number')};
-    const n=op==='+'?a.n+b.n:a.n-b.n;
-    return {n,u:au};
+    if(au!==bu){
+      /* the length case gets its own words, because it is the one that happens and
+         the fix is a single character */
+      if((au==='len'&&!bu)||(bu==='len'&&!au))
+        return {err:'a length and a plain number cannot be added — write 3′ or 3″ if you mean a length'};
+      return {err:'those two do not add up: '+uName(au)+' and '+uName(bu)
+        +(au===''||bu===''?' — write the unit on it if it has one':'')};
+    }
+    return {n:op==='+'?a.n+b.n:a.n-b.n,u:au,as};
   }
   if(op==='×'){
-    if(!au) return {n:a.n*b.n,u:bu};
-    if(!bu) return {n:a.n*b.n,u:au};
-    if(au==='len'&&bu==='len') return ARE(a.n*b.n);
-    return {err:'those two cannot be multiplied'};
+    if(!au) return {n:a.n*b.n,u:bu,as:b.as||''};
+    if(!bu) return {n:a.n*b.n,u:au,as:a.as||''};
+    const k=UMUL[au+'|'+bu]||UMUL[bu+'|'+au];
+    if(k) return {n:a.n*b.n,u:k,as:(k===au?a.as:k===bu?b.as:'')||''};
+    return {err:uName(au)+' times '+uName(bu)+' is not a thing this works out'};
   }
   if(op==='÷'){
     if(b.n===0) return {err:'divided by nothing'};
     if(au===bu) return NUM(a.n/b.n);
-    if(!bu) return {n:a.n/b.n,u:au};
-    if(au==='area'&&bu==='len') return LEN(a.n/b.n);
-    return {err:'those two cannot be divided'};
+    if(!bu) return {n:a.n/b.n,u:au,as:a.as||''};
+    const k=UDIV[au+'|'+bu];
+    if(k) return {n:a.n/b.n,u:k,as:''};
+    return {err:uName(au)+' over '+uName(bu)+' is not a thing this works out'};
   }
   return {err:'unknown operator'};
 }
@@ -5409,12 +5520,29 @@ function mathRun(src,seen){
     i++;
     let v=NUM(p.v);
     if(eat('ft')){
-      v=LEN(p.v*12);
+      v=UV(p.v*12,'len','ftin');
       /* 12' 6" — the inches that follow a feet mark belong to it */
-      if(peek()&&peek().k==='n'&&t[i+1]&&t[i+1].k==='in'){ v=LEN(v.n+t[i].v); i+=2; }
+      if(peek()&&peek().k==='n'&&t[i+1]&&t[i+1].k==='in'){ v=UV(v.n+t[i].v,'len','ftin'); i+=2; }
       else if(peek()&&peek().k==='-'&&t[i+1]&&t[i+1].k==='n'&&t[i+2]&&t[i+2].k==='in'){
-        v=LEN(v.n+t[i+1].v); i+=3; }
-    } else if(eat('in')) v=LEN(p.v);
+        v=UV(v.n+t[i+1].v,'len','ftin'); i+=3; }
+    }
+    else if(eat('in')) v=UV(p.v,'len','in');
+    else if(eat('%')) v=UV(p.v/100,'pct','%');
+    else if(peek()&&peek().k==='id'){
+      /* a unit written after the number: 60 W, 4.2 A, 24 V, 3 W/ft, 500 mm */
+      const w=String(peek().v).toLowerCase();
+      const per=UPER[w];
+      if(per&&t[i+1]&&t[i+1].k==='÷'&&t[i+2]&&t[i+2].k==='id'&&UPER_DIV[String(t[i+2].v).toLowerCase()]){
+        const div=UPER_DIV[String(t[i+2].v).toLowerCase()];
+        const mul=(UWORD[w]||[null,1])[1];
+        v=UV(p.v*mul/div,per,per==='wpl'?(div===12?'W/ft':'W/m'):(div===12?'lm/ft':'lm/m'));
+        i+=3;
+      } else if(UWORD[w]){
+        const [kind,mul]=UWORD[w];
+        const alt=(UKIND[kind].alts.find(x=>x.k.toLowerCase()===w)||{}).k||'';
+        v=UV(p.v*mul,kind,alt); i++;
+      }
+    }
     return v;
   }
   function term(){
@@ -5437,8 +5565,31 @@ function mathRun(src,seen){
     }
     return a;
   }
-  const v=expr();
+  let v=expr();
   if(bad) return {err:bad};
+  /* "… in mm" or "… to W/ft" — the same figure, read in the unit you asked for.
+     A bare trailing "in" is still inches, because the number came first. */
+  if(v&&i<t.length&&t[i].k==='id'&&/^(in|to|as)$/i.test(String(t[i].v))&&t[i+1]){
+    /* the target can be one word (mm), a compound the way a cutsheet writes it
+       (W/ft, which arrives as three tokens), or the percent sign */
+    let name=null, used=0;
+    if(t[i+1].k==='id'&&t[i+2]&&t[i+2].k==='÷'&&t[i+3]&&t[i+3].k==='id'){
+      const c=String(t[i+1].v)+'/'+String(t[i+3].v);
+      if(uKey(c)){ name=c; used=4; }
+    }
+    if(!name&&t[i+1].k==='id'){ name=String(t[i+1].v); used=2; }
+    if(!name&&t[i+1].k==='%'){ name='%'; used=2; }
+    if(!name) return {err:'say which unit to read it in'};
+    const want=uKey(name);
+    if(!want) return {err:'“'+name+'” is not a unit it knows'};
+    /* a plain number and a percentage are the same figure in different clothes —
+       0.15 is 15% — so those two convert into each other and nothing else does */
+    const plainPct=((v.u||'')===''&&want.u==='pct')||((v.u||'')==='pct'&&want.u==='');
+    if((v.u||'')!==want.u&&!plainPct)
+      return {err:'that is '+uName(v.u)+', which does not go into '+name};
+    v=plainPct?{n:v.n,u:want.u,as:want.as}:{n:v.n,u:v.u,as:want.as};
+    i+=used;
+  }
   if(i<t.length) return {err:'it does not read as one sum'};
   if(!v||!isFinite(v.n)) return {err:'that does not come out to a number'};
   return v;
@@ -5461,10 +5612,10 @@ function calcOf(a){
 }
 function calcText(v){
   if(!v||v.err) return null;
-  if(v.u==='len') return P.units==='metric'?fmtRun(v.n):fmtFtIn(v.n);
-  if(v.u==='area') return fmtArea(v.n);
-  const r=Math.round(v.n*1e4)/1e4;
-  return String(r);
+  /* a length with no unit asked for follows the project: feet and inches, or metres */
+  if(v.u==='len'&&!v.as) return P.units==='metric'?fmtRun(v.n):fmtFtIn(v.n);
+  if(v.u==='area'&&!v.as) return fmtArea(v.n);
+  return uFmt(v);
 }
 
 /* ---- writing the answer back ----
@@ -5647,6 +5798,7 @@ function calcToTreat(a){
    It runs on the same arithmetic the written sums use, so it knows lengths, the
    names sums have saved, and the runs on the job by their zone.
    ============================================================ */
+const CPAD_UNITS=['ft','in','m','mm','W','kW','A','V','W/ft','lm','%','sqft'];
 const CPAD_KEYS=[
   ['7','8','9','÷'],
   ['4','5','6','×'],
@@ -5695,16 +5847,26 @@ function cpadInsert(){
   if(!CTARGET||!document.body.contains(CTARGET.el)){
     toast('Click into the box you want it in first, then press Use'); return; }
   const el=CTARGET.el;
-  if(el.type==='number'&&v.u){
+  /* a box with no unit written on it cannot say feet from inches, so a length or
+     an area is refused rather than guessed at. Watts, amps, volts and lumens are
+     the units this app keeps those in anyway, so those go in as the plain figure
+     and the message says which unit it went in as. */
+  if(el.type==='number'&&(v.u==='len'||v.u==='area')){
     toast('“'+CTARGET.name+'” takes a plain number, and this is '
       +(v.u==='len'?'a length':'an area')+' — divide it out first'); return; }
-  el.value=v.u==='len'?(P.units==='metric'?fmtRun(v.n):fmtFtIn(v.n))
-    :v.u==='area'?fmtArea(v.n)
-    :String(Math.round(v.n*1e6)/1e6);
+  let as='';
+  if(el.type==='number'){
+    el.value=String(Math.round((v.u==='pct'?v.n*100:v.n)*1e6)/1e6);
+    if(v.u) as='  ·  as '+(v.u==='pct'?'a percentage':ukindOf(v.u).base);
+  }else{
+    el.value=v.u==='len'&&!v.as?(P.units==='metric'?fmtRun(v.n):fmtFtIn(v.n))
+      :v.u==='area'&&!v.as?fmtArea(v.n)
+      :uFmt(v);
+  }
   el.dispatchEvent(new Event('input',{bubbles:true}));
   el.dispatchEvent(new Event('change',{bubbles:true}));
   try{ el.focus(); el.select&&el.select(); }catch(_){}
-  toast(el.value+' into '+CTARGET.name);
+  toast(el.value+' into '+CTARGET.name+as);
 }
 function cpadToTreat(){
   const v=cpadValue();
@@ -5746,6 +5908,12 @@ function drawCpad(){
   const res=$('#cpadOut');
   res.textContent=out||'—';
   res.classList.toggle('bad',!!(v&&v.err));
+  /* the same answer in the other units of its kind: no syntax to remember, and
+     pressing one makes it the figure that gets used */
+  const alts=v&&!v.err?uAlts(v).filter(x=>x.txt!==out):[];
+  $('#cpadAlts').innerHTML=alts.map(x=>'<button data-alt="'+esc(x.k)+'" title="Read it in '+esc(x.t)+'">'
+    +esc(x.txt)+'</button>').join('');
+  $('#cpadAlts').style.display=alts.length?'':'none';
   $('#cpadTape').innerHTML=(c.tape||[]).slice().reverse().map((r,i)=>
     '<button data-tape="'+((c.tape.length-1)-i)+'" title="Use this again">'
     +esc(r.src)+'  =  <b>'+esc(r.txt)+'</b></button>').join('')
@@ -5784,10 +5952,16 @@ function wireCpad(){
     +'<div class="cpadbody">'
     +'<input id="cpadIn" spellcheck="false" placeholder="12′ 6″ + 3′ 4″" aria-label="The sum">'
     +'<div class="cpadout" id="cpadOut">—</div>'
+    +'<div class="cpadalts" id="cpadAlts"></div>'
     +'<div class="cpadkeys">'
     + CPAD_KEYS.map(row=>row.map(k=>'<button data-k="'+k+'">'+k+'</button>').join('')).join('')
     +'<button data-k="′">′</button><button data-k="″">″</button>'
     +'<button data-k="+">+</button><button class="pri" data-k="=">=</button>'
+    +'</div>'
+    /* the units you write after a number. Put one on and the answer carries it,
+       and the row above says what the same figure is in the others. */
+    +'<div class="cpadunits">'
+    + CPAD_UNITS.map(u=>'<button data-u="'+u+'">'+u+'</button>').join('')
     +'</div>'
     +'<div class="cpadrow">'
     +'<button class="btn sm" data-k="back">⌫</button>'
@@ -5801,7 +5975,9 @@ function wireCpad(){
     +'<button class="btn sm" id="cpadTreat" title="Order the selected run to this length">To the run</button>'
     +'<button class="btn sm" id="cpadCopy">Copy</button>'
     +'</div>'
-    +'<div class="hint">Feet and inches with ′ and ″. A run’s zone stands for its length, '
+    +'<div class="hint">Write the unit after the number — 60 W, 24 V, 3 W/ft, 500 mm — and the '
+    +'row under the answer reads it back in the others. Volts times amps is watts, watts over '
+    +'volts is amps, watts per foot times a length is watts. A run’s zone stands for its length, '
     +'and so does a name a written sum has saved.</div>'
     +'</div>';
   $('#cpadX').onclick=()=>toggleCpad(false);
@@ -5819,6 +5995,18 @@ function wireCpad(){
     if(k==='back'){ c.src=String(c.src||'').slice(0,-1); drawCpad(); markDirty(); return; }
     if(k==='='){ cpadEquals(); return; }
     cpadPush(k==='−'?'-':k);
+  });
+  $$('[data-u]',el).forEach(b=>b.onclick=()=>cpadPush(' '+b.dataset.u+' '));
+  $('#cpadAlts').addEventListener('click',e=>{
+    const b=e.target.closest('[data-alt]'); if(!b) return;
+    const c=cpadState(), v=cpadValue();
+    if(!v||v.err) return;
+    /* written into the sum so it is plain what was asked for, and so Use and the
+       tape carry the same unit */
+    const kind=ukindOf(v.u);
+    const alt=kind.alts.find(x=>x.k===b.dataset.alt);
+    c.src=(c.src||'').trim()+' in '+(alt?alt.k:b.dataset.alt);
+    drawCpad(); markDirty();
   });
   $('#cpadSel').onclick=()=>{
     const sel=V.sel&&P.ann.find(x=>x.id===V.sel);
@@ -14326,7 +14514,9 @@ function manualSections(){
       ['Poly length (G)','Tap each corner; every segment is measured and labelled separately, and the run can be closed into a loop.'],
       ['Arc length (A)','Three points — start, anywhere along the curve, then the end. Reports the arc, its radius and its included angle.'],
       ['Region (R)','Trace a room for its area, its perimeter, and the cove run at a set distance in from the wall. That inset is real geometry: each corner shortens the adjoining edges by d/tan(θ/2), so a 6" inset on a rectangle takes exactly 8d off.'],
-      ['The calculator (\u21e7C)','A calculator on the desk rather than in the app: it floats over the drawing where you put it, works in feet and inches, and \u2014 the part that makes it worth having here rather than reaching for a phone \u2014 <b>the answer goes into the box you were in</b>. Click into a run\u2019s length, a waste percentage, a wire allowance, anything; work it out; press Use. The button says which box it is about to fill, and the app takes the figure exactly as if it had been typed. A length goes into a text box as feet and inches; into a box with no unit on it, a length is refused rather than guessed at, because that is how a takeoff goes wrong. It runs on the same arithmetic a written sum does, so it knows lengths, the names sums have saved, and every run by its zone \u2014 Z4 \u00d7 2 is a real question, and the Selected run button puts the zone in for you. To the run states the answer as the selected run\u2019s length. The last eight answers stay on the tape; press one to carry on from it. Where it sits, what is in it and its tape all travel in the project.'],
+      ['Units, and converting between them','Write the unit after the number and the arithmetic keeps it: 500 mm, 2.5 m, 60 W, 0.5 kW, 4.2 A, 250 mA, 24 V, 3 W/ft, 150 lm/ft, 120 sqft, 15%. Feet and inches, millimetres and metres all add up together, and the answer comes back in the unit you wrote it in \u2014 nobody types mm to be told feet. Under the answer is the same figure in the other units of its kind; press one and it is that. In writing, \u201c\u2026 in mm\u201d or \u201c\u2026 to W/ft\u201d says which. The one thing to know: \u201cin\u201d straight after a bare number is inches, so \u201cto\u201d is the one that always means convert.'],
+      ['The electrics it knows','The rules a lighting job actually uses, and no others. <b>Volts times amps is watts</b>; watts over volts is amps; watts over amps is volts. <b>Watts per foot times a length is watts</b>, watts over a length is watts per foot, and watts over watts per foot is the length you can run \u2014 which is the sizing question, asked directly. The same three for lumens per foot. A percentage multiplies anything. Everything else is refused and says so: volts plus amps do not add up, volts times volts is not a thing. Two lengths multiplied is an area, an area over a length is a length. A figure with no unit written on it is a plain number, and adding one to a length is refused rather than guessed at \u2014 in a takeoff that is the mistake worth catching.'],
+      ['The calculator (\u21e7C)','A calculator on the desk rather than in the app: it floats over the drawing where you put it, works in feet and inches, and \u2014 the part that makes it worth having here rather than reaching for a phone \u2014 <b>the answer goes into the box you were in</b>. Click into a run\u2019s length, a waste percentage, a wire allowance, anything; work it out; press Use. The button says which box it is about to fill, and the app takes the figure exactly as if it had been typed. A length goes into a text box as feet and inches; into a box with no unit on it, a length is refused rather than guessed at, because that is how a takeoff goes wrong. A row of unit keys puts ft, in, m, mm, W, kW, A, V, W/ft, lm, % or sq ft on the number, and the row under the answer reads the same figure back in the others. It runs on the same arithmetic a written sum does, so it knows lengths, the electrics, the names sums have saved, and every run by its zone \u2014 Z4 \u00d7 2 is a real question, and the Selected run button puts the zone in for you. To the run states the answer as the selected run\u2019s length. The last eight answers stay on the tape; press one to carry on from it. Where it sits, what is in it and its tape all travel in the project.'],
       ['Writing a sum','Adding feet and inches on the drawing is most of a takeoff, and the answer belongs beside the thing it is about. Pick the sum tool and write it: 12\u20326\u2033 + 3\u20324\u2033 = and 15\u2032-10\u2033 appears in the same kind of line you wrote in. An \u003d closes the sum, and so does a pause or the tick on the draw bar; keep writing beside one to add to it. Feet and inches are real units \u2014 a length times a number is a length, a length divided by a length is a plain number, two lengths multiplied is an area, and a length plus a bare number is refused rather than guessed at, because in a takeoff that is exactly the mistake worth catching. A name on the left of the \u003d saves the answer under that name, and any other sum using it follows when it changes; a run\u2019s zone stands for its length, so Z4 \u00d7 2 is a real question with a real answer. The answer can be dropped straight onto a run as its stated length. It is a note on the sheet: it measures nothing and orders nothing by itself.'],
       ['How it reads your writing','Honestly, and not the way Apple does it. Math Notes on an iPad is an OS feature with a trained model behind it, and no browser can call it. This matches the shape of each symbol against a set of built-in ones \u2014 which is good enough for digits and operators written plainly, and not good enough to be trusted quietly. So it shows what it made of your writing, marks the symbols it was unsure of, and takes a correction: retype what it says and it both re-reads the sum and remembers those shapes as yours, weighing them above its own from then on. Correct a 7 once and your 7 reads as a 7. What it has learned travels in the project.'],
       ['The ruler (⇧R)','A straightedge lying on the drawing, the way it lies on a board: put it where the line goes and draw against its edge. Points drawn within a finger of an edge land on that edge exactly, so a freehand drag along it comes out dead straight at the ruler\u2019s angle — and there is nothing left for the smoothing to simplify away. One finger moves it; two fingers on it turn it about the point between them, which is how the hand actually does it; the wheel turns it with a mouse and the grip at its right end drags it round. The angle is magnetic every 15\u00b0 so level, plumb and 45\u00b0 land exactly, and \u2325 gives any angle. It is ticked in real units off the scale in force where it sits — including a scale region\u2019s own scale — so it doubles as a scale rule, and the chip above it reads the angle and how long the ruler itself is on the drawing. The drawing\u2019s own corners still beat it: where there is a snap point the mark goes to the corner, and the ruler takes over where there is none. It is an aid to placing marks and nothing else — it never appears in an export, and it changes no number that was not drawn against it.'],
