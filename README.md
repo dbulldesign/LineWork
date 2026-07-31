@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.72.0**
+**Version 1.72.1**
 
 ## What it does
 
@@ -362,6 +362,24 @@ entirely and comes back when the run is done.
 **Create treatment from this** now brings the takeoff rail in with it. On a tablet
 the rail is an overlay, so switching to the takeoff pane changed the tab behind a
 closed rail and nothing appeared to happen.
+
+## What an iPad keyboard does to a typed length
+
+iOS turns a typed `'` into `’` and a `"` into `”` before the field ever sees them, so
+a perfectly good `10'-6"` arrives as `10’-6”` — and the length reader refused it
+outright, which is why calibrating from the ruler on an iPad said it could not read
+the scale. Every reader of a typed length or scale now straightens the punctuation
+first: the curly quotes, the primes a keyboard offers instead, the dashes, and the
+spaces that are not spaces. The dialog fields also tell iOS not to rewrite what is
+typed. And when something really is unreadable, the message quotes back what arrived
+— including what it came through as, if that differs — and says what it would accept.
+
+## Closing a poly
+
+**Tap the corner it started from.** Once there are three corners a ring appears on
+the first one; it fills green when a tap would close it, and tapping closes the loop
+and finishes the run in one go. A region behaves the same way. `⏎` still finishes an
+open run, and a loop can be opened or closed afterwards from the inspector.
 
 ## Two taps for a dimension
 

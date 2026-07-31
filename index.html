@@ -1070,7 +1070,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.72.0';
+const APP_VER='1.72.1';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1264,9 +1264,30 @@ function fmtRun(inches){
   if(inches==null||!isFinite(inches)) return '—';
   return P.units==='metric' ? (inches*MM/1000).toFixed(3)+' m' : (inches/12).toFixed(2)+' ft';
 }
+/* iOS turns a typed ' into ’ and a " into ” before the field ever sees them, so a
+   perfectly good 10'-6" arrives as 10’-6” and used to be refused outright. Feet and
+   inches are the two characters this app asks for most, so every reader of a typed
+   length or scale straightens the punctuation first: the curly quotes, the primes a
+   keyboard offers instead, the dashes, and the spaces that are not spaces. */
+const straighten=t=>String(t)
+  .replace(/[\u2018\u2019\u02bc\u2032]/g,"'")
+  .replace(/[\u201c\u201d\u2033]/g,'"')
+  .replace(/[\u2013\u2014\u2212]/g,'-')
+  .replace(/[\u00a0\u2007\u202f\u2009]/g,' ')
+  .replace(/[\u2044]/g,'/')
+  .replace(/[\u00d7]/g,'x');
+/* what to say when a typed length will not read. Naming what arrived matters: on a
+   phone the characters on screen are not always the ones that were pressed. */
+function lenHelp(typed){
+  const raw=String(typed||'').trim();
+  const fixed=straighten(raw);
+  return 'Could not read \u201c'+raw+'\u201d'
+    +(fixed!==raw?' (which came through as \u201c'+fixed+'\u201d)':'')
+    +' \u2014 write it as '+(P.units==='metric'?'3200 mm, 3.2 m or 126"':'10\'-6", 10.5 ft or 126"');
+}
 function parseLen(str){
   if(str==null) return NaN;
-  let s=String(str).trim().toLowerCase().replace(/,/g,'').replace(/[–—]/g,'-');
+  let s=straighten(str).trim().toLowerCase().replace(/,/g,'').replace(/[–—]/g,'-');
   s=s.replace(/\s*\([^)]*\)\s*$/,'').trim();   /* accept our own "20.42 ft (245.3")" back */
   if(!s) return NaN; let m;
   if((m=s.match(/^([\d.]+)\s*mm$/))) return +m[1]/MM;
@@ -1300,8 +1321,7 @@ const ratioLabel=r=>{ const hit=SCALES.find(s=>Math.abs(s[1]-r)<0.02); return hi
 /* A scale typed rather than picked. Accepts the three ways a drawing states one:
    1/4"=1'-0" and 3/32 = 1'0", 1"=30', and 1:75. */
 function parseScale(str){
-  const t=String(str||'').trim().replace(/[\u2033\u201d]/g,'"').replace(/[\u2032\u2019]/g,"'")
-    .replace(/[\u2013\u2014]/g,'-').toLowerCase();
+  const t=straighten(str).trim().toLowerCase();
   if(!t) return null;
   let m;
   if(/^full(\s*size)?$/.test(t)||/^1\s*[:\/]\s*1$/.test(t)) return 1;
@@ -2262,7 +2282,11 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
           '<label><input type="checkbox" value="'+esc(o.v)+'"'+(sel.includes(String(o.v))?' checked':'')
           +'> '+esc(o.t)+'</label>').join('')+'</div>';
       }
-      else ctl='<input type="text" data-k="'+f.k+'" value="'+esc(f.val??'')+'" placeholder="'+esc(f.ph||'')+'">';
+      /* autocorrect off is what stops iOS turning ' and " into curly quotes as you
+         type; the readers straighten them anyway, but a field showing what you
+         actually typed is worth having */
+      else ctl='<input type="text" data-k="'+f.k+'" value="'+esc(f.val??'')+'" placeholder="'+esc(f.ph||'')
+        +'" autocorrect="off" autocapitalize="off" spellcheck="false">';
       d.innerHTML=(f.label&&f.type!=='check'?'<label>'+esc(f.label)+'</label>':'')+ctl+(f.hint?'<div class="hint" style="margin-top:4px">'+esc(f.hint)+'</div>':'');
       host.appendChild(d);
     });
@@ -3752,6 +3776,15 @@ function drawAnn(a,selected,isDraft,multi){
       g+='<g stroke="'+col+'" stroke-width="'+(W*.9).toFixed(2)+'">'+tick(pts[0],pts[1]||pts[0],pts[0]);
       if(pts.length>1) g+=tick(pts[pts.length-2],pts[pts.length-1],pts[pts.length-1]);
       g+='</g>';
+    }
+    /* the corner it started from, while there is enough of a run to close: a ring
+       to aim at, filled green once the pointer is close enough that a tap would */
+    if(isDraft&&a.poly&&pts.length>=4){
+      const p0=pts[0], last=pts[pts.length-1];
+      const hot=Math.hypot(last[0]-p0[0],last[1]-p0[1])<CLOSE_TOL();
+      g+='<circle cx="'+p0[0].toFixed(1)+'" cy="'+p0[1].toFixed(1)+'" r="'+(hot?8:5.5)
+        +'" fill="'+(hot?'var(--ok)':'none')+'" fill-opacity="'+(hot?'.4':'0')
+        +'" stroke="'+(hot?'var(--ok)':col)+'" stroke-width="'+(hot?2.2:1.3)+'"/>';
     }
     /* the round grip halfway along each segment: drag it and the segment bows
        into an arc. Faint on a straight segment, solid once it is curved. */
@@ -6875,7 +6908,8 @@ function liveLen(d){
   const run=(d.type==='cal'?'Ruler':'Length')+': '+(L==null?'—':fmtLen(L));
   /* while drafting a poly, show the segment being drawn next to the running total */
   const seg=(d.poly&&segs.length>1&&last&&last.len!=null)?'   seg '+segs.length+': '+fmtLen(last.len):'';
-  $('#stCoord').textContent=run+(segs.length>1?'  ('+segs.length+' seg)':'')+seg;
+  const shut=(d.poly&&Array.isArray(d.pts)&&d.pts.length>=4)?'   ·  tap the first corner to close':'';
+  $('#stCoord').textContent=run+(segs.length>1?'  ('+segs.length+' seg)':'')+seg+shut;
   syncDrawbar();
 }
 function endPointer(e){
@@ -6976,9 +7010,24 @@ function penHover(sc){
   else hint.classList.remove('show');
 }
 
+/* how close counts as "on the corner it started from", in screen pixels */
+const CLOSE_TOL=()=>coarse?22:14;
 function tapVertex(p,e){
   if((isLineTool(V.tool)||V.tool==='area'||V.tool==='whip')&&!curScale()){ toast('Set the scale first — trace a known dimension with the ruler'); setTool('cal'); return; }
   const raw=p; p=snapped(p);
+  /* Tapping the corner it started from closes the run and finishes it — the way
+     every drawing program does it, and the obvious thing to reach for. The last
+     point in the draft is the one following the pointer, so there are three real
+     corners once there are four points. It is dropped on commit, which is why the
+     tap that closes the loop does not become a fourth corner on top of the first. */
+  if(V.draft&&isPolyDraft(V.draft)&&V.draft.pts.length>=4){
+    const tol=CLOSE_TOL()/Math.max(V.zoom,.01);
+    if(ptLen(V.draft.pts[0],p)<tol){
+      if(V.draft.type==='line') V.draft.closed=true;
+      finishDraft();
+      return;
+    }
+  }
   /* If snapping would land on the vertex just placed, keep the raw click: the
      duplicate would be filtered out on commit and the point would vanish. */
   if(V.draft&&V.draft.pts.length>=2){
@@ -7795,7 +7844,7 @@ async function finishDraft(){
     if(!r){ P.ann=P.ann.filter(x=>x.type!=='cal'); drawOverlay(); setTool('pan'); return; }
     const known=parseLen(r.len);
     P.ann=P.ann.filter(x=>x.type!=='cal'); drawOverlay();
-    if(!isFinite(known)||known<=0){ toast('Could not read that length'); setTool('pan'); return; }
+    if(!isFinite(known)||known<=0){ toast(lenHelp(r.len)); setTool('pan'); return; }
     const measured=dist*cur.ratio/72;
     const err=(measured-known)/known;
     const want=known*72/dist;
@@ -7830,7 +7879,7 @@ async function finishDraft(){
     ],ok:'Set scale'});
     if(!r) { drawOverlay(); return; }
     const L=parseLen(r.len);
-    if(!isFinite(L)||L<=0){ toast('Could not read that length'); return; }
+    if(!isFinite(L)||L<=0){ toast(lenHelp(r.len)); return; }
     const ratio=L*72/dist;
     /* Calibration is the one step that silently invalidates every number
        downstream, so show what it implies and let it be rejected. */
@@ -14905,7 +14954,7 @@ function manualSections(){
   {id:'measure',t:'Measuring',blocks:[
     {rows:[
       ['Dimension (L)','Two taps: one where it starts, one where it ends, and that is the measurement \u2014 nothing to press afterwards. Drag instead and it traces a curve freehand. Either way it snaps to the drawing\u2019s own corners and endpoints. For a run that turns corners, use poly (G), which keeps going until you finish it.'],
-      ['Poly length (G)','Tap each corner; every segment is measured and labelled separately, and the run can be closed into a loop.'],
+      ['Poly length (G)','Tap each corner; every segment is measured and labelled separately. Tap the corner it started from to close the loop and finish \u2014 once there are three corners a ring appears on the first one, and it fills green when a tap would close it. \u23ce finishes an open run, and the loop can still be opened and closed afterwards from the inspector or the right-click menu.'],
       ['Arc length (A)','Three points — start, anywhere along the curve, then the end. Reports the arc, its radius and its included angle.'],
       ['Region (R)','Trace a room for its area, its perimeter, and the cove run at a set distance in from the wall. That inset is real geometry: each corner shortens the adjoining edges by d/tan(θ/2), so a 6" inset on a rectangle takes exactly 8d off.'],
       ['Units, and converting between them','Write the unit after the number and the arithmetic keeps it: 500 mm, 2.5 m, 60 W, 0.5 kW, 4.2 A, 250 mA, 24 V, 3 W/ft, 150 lm/ft, 120 sqft, 15%. Feet and inches, millimetres and metres all add up together, and the answer comes back in the unit you wrote it in \u2014 nobody types mm to be told feet. Under the answer is the same figure in the other units of its kind; press one and it is that. In writing, \u201c\u2026 in mm\u201d or \u201c\u2026 to W/ft\u201d says which. The one thing to know: \u201cin\u201d straight after a bare number is inches, so \u201cto\u201d is the one that always means convert.'],
@@ -15514,7 +15563,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   rulerOn,toggleRuler,rulerGeom,rulerEdge,guide,drawRuler,rulerLen,rulerTickStep,
   toggleCpad,drawCpad,cpadValue,cpadState,cpadInsert,cpadToTreat,cpadEquals,
   checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
-  imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,
+  imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,straighten,lenHelp,parseScale,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
   calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,
