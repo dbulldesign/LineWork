@@ -90,6 +90,25 @@ body[data-tools="rail"] .tools{
   border-bottom:0; border-right:1px solid var(--line2);
   overflow-x:hidden; overflow-y:auto;
 }
+/* ---- the rail on a tablet ----
+   Sixty pixels of width holds one column of finger-sized buttons, and one column
+   holds nowhere near forty of them: the rest were below the screen, which hides
+   them exactly as well as scrolling sideways did across the top. So it wraps into
+   as many columns as it needs and takes the width they came to — measured by the
+   app, because a wrapped column flex container does not report that to the grid
+   track it sits in. The cap is here: past it the answer is fewer tools on the bar,
+   not more rail, and past it the rail scrolls with every tool still in the ⋯ list. */
+@media(pointer:coarse){
+  body[data-tools="rail"] .tools{
+    flex-wrap:wrap; align-content:flex-start; height:100%;
+    width:var(--railtools,60px); max-width:min(38vw,420px);
+  }
+  body[data-tools="rail"] #toolbtns{
+    flex:0 1 auto; flex-flow:column wrap; align-content:flex-start;
+    min-height:0; max-height:100%;
+  }
+  body[data-tools="rail"] .inkbar{ flex-flow:column wrap; max-height:100% }
+}
 body[data-tools="rail"] #toolbtns{
   flex-direction:column; align-items:center;
   flex:0 0 auto; min-width:0; overflow:visible;
@@ -99,7 +118,9 @@ body[data-tools="rail"] .inkbar{ flex-direction:column }
 /* the zoom, fit and page controls float over the sheet, as they already do on a
    tablet — a vertical strip is the wrong shape for them */
 body[data-tools="rail"] .viewbar{
-  position:absolute; top:10px; right:10px; z-index:6;
+  /* below the calibrate bar rather than on top of its buttons — the app measures
+     that bar, because it is there or not depending on the sheet */
+  position:absolute; top:calc(var(--nagh,0px) + 10px); right:10px; z-index:6;
   background:var(--s1); border:1px solid var(--line2); border-radius:6px;
   padding:4px 6px; box-shadow:0 8px 24px rgba(0,0,0,.35);
 }
@@ -122,6 +143,17 @@ body[data-tools="rail"] #inspector{ z-index:7 }
 body[data-takeoff="drawer"] .sheet{
   grid-template-columns:260px minmax(0,1fr);
   grid-template-rows:auto minmax(0,1fr) var(--tk-h,320px) auto;
+}
+/* 320px of takeoff is a third of a laptop and most of a small tablet — with the
+   drawer open on an 11-inch iPad the sheet came out 73px tall. On a tablet the
+   drawer takes a share of the screen rather than a fixed slab, and it gives way
+   before the sheet does: the drawer's row may shrink to nothing, the sheet's may
+   not go below 200px. Whichever one you are looking at, you can see it. */
+@media(pointer:coarse){
+  body[data-takeoff="drawer"] .sheet{
+    grid-template-rows:auto minmax(calc(var(--toolh,0px) + 200px),1fr)
+      minmax(0,var(--tk-h,min(320px,34vh))) auto;
+  }
 }
 body[data-takeoff="drawer"] aside.left{ grid-column:1; grid-row:2 }
 body[data-takeoff="drawer"] main{ grid-column:2; grid-row:2 }
@@ -228,6 +260,8 @@ body[data-ws] .note{ line-height:1.55 }
 .lwws-seg{ display:flex; gap:5px; flex-wrap:wrap }
 
 @media(pointer:coarse){
-  body[data-tools="rail"] .tools{ width:68px }
+  /* the rail's width on a tablet is measured, not stated — see the rail block
+     above. It used to be pinned to 68px here, which is one column of
+     finger-sized buttons and left most of the toolbar below the screen. */
   .lwws-row{ padding:12px }
 }

@@ -513,13 +513,12 @@ input.up{text-transform:uppercase}
   .tb .mark{padding:0 10px}
   .tb .mark .ver{font-size:11px;padding:2px 5px}
   .cell.opt{display:none}
-  header.tb{overflow-x:auto}
-  /* zoom, fit and the page arrows are needed constantly, so they leave the
-     scrolling tool strip and sit over the sheet where a thumb can find them */
-  .viewbar{position:absolute;top:calc(55px + 8px);right:8px;z-index:6;
-    background:rgba(28,25,22,.94);border:1px solid var(--line2);border-radius:4px;
-    padding:4px 6px;box-shadow:0 8px 24px rgba(0,0,0,.5)}
-  body.light .viewbar{background:rgba(247,245,240,.95)}
+  /* Zoom, fit and the page arrows used to be lifted out of the strip and floated
+     over the sheet, because the strip scrolled sideways and they were needed
+     constantly. The strip wraps now, so they stay in it: a floating panel pinned
+     8 px under a 55 px toolbar sat on top of a 148 px one, and one fewer thing
+     over the drawing is worth having anyway. A side rail is still the wrong shape
+     for them, and there they still float — see the workspace stylesheet. */
   .viewbar .sep{height:22px}
   /* the inspector becomes a sheet along the bottom rather than a column that
      eats a third of a narrow drawing */
@@ -653,6 +652,30 @@ body.padtop header.tb{padding-top:24px}
 #drawbar .rd{font-family:var(--mono);font-size:12px;color:var(--amber);margin-right:4px;white-space:nowrap}
 .inkbar{display:flex;align-items:center;gap:5px}
 .inkbar .sw{width:17px;height:17px;border-radius:50%}
+/* ---- every tool by name ----
+   An icon is a reminder, not a label. Thirty of them in a strip is a lot to hunt
+   through with a finger, so ⋯ opens the same set written out. It earns its place
+   on a tablet; with a mouse there are tooltips and a keyboard, so it stays off. */
+.tsx{display:none;place-items:center}
+/* Ruler and Calc say what they are, which is right across the top and wrong down
+   the side: two words set the width of every column in the rail. Down the side
+   they keep the glyph and lose the word, and the title still says it. */
+body[data-tools="rail"] #btnRuler .lbl,
+body[data-tools="rail"] #btnCalc .lbl{display:none}
+.tsdlg{width:min(680px,94vw)}
+.tsgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:6px}
+.tsi{display:flex;align-items:center;gap:9px;padding:9px 10px;background:var(--s2);
+  border:1px solid var(--line);border-radius:4px;color:var(--txt);text-align:left;cursor:pointer;
+  font-size:12px;min-height:44px}
+.tsi:hover{background:var(--s3)}
+.tsi.on{background:var(--amber);border-color:var(--amber);color:#20170A}
+.tsi svg{width:19px;height:19px;flex:none;fill:none;stroke:currentColor;stroke-width:1.6;
+  stroke-linecap:round;stroke-linejoin:round}
+.tsi .k{font-family:var(--mono);font-size:10px;color:var(--faint);margin-left:auto}
+.tsi.on .k{color:#4a3410}
+.tsgrp{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
+  margin:12px 0 6px}
+.tsgrp:first-child{margin-top:0}
 #penFlag{display:none;color:var(--amber)}
 body.haspen #penFlag{display:inline}
 /* ---------- a finger, not a mouse ----------
@@ -662,18 +685,24 @@ body.haspen #penFlag{display:inline}
    whole page the moment you tap into one. */
 @media(pointer:coarse){
   .tool{width:44px;height:42px;flex:0 0 auto}
-  /* one swipe should reach every control, so the strip does not scroll separately */
-  #toolbtns{flex:0 0 auto;overflow:visible;min-width:0;flex-wrap:nowrap}
-  .tools{flex-wrap:nowrap}
   .tool svg{width:21px;height:21px}
   .btn{padding:9px 13px;min-height:40px}
   .btn.sm{padding:7px 10px;min-height:34px;font-size:12px}
-  .tools{padding:6px 8px;gap:5px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;
-    scrollbar-width:none;-webkit-overflow-scrolling:touch}
-  .tools::-webkit-scrollbar{display:none}
-  .tools.more{mask-image:linear-gradient(to right,#000 calc(100% - 30px),rgba(0,0,0,.12));
-    -webkit-mask-image:linear-gradient(to right,#000 calc(100% - 30px),rgba(0,0,0,.12))}
-  .tools>*{flex:none}
+  /* ---- every control on screen ----
+     This strip used to hold itself to one row and scroll sideways, with a fade at
+     the edge as the only hint there was more. On a real iPad that put two thirds
+     of it past the right edge — the colours, the line weight, undo and redo,
+     Snap, Ruler, Calc, the scale — and nobody swipes a toolbar they cannot see
+     the end of. A row of tools costs 47 px of drawing; a tool you cannot find
+     costs the job. So it wraps, and the ⋯ button lists every tool by name for
+     when an icon is not enough. */
+  .tools{padding:6px 8px;gap:5px;flex-wrap:wrap;overflow:visible}
+  #toolbtns{flex:1 1 100%;min-width:0;flex-wrap:wrap;overflow:visible}
+  .tsx{display:grid}
+  /* the header wraps for the same reason: at anything under about 1170 px it was
+     scrolling Save, Project, Settings and Help off the right-hand end */
+  header.tb{overflow-x:visible;flex-wrap:wrap;height:auto;min-height:0}
+  header.tb .cell{min-width:0}
   .item{padding:13px 12px}
   .item .t{font-size:13px}
   .inkbar .sw{width:26px;height:26px}
@@ -764,6 +793,7 @@ body.haspen #penFlag{display:inline}
 <main>
   <div class="tools" id="toolbar">
     <span id="toolbtns"></span>
+    <button class="tool tsx" id="btnMore" title="Every tool by name"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg></button>
     <span class="sep"></span>
     <span class="inkbar" id="inkbar"></span>
     <select id="inkW" title="Line weight for new markups" style="width:auto;padding:4px 6px;font-size:11px"><option value="1">Hairline</option><option value="1.8" selected>Thin</option><option value="3">Medium</option><option value="4.5">Bold</option><option value="7">Heavy</option></select>
@@ -773,8 +803,8 @@ body.haspen #penFlag{display:inline}
     <button class="tool" id="btnMulti" title="Add to selection — tap markups to build a set (⇧-click does the same)"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="13" height="13" rx="1"/><path d="M8 20h11a1 1 0 001-1V8"/></svg></button>
     <button class="btn sm ghost" id="btnFinger" title="What one finger does">✋ Finger pans</button>
     <button class="btn sm ghost" id="btnSnap" title="Snap to the drawing's own geometry">⊹ Snap</button>
-    <button class="btn sm ghost" id="btnRuler" title="A straightedge to draw against (⇧R)">▭ Ruler</button>
-    <button class="btn sm ghost" id="btnCalc" title="A calculator that works in feet and inches, and puts the answer in the box you were in (⇧C)">🖩 Calc</button>
+    <button class="btn sm ghost" id="btnRuler" title="A straightedge to draw against (⇧R)">▭<span class="lbl"> Ruler</span></button>
+    <button class="btn sm ghost" id="btnCalc" title="A calculator that works in feet and inches, and puts the answer in the box you were in (⇧C)">🖩<span class="lbl"> Calc</span></button>
     <button class="btn sm ghost" id="btnScroll" title="What the scroll wheel does">⊕ Scroll zooms</button>
     <span class="sep"></span>
     <select id="scalePreset" style="width:auto;padding:4px 6px;font-size:11px"><option value="">Set scale…</option></select>
@@ -1022,6 +1052,8 @@ body.haspen #penFlag{display:inline}
 <div id="railScrim"></div>
 <div id="ctx"></div>
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
+<div class="scrim" id="tsScrim"><div class="dlg tsdlg"><h3>Tools</h3><div class="bd" id="tsBody"></div>
+  <div class="ft"><span class="hint" id="tsHint"></span><button class="btn" id="tsX">Close</button></div></div></div>
 <div id="pals"></div>
 <div id="cpad"></div>
 <div class="grab" id="grabL" title="Drag to resize the sheets rail — double-click to reset"></div>
@@ -1070,7 +1102,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.73.0';
+const APP_VER='1.74.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -3432,6 +3464,7 @@ function syncScaleUI(){
   /* calibration comes before everything else, so say so where it cannot be missed */
   const bar=$('#calNag');
   if(bar) bar.style.display=(V.docId&&FILES[V.docId]&&!s)?'':'none';
+  if(typeof railFit==='function') railFit();
 }
 
 /* ---- overlay drawing ---- */
@@ -5296,6 +5329,35 @@ const toolOrder=()=>TOOLS.slice().sort((a,b)=>
 const toolDef=k=>TOOLS.find(x=>x.k===k)||null;
 const toolShown=k=>{ const d=toolDef(k); if(!d) return false;
   if(d.core) return true; return !(P.hideTool&&P.hideTool[k]); };
+/* the short half of a tool's title: the registry writes "Dimension \u2014 tap one
+   end, tap the other", which is the tooltip. A list wants the name. */
+const toolName=d=>String(d.t).split(' \u2014 ')[0].trim();
+/* ---- every tool by name ----
+   An icon is a reminder, not a label, and thirty of them is a lot to hunt through
+   with a finger. This is the same registry the toolbar is drawn from, written out
+   in its groups, with the keyboard letter where there is a keyboard. It is the
+   answer to "where has that tool gone" whatever the toolbar is doing. */
+function openToolSheet(){
+  const body=$('#tsBody'); if(!body) return;
+  let g='', last='';
+  toolOrder().filter(d=>toolShown(d.k)).forEach(d=>{
+    if(d.g!==last){ g+=(last?'</div>':'')+'<div class="tsgrp">'+esc(d.g)+'</div><div class="tsgrid">';
+      last=d.g; }
+    g+='<button class="tsi'+(V.tool===d.k?' on':'')+'" data-tool="'+d.k+'" title="'+esc(d.t)+'">'
+      +d.svg+'<span>'+esc(toolName(d))+'</span>'
+      +(d.key?'<span class="k">'+esc(d.key)+'</span>':'')+'</button>';
+  });
+  if(last) g+='</div>';
+  const off=TOOLS.filter(d=>!toolShown(d.k)).length;
+  body.innerHTML=g;
+  $$('[data-tool]',body).forEach(b=>b.onclick=()=>{ setTool(b.dataset.tool); closeToolSheet(); });
+  const hint=$('#tsHint');
+  if(hint) hint.textContent=off
+    ? off+' more turned off in Settings \u203a Tools'
+    : 'Settings \u203a Tools chooses which of these are on the toolbar';
+  $('#tsScrim').classList.add('show');
+}
+const closeToolSheet=()=>$('#tsScrim').classList.remove('show');
 /* the toolbar, and every pinned palette, are drawn from the registry */
 function renderToolbar(){
   const host=$('#toolbtns'); if(!host) return;
@@ -5308,6 +5370,7 @@ function renderToolbar(){
   host.innerHTML=g;
   wireTools(host);
   $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===V.tool));
+  if(typeof railFit==='function') railFit();
 }
 const toolBtn=d=>'<button class="tool'+(V.tool===d.k?' on':'')+'" data-tool="'+d.k+'" title="'
   +esc(d.t)+(d.key?' ('+d.key+')':'')+'">'+d.svg+'</button>';
@@ -6605,7 +6668,8 @@ function drawRuler(){
 function syncRulerBtn(){
   const b=$('#btnRuler'); if(!b) return;
   b.classList.toggle('pri',rulerOn());
-  b.textContent=rulerOn()?'▭ Ruler on':'▭ Ruler';
+  /* the glyph stays, the word is in a span so the side rail can drop it */
+  b.innerHTML='▭<span class="lbl"> Ruler'+(rulerOn()?' on':'')+'</span>';
   b.title=rulerOn()?'Draw against its edge; two fingers on it turn it. ⇧R puts it away'
                    :'A straightedge to draw against (⇧R)';
 }
@@ -14603,6 +14667,7 @@ function applyPanels(){
     sw.title=p.swap?'Sheets on the right, takeoff on the left — tap to swap back'
                    :'Swap the rails over'; }
   applyRailW();
+  railFit();
   if(V.vp) scheduleRepaint(true);          /* the viewport changed width */
 }
 /* ---- rails you can drag wider ----
@@ -14704,8 +14769,57 @@ function syncToolFade(){
   const t=$('#toolbar'); if(!t) return;
   t.classList.toggle('more',t.scrollWidth-t.clientWidth-t.scrollLeft>4);
 }
+/* ---- a side rail as wide as it needs to be ----
+   With a workspace that stands the tools up the side, a finger-sized button is
+   44 px and the rail is 60: on any tablet that is one column, which is nowhere
+   near enough for forty of them, and the rest were simply below the screen. The
+   rail wraps into columns now — but a wrapped column of flex items does not
+   report the width of its own columns to the grid track it sits in, so the width
+   has to be measured and stated. Capped in the stylesheet, because past a point
+   the answer is fewer tools on the bar rather than more rail; past the cap it
+   scrolls, and \u22ef still has every tool by name. */
+function railFit(){
+  const t=$('#toolbar'); if(!t) return;
+  const root=document.documentElement;
+  /* the calibrate bar is the full width of the sheet and the zoom strip floats at
+     the top right of it, so the strip is told how far down to start */
+  const nag=$('#calNag');
+  root.style.setProperty('--nagh',
+    (nag&&nag.offsetParent&&nag.style.display!=='none'?nag.offsetHeight:0)+'px');
+  /* how much of the sheet's own row the tool strip is taking, so a layout that has
+     to divide the height — the takeoff as a drawer — can keep a sheet worth
+     looking at underneath it rather than leaving 71 px of one */
+  root.style.setProperty('--toolh',
+    (coarse&&document.body.dataset.tools!=='rail'?t.offsetHeight:0)+'px');
+  if(!(coarse&&document.body.dataset.tools==='rail')){
+    root.style.removeProperty('--railtools'); return;
+  }
+  /* Lay it out at the minimum, then read what the columns came to and say so.
+     It takes a few passes: a wider rail lets the buttons in it take their natural
+     width instead of being squeezed, which can call for another column. Reading
+     scrollWidth forces the reflow, so the loop settles rather than spinning. */
+  root.style.setProperty('--railtools','60px');
+  let w=60;
+  for(let i=0;i<5;i++){
+    const need=Math.max(60,t.scrollWidth+2);
+    if(need<=w+1) break;
+    w=need;
+    root.style.setProperty('--railtools',w+'px');
+  }
+}
 $('#toolbar').addEventListener('scroll',syncToolFade,{passive:true});
 addEventListener('resize',()=>setTimeout(syncToolFade,140));
+addEventListener('resize',()=>setTimeout(railFit,150));
+/* the workspace is set from its own file, which knows nothing about this, so watch
+   for the arrangement changing rather than asking it to tell us */
+if(window.MutationObserver){
+  let rt=null;
+  new MutationObserver(()=>{ clearTimeout(rt); rt=setTimeout(railFit,60); })
+    .observe(document.body,{attributes:true,attributeFilter:['data-tools','data-takeoff','data-tk']});
+}
+$('#btnMore').onclick=openToolSheet;
+$('#tsX').onclick=closeToolSheet;
+$('#tsScrim').onclick=e=>{ if(e.target===$('#tsScrim')) closeToolSheet(); };
 $('#zIn').onclick=()=>zoomBy(1.25); $('#zOut').onclick=()=>zoomBy(.8); $('#zFit').onclick=()=>fitPage();
 function zoomBy(f){ if(!V.vp) return; flushWheel();
   const r=viewport.getBoundingClientRect(), g=zGrab(r.left+r.width/2,r.top+r.height/2);
@@ -14774,6 +14888,7 @@ document.addEventListener('keydown',e=>{
     setMulti(pageAnns().filter(annVisible).map(a=>a.id));
     toast((V.multi.length||(V.sel?1:0))+' markup(s) selected on this page'); return; }
   if(k==='escape'){ closeCtx(); closeRails();
+    if($('#tsScrim').classList.contains('show')){ closeToolSheet(); return; }
     if(CALC.pend.length){ CALC.pend=[]; clearTimeout(CALC.t); CALC.t=null; V.draft=null; drawOverlay();
       toast('Dropped what was part-written'); return; }
     V.draft=null; V.threeN=0; V.arcN=0; V.sel=null; V.multi=[]; V.marq=null;
@@ -14921,6 +15036,7 @@ function cmdItems(){
   add('File','Export the workbook',exportWorkbook);
   add('File','Open the printable report',openReport);
   add('View','Settings…',openSettings,'⌘,');
+  add('View','Tools — every tool by name…',openToolSheet);
   add('View','Tools — what shows, and palettes…',()=>{ setTab='tools'; openSettings(); });
   add('View','Pin a tool palette…',()=>editPal(null));
   add('View','Manual',()=>openManual(),'?');
@@ -15094,6 +15210,7 @@ function manualSections(){
       ['Turning things','Drag the round grip above a selected text markup, or type an angle in the inspector. Angles snap at 15°.'],
       ['Line weight','Per markup, from the toolbar or the inspector.'],
       ['Ink (P)','Freehand, pressure-sensitive with an Apple Pencil.'],
+      ['Where the tools are on a tablet','The strip wraps to as many rows as it takes, and the side rail to as many columns \u2014 every tool and every control on screen, with nothing to swipe or scroll to find. It used to hold one row and scroll sideways with a fade at the edge as the only hint, which on an iPad put two thirds of it past the right-hand end: the colours, the line weight, undo and redo, Snap, Ruler, Calc and the scale. \u22ef opens the same set written out by name in its groups, which is the answer to \u201cwhere has that tool gone\u201d \u2014 and Settings \u203a Tools turns off the ones this job does not need, which is the way to shorten the strip.'],
       ['Right-click anywhere','Not just the sheet. A sheet in the list, a markup row, a run card, a library product, a piece in the cut list — each gives the menu of things you would do to that one thing, including copying its order code straight to the clipboard. On the sheet it is aimed at whatever is under the pointer: a label has its own menu, a markup has its, a segment offers to curve just that segment. ⇧-right-click gives the browser’s own menu where you want it, and middle- or right-dragging pans.'],
     ]}]},
   {id:'labels',t:'Labels',blocks:[
@@ -15680,6 +15797,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   toggleCpad,drawCpad,cpadValue,cpadState,cpadInsert,cpadToTreat,cpadEquals,
   checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
   imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,straighten,lenHelp,parseScale,
+  openToolSheet,closeToolSheet,railFit,toolName,
   inkLbl,alignRuns,chipSvg,chipGrab,chipBox,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,

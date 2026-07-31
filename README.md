@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.73.0**
+**Version 1.74.0**
 
 ## What it does
 
@@ -387,6 +387,43 @@ The dimension tool is one segment: **tap where it starts, tap where it ends**, a
 that is the measurement — nothing to press afterwards. Drag instead and it traces a
 curve freehand, as it always did. Poly (`G`) is the tool that keeps going until you
 finish it, for a run that turns corners.
+
+## The window on a tablet
+
+Every tool and every control is **on screen**, on every iPad, both ways up, whichever
+arrangement of the workspace you are in. That was not true before: the tool strip held
+itself to one row and scrolled sideways, with a fade at the right-hand edge as the only
+hint there was more, and on a real iPad that put two thirds of it past the edge — the
+five colours, the line weight, undo and redo, Snap, Ruler, Calc and the scale. The header
+did the same thing below about 1170px, taking Save, Project, Settings and Help with it.
+And a workspace that stands the tools up the side pinned the rail to 68px, which is one
+column of finger-sized buttons and left eleven of thirty tools below the screen.
+
+- The **tool strip wraps** to as many rows as it takes. Rows cost height; a tool you
+  cannot find costs the job.
+- The **side rail wraps** into as many columns as it takes, and takes the width they came
+  to — measured, because a wrapped column of flex items does not report the width of its
+  own columns to the grid track it sits in.
+- The **header wraps** rather than scrolling its buttons out of reach.
+- **⋯** opens every tool written out by name, in its groups, with its keyboard letter —
+  the answer to *where has that tool gone*, and useful even when nothing is hidden. On a
+  desktop it is in ⌘K.
+- The **zoom, fit and page strip** is back in the toolbar instead of floating over the
+  sheet. It was pinned 8px under a 55px toolbar and sat on top of a 148px one; one fewer
+  thing over the drawing is worth having anyway. A side rail is still the wrong shape for
+  it, and there it floats — below the calibrate bar, not on top of its buttons.
+- The **takeoff drawer** takes a share of the screen rather than a fixed 320px slab, and
+  gives way before the sheet does. With it open on an 11-inch iPad the sheet used to come
+  out 71px tall.
+
+Twenty layouts — five iPads, both orientations, tools on top or down the side, takeoff at
+the side or in a drawer — are checked on every run: nothing off the screen, and no strip
+of controls hiding its own contents behind a scroll. The tightest of the twenty is a small
+iPad with the takeoff drawer open *and* the calibrate banner still up, which leaves about
+110px of sheet; calibrating dismisses the banner and gives it back.
+
+**To shorten the strip**, Settings › Tools turns off what this job does not need. That is
+the intended lever, and it is remembered with the workspace.
 
 ## Measurements in the line
 
