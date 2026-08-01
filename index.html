@@ -1066,9 +1066,11 @@ body.haspen #penFlag{display:inline}
         <button class="btn pri" id="btnJson">Save project file</button>
         <button class="btn" id="btnBundle">Save with drawings</button>
         <input type="file" id="presetInput" accept=".json,application/json" hidden>
+        <input type="file" id="runsInput" accept=".csv,text/csv,text/plain" hidden>
         <button class="btn" id="btnPresetSave">Save preset</button>
         <button class="btn" id="btnPresetOpen">Apply preset</button>
         <button class="btn" id="btnOpenProj">Open project file</button>
+        <button class="btn" id="btnRuns">Import runs from a spreadsheet</button>
         <button class="btn" id="btnAutoFile" style="display:none">Auto-save to a file…</button>
       </div>
       <div class="hint" style="margin-top:6px"><b>Save project file</b> writes the whole takeoff — sheets, scale, markups, treatments and libraries — as one <b>.linework.json</b> (⌘S / Ctrl-S). Small, but the drawings are not in it: open it elsewhere and you re-import the same PDFs for the markups to reattach.</div>
@@ -1207,7 +1209,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.85.0';
+const APP_VER='1.86.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -10945,8 +10947,12 @@ function applyTdef(t,force){
   });
   return n;
 }
-function newTreat(annId){
-  snap();
+/* `quiet` is for a caller that has already taken a snapshot and is about to
+   create a great many of these: forty rows off a spreadsheet were forty history
+   steps, so undoing an import took back one row of it and left the other
+   thirty-nine, which is not what anybody means by undoing an import. */
+function newTreat(annId,quiet){
+  if(!quiet) snap();
   const t={id:uid('t_'),tag:'L-'+pad(P.seq++),type:'',zone:'',name:'New treatment',room:'',docId:V.docId,page:V.page,
     annId:annId||null,manual:0,qty:1,feedOv:0,cutLock:0,fixId:P.fix[0].id,chId:P.ch[0].id,psuId:P.psu[1]?P.psu[1].id:P.psu[0].id,
     round:'',clip:'',shop:'',detail:'',cct:0,variant:'',feedIn:'',feedOut:'',wire:'',wtype:'',dim:'',notes:''};
@@ -13768,6 +13774,141 @@ function blobDataUrl(blob){
     r.readAsDataURL(blob);
   });
 }
+/* ---- a takeoff that started somewhere else ----
+   Plenty of jobs are half done in a spreadsheet before anybody opens a drawing,
+   and retyping forty runs to get them into the app is the reason somebody keeps
+   using the spreadsheet. This reads one: a CSV of runs, each with a type, a
+   zone and a length, and each becomes a treatment with its length set by hand.
+
+   No markup and no drawing, deliberately. A row in a spreadsheet says a cove is
+   forty feet; it does not say where the cove is, and inventing a line on a sheet
+   to hang the number from would be drawing something nobody measured. The runs
+   arrive measured-by-hand and unplaced, and can be attached to a markup later by
+   drawing one and pressing From selection.
+
+   Column names are matched rather than positions, because nobody's spreadsheet
+   has the columns in this order. Anything unrecognised is reported by name. */
+function csvRows(text){
+  /* quotes, embedded commas and embedded newlines: a spreadsheet exports all
+     three and a split on comma gets all three wrong */
+  const out=[]; let row=[], cell='', q=false;
+  const t=String(text||'').replace(/\r\n?/g,'\n');
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(q){
+      if(c==='"'){ if(t[i+1]==='"'){ cell+='"'; i++; } else q=false; }
+      else cell+=c;
+    } else if(c==='"') q=true;
+    else if(c===','){ row.push(cell); cell=''; }
+    else if(c==='\n'){ row.push(cell); out.push(row); row=[]; cell=''; }
+    else cell+=c;
+  }
+  if(cell!==''||row.length){ row.push(cell); out.push(row); }
+  return out.filter(r=>r.some(x=>String(x).trim()!==''));
+}
+/* what each column of somebody's spreadsheet is, by what it is called */
+const CSV_COLS=[
+  {k:'type',t:'Type',re:/^(type|treatment|fixture ?type|designation)$/},
+  {k:'zone',t:'Zone',re:/^(zone|zone ?(no|#|number)|area)$/},
+  {k:'name',t:'Description',re:/^(name|description|desc|location|detail)$/},
+  {k:'room',t:'Room',re:/^(room|space)$/},
+  {k:'len',t:'Length',re:/^(len|length|run|linear ?(ft|feet)?|lf|qty ?ft)$/},
+  {k:'qty',t:'How many',re:/^(qty|quantity|count|runs|no|number)$/},
+  {k:'notes',t:'Notes',re:/^(note|notes|comment|comments|remarks)$/},
+];
+const csvNorm=h=>String(h||'').trim().toLowerCase().replace(/[._]+/g,' ')
+  .replace(/\s+/g,' ').replace(/\(.*\)$/,'').trim();
+function csvMap(head){
+  const map={}, spare=[];
+  head.forEach((h,i)=>{
+    const n=csvNorm(h);
+    const hit=CSV_COLS.find(c=>c.re.test(n));
+    if(hit&&map[hit.k]==null) map[hit.k]=i; else if(String(h).trim()) spare.push(String(h).trim());
+  });
+  return {map,spare};
+}
+/* the whole read, as a plan rather than as a change: what would be made, what
+   could not be, and why — so it can be looked at before anything happens */
+function csvPlan(text){
+  const rows=csvRows(text);
+  if(rows.length<2) return {err:'That file has no rows in it'};
+  const {map,spare}=csvMap(rows[0]);
+  if(map.type==null&&map.name==null)
+    return {err:'No Type or Description column in there — the headings found were: '
+      +rows[0].map(x=>String(x).trim()).filter(Boolean).join(', ')};
+  const runs=[], skip=[];
+  rows.slice(1).forEach((r,i)=>{
+    const get=k=>map[k]==null?'':String(r[map[k]]??'').trim();
+    const type=get('type'), name=get('name');
+    if(!type&&!name){ skip.push({row:i+2,why:'no type and no description'}); return; }
+    const lenTxt=get('len');
+    /* a spreadsheet writes a length as 40, 40 ft, or 40'-6"; all three are read
+       the way one typed into the app would be, and a bare number is feet
+       because that is what a spreadsheet column of lengths is */
+    let len=null;
+    if(lenTxt){
+      len=/^[\d.]+$/.test(lenTxt)?(+lenTxt)*12:parseLen(lenTxt);
+      if(!isFinite(len)||len<=0){ skip.push({row:i+2,why:'could not read "'+lenTxt+'" as a length'}); return; }
+    }
+    const qty=Math.max(1,Math.round(+get('qty')||1));
+    runs.push({row:i+2,type:type.toUpperCase(),zone:get('zone'),name:name||'',
+      room:get('room'),notes:get('notes'),len,qty});
+  });
+  return {runs,skip,spare,cols:Object.keys(map).map(k=>CSV_COLS.find(c=>c.k===k).t),
+    head:rows[0].map(x=>String(x).trim())};
+}
+function csvApply(plan){
+  snap('Import runs');
+  const made=[];
+  plan.runs.forEach(r=>{
+    const t=newTreat(null,true);
+    t.type=r.type; t.zone=r.zone; t.name=r.name||'Imported run';
+    t.room=r.room; t.notes=r.notes; t.qty=r.qty;
+    if(r.len!=null) t.manual=r.len;
+    t.docId=null; t.page=null;
+    /* The office's defaults for this type, if there are any on file, and forced:
+       a fresh treatment arrives holding the first product in the library as a
+       placeholder rather than as a choice, and an unforced apply reads that
+       placeholder as somebody's decision and leaves it. Nothing here is anybody's
+       decision — the row named a type and said nothing about a product. */
+    applyTdef(t,true);
+    made.push(t);
+  });
+  V.fresh=null;
+  renderTreatments(); renderBom(); stats(); markDirty();
+  return made;
+}
+async function importRuns(f){
+  if(!f) return;
+  let text='';
+  try{ text=await f.text(); }catch(e){ toast('Could not read that file'); return; }
+  const plan=csvPlan(text);
+  if(plan.err){ toast(plan.err); return; }
+  if(!plan.runs.length){
+    toast('Nothing in that file read as a run'
+      +(plan.skip.length?' — '+plan.skip.length+' row'+(plan.skip.length===1?'':'s')+' skipped':''));
+    return;
+  }
+  const withLen=plan.runs.filter(r=>r.len!=null).length;
+  const sample=plan.runs.slice(0,6).map(r=>'  '+(r.type||'—')+(r.zone?' '+r.zone:'')
+    +(r.len!=null?'  '+fmtRun(r.len):'  no length')+(r.qty>1?'  ×'+r.qty:'')).join('\n');
+  const r=await dlg({title:'Import runs',fields:[
+    {k:'go',type:'check',cap:'Create '+plan.runs.length+' run'+(plan.runs.length===1?'':'s'),val:true}
+  ],ok:'Import',
+    note:'Read '+plan.cols.join(', ')+'.\n'+sample
+      +(plan.runs.length>6?'\n  … and '+(plan.runs.length-6)+' more':'')
+      +'\n\n'+withLen+' of '+plan.runs.length+' have a length; the rest arrive at zero for you to fill in.'
+      +(plan.skip.length?'\n'+plan.skip.length+' row'+(plan.skip.length===1?'':'s')+' skipped: '
+        +plan.skip.slice(0,4).map(x=>'row '+x.row+', '+x.why).join('; ')
+        +(plan.skip.length>4?'; …':''):'')
+      +(plan.spare.length?'\nColumns not used: '+plan.spare.join(', ')+'.':'')
+      +'\n\nThey arrive measured by hand and not on a sheet — a spreadsheet says how long a cove is, not where it is. Draw the run and press From selection to tie one to the drawing.'});
+  if(!r||!r.go) return;
+  const made=csvApply(plan);
+  showTreatPane();
+  toast(made.length+' run'+(made.length===1?'':'s')+' imported — give them products, or a type default will');
+}
+
 /* ---- what a photograph is a photograph of ----
    A photo is pinned at a point, which is enough to find it on the sheet and not
    enough to put it in a report: "photo 4" tells the reader nothing. What it is
@@ -15429,6 +15570,8 @@ $('#btnPresetSave').onclick=savePreset;
 $('#cmdQ').oninput=()=>{ CMD.shown=cmdMatch(CMD.items,$('#cmdQ').value.trim()); CMD.i=0; cmdDraw(); };
 $('#cmdScrim').onclick=e=>{ if(e.target.id==='cmdScrim') closeCmd(); };
 $('#btnPresetOpen').onclick=()=>$('#presetInput').click();
+$('#runsInput').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) importRuns(f); };
+$('#btnRuns').onclick=()=>$('#runsInput').click();
 $('#presetInput').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) openPreset(f); };
 $('#btnTakeOver').onclick=lockTake;
 $('#btnAutoFile').onclick=()=>{
@@ -15911,6 +16054,7 @@ function cmdItems(){
   add('View','Settings…',openSettings,'⌘,');
   add('View','Tools — every tool by name…',openToolSheet);
   add('Export','Bench ticket — one page per zone for the shop…',()=>openBench());
+  add('File','Import runs from a spreadsheet…',()=>$('#runsInput').click());
   add('Takeoff','Renumber zones…',()=>renumber());
   add('View','Tools — what shows, and palettes…',()=>{ setTab='tools'; openSettings(); });
   add('View',P.level==='simple'?'Show everything':'Simple — the smallest useful app',
@@ -16109,6 +16253,15 @@ function manualSections(){
       ['More than two devices','A third is not a third kind of connection \u2014 it is another of the one that already works. Add another device on the panel and the same two steps happen again on a link of its own, so the connection you already have is not disturbed. The device that made the first invitation keeps a link to each of the others and passes their changes on, which means nobody has to be able to reach anybody but it. Up to six on one job. One device leaving takes its own link and nothing else: the rest of the room carries on, and it says who left.'],
       ['Undo takes back your own','Undo restores the job as it was, which is right on your own and wrong the moment somebody else is drawing into the same one \u2014 the state it restores predates their last three runs, and putting it back would take those off their screen as well as yours. So every step remembers how much of the other device it had seen, and undoing one leaves everything that arrived after it alone. Your change goes back; theirs stays. A run they deleted after your step stays deleted for the same reason in the other direction, rather than reappearing on both screens. It says how many of their changes it left alone, so nothing is quietly different from what you expected.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
+    ]}]},
+  {id:'importruns',t:'A takeoff that started in a spreadsheet',blocks:[
+    {p:'Project \u203a Import runs from a spreadsheet reads a CSV of runs \u2014 a type, a zone, a length \u2014 and each row becomes a treatment.'},
+    {rows:[
+      ['Columns by name, not by position','Nobody\u2019s spreadsheet has the columns in this order, so they are matched by what they are called: Type or Treatment or Designation; Zone or Area; Length or Linear ft or LF; Qty or Runs; Description, Room, Notes. Anything it does not recognise is listed by name rather than silently dropped.'],
+      ['Lengths the way a spreadsheet writes them','A bare 40 in a length column is forty feet, because that is what a spreadsheet column of lengths is. 22\u2032-6\u2033 and \u201c18.5 ft\u201d are read as written. A row whose length cannot be read is skipped and named by row number and reason, rather than arriving as zero and looking like a run somebody has not measured yet.'],
+      ['Nothing happens until you have seen it','The first six runs are shown with their lengths, how many have one, how many rows were skipped and why, and which columns went unused. Nothing is created until you say so, and one undo takes the whole import back rather than one row of it.'],
+      ['They arrive unplaced, on purpose','A row in a spreadsheet says a cove is forty feet; it does not say where the cove is. Inventing a line on a sheet to hang the number from would be drawing something nobody measured, so the runs arrive measured by hand and attached to no drawing. Draw the run later and press From selection to tie one to the sheet.'],
+      ['Type defaults still apply','A type with defaults on file arrives with them already set \u2014 product, channel, supply, colour temperature. The row named a type and said nothing about a product, so the office\u2019s answer for that type is the right one to use.'],
     ]}]},
   {id:'revisions',t:'What changed between two revisions',blocks:[
     {p:'Open the new revision, press Compare revisions on the Sheets rail, and pick the old one. Both pages are rendered and diffed.'},
@@ -17939,6 +18092,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   roomAt,roomFill,roomEdge,placeRoom,edgeAt,snapAt,snapped,snapSegs:()=>SNAP.segN,
   benchHtml,benchCss,openBench,photoOf,photoNear:PHOTO_NEAR,
   compareSheets,clusterBlocks,cloudRects,revImpact,pickChanges,revKinds:REV_KIND,
+  csvRows,csvMap,csvPlan,csvApply,importRuns,csvCols:CSV_COLS,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveKeep,liveReinstate,liveMine,liveChans,liveCount,liveInviteMore,liveAcceptMore,
   liveRelay,liveMax:LIVE_MAX,

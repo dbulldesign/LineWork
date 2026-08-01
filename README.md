@@ -559,6 +559,49 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## A takeoff that started in a spreadsheet
+
+Plenty of jobs are half done in a spreadsheet before anybody opens a drawing,
+and retyping forty runs to get them in is the reason somebody keeps using the
+spreadsheet. *Project › Import runs from a spreadsheet* reads a CSV: a type, a
+zone, a length, and each row becomes a treatment.
+
+**Columns by name, not by position**, because nobody's spreadsheet has them in
+this order — Type/Treatment/Designation, Zone/Area, Length/Linear ft/LF,
+Qty/Runs, Description, Room, Notes. Anything unrecognised is listed by name
+rather than silently dropped. The CSV reader is a real one: a comma inside
+quotes is not a new column, a doubled quote is one quote, and a newline inside
+quotes is not a new row.
+
+**Lengths the way a spreadsheet writes them.** A bare `40` in a length column is
+forty feet, because that is what a column of lengths is; `22'-6"` and `18.5 ft`
+are read as written. A row whose length cannot be read is *skipped and named* —
+by row number and reason — rather than arriving as zero and looking like a run
+nobody has measured yet.
+
+**Nothing happens until you have seen it.** The plan is computed first: the first
+six runs with their lengths, how many have one, which rows were skipped and why,
+which columns went unused. And **one undo takes the whole import back** rather
+than one row of it — which is what the test caught, because `newTreat` takes its
+own history snapshot and forty rows were forty steps.
+
+**They arrive unplaced, on purpose.** A row says a cove is forty feet; it does
+not say where the cove is. Inventing a line on a sheet to hang the number from
+would be drawing something nobody measured, so runs arrive measured-by-hand and
+attached to no drawing. Draw the run later and press *From selection*.
+
+Type defaults are applied, and forced: a fresh treatment holds the first product
+in the library as a *placeholder* rather than as a choice, and an unforced apply
+reads that placeholder as somebody's decision. Nothing here is anybody's
+decision — the row named a type and said nothing about a product.
+
+`runs.mjs` covers the three things a naive CSV split gets wrong, the column
+matching in three spellings and any order, each length format, the skipped rows
+and their reasons, that the created runs carry type, zone, length, quantity and
+tag and are pinned to no drawing, that they reach the calculator and come out as
+pieces, that one undo takes them all back, four kinds of file that are not a
+takeoff, and the type default.
+
 ## More than two devices
 
 A third device is not a third kind of connection: it is another of the one that
