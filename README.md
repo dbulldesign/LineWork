@@ -559,6 +559,38 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## Four silent ones
+
+A standing sweep catches what it was written to catch. These four came out of
+pointing an adversarial probe at entry points nobody drives angrily — degenerate
+geometry, lengths typed by a person, a file that has been got at — and every one
+of them was silent, which is what made them worth the trip.
+
+- **A page range with spaces in it.** `parseRange` split on whitespace before it
+  parsed the dash, so `1 - 3` came out as pages 1 and 3 — page 2 quietly missing.
+  That feeds *Set a scale on some pages*, where a skipped page means every
+  measurement on that page is wrong and nothing says so. The joins are closed up
+  first now, and `1 - 3`, `1–3`, `1—3` and `1 to 3` all mean the same three pages.
+- **A project file with a hole in it.** A `null` where a record should be — a
+  truncated file, a bad merge, a hand edit — hit a pass that reads fields straight
+  off each markup, and the whole job failed to open. Non-records are dropped once,
+  at the top, rather than guarded at each of the twenty places that walk those
+  lists; guarding twenty places is how one gets missed, and the miss costs the job
+  rather than the one bad record.
+- **An export that lost its markups and reported success.** `sheetBitmap` caught a
+  failure to rasterise the overlay and exported the bare sheet — reasonable — but
+  said nothing, so a takeoff could be issued as a clean drawing with none of the
+  takeoff on it. The loss is carried back to the caller now and named page by page.
+- **A hello that goes missing.** Live sync hands the job over on the strength of
+  the hello, so one that is lost leaves a connection that reports itself live and
+  does nothing: an unnamed peer, no takeoff, no error. It is now repeated until
+  acknowledged — *acknowledged*, not answered, which was the subtle half: hearing
+  who they are says nothing about whether they heard who I am, and stopping on
+  that is exactly how the side whose hello was lost fell quiet. A hello carries
+  whether its sender has heard one, and each side hails until a hello comes back
+  saying yes. The test eats the tablet's first two hellos on the way out and
+  expects the pairing to recover by itself, with the job handed over once.
+
 ## The sweep
 
 `ui` is a standing sweep rather than a feature test: six window sizes — three laptops and

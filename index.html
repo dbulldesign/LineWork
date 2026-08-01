@@ -1193,7 +1193,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.79.0';
+const APP_VER='1.79.1';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1966,6 +1966,13 @@ function applyProject(d){
   const pref=P.scrollZoom!==false;
   P=Object.assign(BLANK(),d);
   ['docs','ann','treat'].forEach(k=>{ if(!Array.isArray(P[k])) P[k]=[]; });
+  /* A file that has been hand-edited, truncated or merged badly can carry a null
+     where a record should be, and every pass below reads fields straight off
+     each one. Drop what is not a record once, here — guarding at each of the
+     twenty places that walk these lists is how one gets missed, and the miss
+     costs the whole job rather than the one bad record. */
+  ['docs','ann','treat'].forEach(k=>{
+    P[k]=P[k].filter(r=>r&&typeof r==='object'&&!Array.isArray(r)); });
   P.ann.forEach(a=>{ if(a&&a.stated!=null){ const v=+a.stated; if(v>0) a.stated=v; else delete a.stated; } });
   /* a feed point or splice only means something attached to a run */
   P.ann.forEach(a=>{ if(a&&(a.type==='feed'||a.type==='splice')) a.at=clamp(+a.at||0,0,1); });
@@ -3510,7 +3517,15 @@ function scaleMap(docId){
 }
 function parseRange(str,pages){
   const out=new Set();
-  String(str||'').split(/[,\s]+/).filter(Boolean).forEach(part=>{
+  /* "1 - 3", "1–3" and "1 to 3" are the range a person means when they type
+     them. Splitting on whitespace before the dash was read turned "1 - 3" into
+     pages 1 and 3 with page 2 silently missing — and this feeds the dialog that
+     sets a scale on some pages, where a skipped page is every measurement on
+     that page quietly wrong. So the joins are closed up first, then split. */
+  String(str||'')
+    .replace(/[\u2010-\u2015]/g,'-')            /* every dash a keyboard makes */
+    .replace(/\s*(?:-|\bto\b)\s*/gi,'-')
+    .split(/[,;\s]+/).filter(Boolean).forEach(part=>{
     const m=/^(\d+)(?:-(\d+))?$/.exec(part);
     if(!m) return;
     const a=clamp(+m[1],1,pages), b=clamp(+(m[2]||m[1]),1,pages);
@@ -13207,11 +13222,15 @@ async function sheetBitmap(docId,pg,scale){
   const cx=c.getContext('2d');
   cx.fillStyle='#fff'; cx.fillRect(0,0,c.width,c.height);
   await pageObj.render({canvasContext:cx,viewport:vp}).promise;
+  /* If the overlay will not rasterise the sheet is still worth exporting — but
+     a takeoff issued without its takeoff on it, reported as a success, is worse
+     than a failure. So the loss is carried back to the caller to be said out loud. */
+  let drew=true;
   try{
     const img=await svgToImage(overlaySvgFor(pageObj,docId,pg,scale));
     cx.drawImage(img,0,0,c.width,c.height);
-  }catch(e){ /* markups could not rasterise — still export the sheet */ }
-  return {canvas:c,ptW:pageObj.getViewport({scale:1}).width,ptH:pageObj.getViewport({scale:1}).height};
+  }catch(e){ drew=false; }
+  return {canvas:c,drew,ptW:pageObj.getViewport({scale:1}).width,ptH:pageObj.getViewport({scale:1}).height};
 }
 /* minimal single-image-per-page PDF */
 function jpegPdf(pages){
@@ -13261,16 +13280,20 @@ async function exportSheetPdf(){
   const pages=r.scope==='all'?Array.from({length:n},(_,i)=>i+1):[V.page];
   toast('Rendering '+pages.length+' page'+(pages.length===1?'':'s')+'…');
   try{
-    const out=[];
+    const out=[]; const bare=[];
     for(const pg of pages){
       const b=await sheetBitmap(V.docId,pg,scale);
+      if(!b.drew) bare.push(pg);
       const jpeg=b64bytes(b.canvas.toDataURL('image/jpeg',q).split(',')[1]);
       out.push({jpeg,w:b.canvas.width,h:b.canvas.height,ptW:b.ptW,ptH:b.ptH});
     }
     const name=slug(P.name)+'-'+slug((d&&d.name||'sheet').replace(/\.pdf$/i,''))
       +(pages.length>1?'':'-p'+V.page)+'-markup.pdf';
     downloadBlob(name,jpegPdf(out));
-    toast('Exported '+name);
+    if(bare.length) toast('Exported '+name+' — but the markups would not draw on page'
+      +(bare.length===1?' '+bare[0]:'s '+bare.join(', '))+', so '
+      +(bare.length===1?'it is':'those are')+' the bare sheet');
+    else toast('Exported '+name);
   }catch(e){ toast('Could not export: '+(e&&e.message||'unknown')); }
 }
 /* ---- the printable report ----
@@ -16364,7 +16387,9 @@ function liveDrop(){
   if(LIVE.ch){ try{ LIVE.ch.close(); }catch(e){} }
   if(LIVE.pc){ try{ LIVE.pc.close(); }catch(e){} }
   LIVE.pc=null; LIVE.ch=null; LIVE.rx=null; LIVE.snap=null; LIVE.sentBundle=false;
+  LIVE.gaveJob=false; LIVE.heard=false; LIVE.acked=false;
   clearTimeout(LIVE.pushT); LIVE.pushT=null;
+  clearTimeout(LIVE.hailT); LIVE.hailT=null;
 }
 /* and this one is the whole of stopping: no connection, nothing being waited for,
    nothing left on screen about either */
@@ -16395,14 +16420,33 @@ function liveGathered(pc){
     };
   });
 }
+/* The hello is what tells the other end who is there and whether it is empty,
+   and the job is handed over on the strength of it. One that goes missing
+   therefore leaves a connection that reports itself live and does nothing at
+   all, with an unnamed peer and no takeoff — the worst kind of failure, because
+   it looks like success. It is a hundred bytes, so rather than trust it to a
+   channel that has only just opened, it is repeated until it is acknowledged.
+
+   Acknowledged, not merely answered: hearing who they are says nothing about
+   whether they heard who I am, and stopping on that was the whole of the bug —
+   the side whose hello was lost fell quiet because the other side's had
+   arrived. So a hello carries whether its sender has heard one, and each side
+   keeps hailing until a hello comes back saying yes. */
+function liveHail(n){
+  clearTimeout(LIVE.hailT); LIVE.hailT=null;
+  if(LIVE.state!=='live') return;
+  liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
+    ann:P.ann.length,treat:P.treat.length,ack:!!LIVE.peer});
+  if(LIVE.heard||n>=6) return;
+  LIVE.hailT=setTimeout(()=>liveHail(n+1),700);
+}
 function liveWire(ch){
   LIVE.ch=ch;
   ch.binaryType='arraybuffer';
   ch.bufferedAmountLowThreshold=256*1024;
   ch.onopen=()=>{
     LIVE.state='live'; LIVE.since=Date.now(); LIVE.err='';
-    liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
-      ann:P.ann.length,treat:P.treat.length});
+    liveHail(0);
     pairAnnounce();
     LIVE.snap=liveSnap();
     syncLiveUI();
@@ -16610,6 +16654,14 @@ function liveHeard(data){
   if(m.t==='hello'){
     LIVE.peer=m.name||'the other device';
     LIVE.theirDocs=(m.docs||[]).slice();
+    /* they have mine, so there is nothing left to repeat */
+    if(m.ack){ LIVE.heard=true; clearTimeout(LIVE.hailT); LIVE.hailT=null; }
+    /* and they need to be told the same, once, so they can stop too */
+    if(!LIVE.acked){
+      LIVE.acked=true;
+      liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
+        ann:P.ann.length,treat:P.treat.length,ack:true});
+    }
     /* The whole job is handed to a device that has none — the first pairing,
        or an iPad joining a job it has never seen. Two devices that both have
        work on them get nothing automatic: sending would replace whatever the
@@ -16617,7 +16669,9 @@ function liveHeard(data){
        exactly the wrong thing. They say so instead, and the button is there. */
     const mine=P.ann.length+P.treat.length, theirs=(m.ann||0)+(m.treat||0);
     LIVE.bothHave=!!(mine&&theirs);
-    if(mine&&!theirs) liveSendJob();
+    /* a repeated hello is the same hello: hand the job over once per connection,
+       or a hail that crossed with the handover starts it again from the top */
+    if(mine&&!theirs&&!LIVE.gaveJob){ LIVE.gaveJob=true; liveSendJob(); }
     syncLiveUI();
     return;
   }
