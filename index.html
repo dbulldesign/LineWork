@@ -411,6 +411,19 @@ input.up{text-transform:uppercase}
 .tchk.core{opacity:.7;cursor:default}
 .tchk input{width:auto;margin:0}
 .tchk svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7}
+/* A piece is a paragraph, not a chip: what it brings is the whole point of the
+   list, so it gets room to say so and the rows stack down the dialog. */
+.fchks{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.fchk{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--line2);
+  border-radius:6px;background:var(--s1);cursor:pointer}
+.fchk.on{border-color:var(--amber)}
+.fchk input{width:auto;margin:2px 0 0;flex:0 0 auto}
+.fchk input:disabled{cursor:default}
+.fchk span{min-width:0}
+.fchk b{display:block;font-size:12.5px;font-weight:500;color:var(--dim)}
+.fchk.on b{color:var(--ink)}
+.fchk em{display:block;font-style:normal;font-size:11px;color:var(--faint);margin-top:2px;line-height:1.45}
+.fchk i{display:block;font-style:normal;font-size:10.5px;color:var(--amber);margin-top:3px}
 .setrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px dotted var(--line)}
 /* A dozen tool chips beside a label cannot shrink, so Settings › Tools was wider
    than the dialog holding it and scrolled sideways at every window size. The
@@ -871,7 +884,7 @@ body.haspen #penFlag{display:inline}
     <div id="annList"></div>
     <div class="empty" id="annEmpty">Set a scale, then measure runs with the dimension tool.</div>
   </div>
-  <div class="sec">
+  <div class="sec" data-sec="review">
     <h3>Linked shop drawings <span class="c" id="cLinks">0</span></h3>
     <div id="linkList"></div>
     <div class="empty" id="linkEmpty">Drop a link marker on the plan to tie a millwork or shop drawing to a location.</div>
@@ -940,12 +953,12 @@ body.haspen #penFlag{display:inline}
 <aside class="right">
   <div class="tabs">
     <button class="tab on" data-pane="pTreat">Treatments</button>
-    <button class="tab" data-pane="pLib">Library</button>
-    <button class="tab" data-pane="pBom">Cut list &amp; BOM</button>
-    <button class="tab" data-pane="pCuts">Pieces</button>
-    <button class="tab" data-pane="pMarks">Markups <span class="c" id="cMark">0</span></button>
-    <button class="tab" data-pane="pPower">Power</button>
-    <button class="tab" data-pane="pIssues">Issues <span class="c" id="cIss">0</span></button>
+    <button class="tab" data-pane="pLib" data-feat="estimate">Library</button>
+    <button class="tab" data-pane="pBom" data-feat="estimate">Cut list &amp; BOM</button>
+    <button class="tab" data-pane="pCuts" data-feat="estimate">Pieces</button>
+    <button class="tab" data-pane="pMarks" data-feat="review">Markups <span class="c" id="cMark">0</span></button>
+    <button class="tab" data-pane="pPower" data-feat="power">Power</button>
+    <button class="tab" data-pane="pIssues" data-feat="review">Issues <span class="c" id="cIss">0</span></button>
   </div>
   <div class="pane on" id="pTreat">
     <div class="sec"><div class="body" style="padding-bottom:0">
@@ -1193,7 +1206,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.79.1';
+const APP_VER='1.80.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1728,6 +1741,9 @@ const BLANK=()=>{
   return {
     name:'Untitled Project',no:'',units:'imperial',
     docs:[],cal:{},ann:[],treat:[],
+    /* a new job shows everything: the size is a choice somebody makes, and
+       making it for them on their first drawing is how a tool goes missing */
+    level:'full',feat:{},
     fix:clone((d&&d.fix)||DEF_FIX),ch:clone((d&&d.ch)||DEF_CH),psu:clone((d&&d.psu)||DEF_PSU),
     specs:clone((d&&d.specs)||[]),
     libFrom:d?String(d.savedAt||''):'',
@@ -2166,6 +2182,9 @@ function applyProject(d){
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
   /* remembered choices per run type: keys are types, values are field subsets */
   /* a hidden tool has to be a tool, and a palette has to hold tools */
+  P.level=P.level==='simple'?'simple':'full';
+  if(!P.feat||typeof P.feat!=='object'||Array.isArray(P.feat)) P.feat={};
+  Object.keys(P.feat).forEach(k=>{ if(!P.feat[k]||!FEATS.some(f=>f.k===k)) delete P.feat[k]; });
   if(!P.hideTool||typeof P.hideTool!=='object'||Array.isArray(P.hideTool)) P.hideTool={};
   Object.keys(P.hideTool).forEach(k=>{
     const d=TOOLS.find(x=>x.k===k);
@@ -5533,11 +5552,93 @@ const TOOLS=[
 /* the toolbar reads left to right in this order, whatever order the registry is
    written in, so a group is never split in two by the one after it */
 const TOOL_GROUPS=['Select','Measure','Lighting','Review','Annotate'];
+
+/* ---- how much of the app is showing ----
+   Thirty tools, seven takeoff tabs and eight pages of settings is the right
+   amount for somebody doing this all day, and far too much for somebody who
+   wants the length of a cove. So the app has a size. Simple is the smallest
+   thing that can still do a takeoff — open a drawing, set the scale, measure,
+   read the total, export it — and everything else is a named piece you add when
+   you want it, from a list that says what each one brings.
+
+   Adding, not configuring. Nobody should have to know that a driver is a tool
+   and Power is a tab and voltage drop is a settings page in order to get all
+   three; they ask for drivers and circuits and they get the lot.
+
+   And one rule keeps it safe: a piece is never hidden while there is anything
+   in it. A pane you cannot see is work you cannot find, so a job that already
+   has drivers on it shows Power whatever the level says — and the list says so,
+   rather than letting a switch look off while the thing is plainly on. */
+const FEATS=[
+  {k:'shapes',t:'Curves, angles and counting',
+   why:'Arc length, ellipse, radius and angle, stamping a symbol and counting the rest.',
+   tools:['arc','ell','ang','rad','count','vs'],
+   has:()=>P.ann.some(a=>/^(arc|ell|ang|rad|count)$/.test(a.type))},
+  {k:'annotate',t:'Marking up the drawing',
+   why:'Ink, arrows, highlight, text, callouts, boxes and the eraser \u2014 and writing a sum out by hand.',
+   tools:['box','ink','arrow','hl','erase','text','tbox','note','calc'],
+   has:()=>P.ann.some(a=>/^(box|ink|arrow|hl|text|tbox|note)$/.test(a.type))},
+  {k:'estimate',t:'Products, cut list and cost',
+   why:'The product library, the cut list and BOM, pieces and nesting, and what it all costs.',
+   panes:['pLib','pBom','pCuts'],tabs:['est'],
+   has:()=>P.treat.some(t=>t.prod||t.ch||t.approved)},
+  {k:'power',t:'Drivers, circuits and wire',
+   why:'Feed points, splices, home runs and power supplies, with circuit loading and voltage drop.',
+   tools:['feed','splice','whip','driver'],panes:['pPower'],
+   has:()=>P.ann.some(a=>/^(feed|splice|whip|driver)$/.test(a.type))||(P.circ||[]).length>0},
+  {k:'review',t:'Zones, revisions, photos and issues',
+   why:'Naming spaces, detail scales, legends, revision clouds, site photos, linked shop drawings, the markups table and everything the calculator has to report.',
+   tools:['space','srgn','legend','cloud','photo','link'],panes:['pMarks','pIssues'],secs:['review'],
+   has:()=>P.ann.some(a=>/^(space|srgn|legend|cloud|photo|link)$/.test(a.type))},
+];
+const featOf=k=>FEATS.find(f=>(f.tools||[]).includes(k))||null;
+/* whether this job has anything that belongs to a piece — which is what makes
+   hiding it the wrong thing to do, whatever the level says */
+const featUsed=k=>{ const f=FEATS.find(x=>x.k===k); try{ return !!(f&&f.has&&f.has()); }catch(e){ return false; } };
+const featAdded=k=>!!(P.feat&&P.feat[k]);
+const featOn=k=>P.level!=='simple'||featAdded(k)||featUsed(k);
+/* a tool belonging to no piece is core and always there */
+const featToolOn=k=>{ const f=featOf(k); return !f||featOn(f.k); };
+function featAdd(k,on){
+  P.feat=P.feat||{};
+  if(on) P.feat[k]=true; else delete P.feat[k];
+  applyLevel(); markDirty();
+}
+function setLevel(v){
+  P.level=v==='simple'?'simple':'full';
+  applyLevel(); markDirty();
+}
+/* Everything the level touches, in one pass: the toolbar, the takeoff tabs, the
+   rail sections and the settings pages. Called on a change of level, on opening
+   a job, and after anything that could have put the first driver on a sheet. */
+function applyLevel(){
+  document.body.dataset.level=P.level==='simple'?'simple':'full';
+  const off=new Set(), offSec=new Set();
+  FEATS.forEach(f=>{ if(featOn(f.k)) return;
+    (f.panes||[]).forEach(x=>off.add(x)); (f.secs||[]).forEach(x=>offSec.add(x)); });
+  $$('.tab[data-pane]').forEach(b=>{ b.style.display=off.has(b.dataset.pane)?'none':''; });
+  $$('aside.left .sec[data-sec]').forEach(el=>{ el.style.display=offSec.has(el.dataset.sec)?'none':''; });
+  /* the pane that was showing may have just gone; fall back to the one every
+     level has rather than leaving the rail blank */
+  const cur=$$('.tab').find(b=>b.classList.contains('on'));
+  if(!cur||off.has(cur.dataset.pane)){
+    const first=$$('.tab').find(b=>b.style.display!=='none');
+    if(first) first.click();
+  }
+  if(typeof renderToolbar==='function') renderToolbar();
+  if(typeof renderSettings==='function'&&$('#setWrap')&&$('#setWrap').classList.contains('show')) renderSettings();
+}
 const toolOrder=()=>TOOLS.slice().sort((a,b)=>
   (TOOL_GROUPS.indexOf(a.g)-TOOL_GROUPS.indexOf(b.g))||(TOOLS.indexOf(a)-TOOLS.indexOf(b)));
 const toolDef=k=>TOOLS.find(x=>x.k===k)||null;
+/* Two switches, deliberately, and they mean different things. The level is
+   coarse — whole pieces of the app, added by somebody who does not want to know
+   what a tool is. Settings > Tools stays fine-grained on top of it, for somebody
+   who has the piece and wants one of its tools off the bar. */
 const toolShown=k=>{ const d=toolDef(k); if(!d) return false;
-  if(d.core) return true; return !(P.hideTool&&P.hideTool[k]); };
+  if(d.core) return true;
+  if(!featToolOn(k)) return false;
+  return !(P.hideTool&&P.hideTool[k]); };
 /* the short half of a tool's title: the registry writes "Dimension \u2014 tap one
    end, tap the other", which is the tooltip. A list wants the name. */
 const toolName=d=>String(d.t).split(' \u2014 ')[0].trim();
@@ -14618,7 +14719,7 @@ const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt',
   /* the workspace is a preference like any other: an office standard should carry
      how the window is arranged and, where someone made one, their own palette */
   'ui',
-  'hideTool','pals','toolMode'];
+  'hideTool','pals','toolMode','level','feat'];
 function presetText(withLib){
   const set={};
   PRESET_KEYS.forEach(k=>{ if(P[k]!==undefined) set[k]=clone(P[k]); });
@@ -15214,7 +15315,7 @@ function boot(keepDoc){
   $('#btnFinger').style.display=coarse?'':'none';
   syncMultiBtn(); syncToolFade();
   setDrawScale(1);
-  applyTheme(); applyPanels();
+  applyTheme(); applyPanels(); applyLevel();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   wireCpad(); drawCpad(); syncRulerBtn();
   wireGrabs(); applyRailW();
@@ -15285,6 +15386,11 @@ function cmdItems(){
   add('View','Settings…',openSettings,'⌘,');
   add('View','Tools — every tool by name…',openToolSheet);
   add('View','Tools — what shows, and palettes…',()=>{ setTab='tools'; openSettings(); });
+  add('View',P.level==='simple'?'Show everything':'Simple — the smallest useful app',
+    ()=>{ setLevel(P.level==='simple'?'full':'simple');
+      toast(P.level==='simple'?'Simple. Settings › Tools adds pieces back.':'Everything is showing.'); });
+  if(P.level==='simple') FEATS.filter(f=>!featOn(f.k)).forEach(f=>
+    add('View','Add: '+f.t,()=>{ featAdd(f.k,true); toast(f.t+' added'); }));
   add('View','Pin a tool palette…',()=>editPal(null));
   add('View','Manual',()=>openManual(),'?');
   add('View','Issues',()=>{ const b=$$('.tab').find(x=>x.dataset.pane==='pIssues'); if(b) b.click(); });
@@ -15474,6 +15580,15 @@ function manualSections(){
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
+    ]}]},
+  {id:'size',t:'How much of it shows',blocks:[
+    {p:'Thirty tools, seven takeoff tabs and eight pages of settings is the right amount for somebody doing this all day and far too much for somebody who wants the length of a cove. So the app has a size.'},
+    {rows:[
+      ['Simple','The smallest thing that can still do a takeoff: open a drawing, set the scale, measure a run, read the total, export it. Five tools \u2014 select, calibrate, dimension, poly and region \u2014 one takeoff tab, and nothing else on screen. Settings \u203a Tools sets it.'],
+      ['Adding a piece','Five named pieces, each with a line saying what it brings: curves, angles and counting; marking up the drawing; products, cut list and cost; drivers, circuits and wire; zones, revisions, photos and issues. Tick one and its tools, its takeoff tabs and its settings pages all arrive together \u2014 nobody should have to know that a driver is a tool and Power is a tab and voltage drop is a settings page in order to get all three.'],
+      ['Nothing is ever hidden while it has something in it','A pane you cannot see is work you cannot find, so a job that already has a driver on it shows Power whatever the size says, and the list says why rather than showing a switch as off while the thing is plainly on. Putting a piece away never deletes anything either: turn it back on and the work is where it was.'],
+      ['Two switches, on purpose','The size is coarse \u2014 whole pieces, for somebody who does not want to know what a tool is. Settings \u203a Tools stays fine-grained on top of it, for somebody who has a piece and wants one of its tools off the bar. A tool missing from that list belongs to a piece that has not been added.'],
+      ['Where the size lives','With the job, so a simple job opens simple on both devices and a preset can carry it to every job an office starts. \u2318K finds Simple, Show everything, and each piece by name.'],
     ]}]},
   {id:'labels',t:'Labels',blocks:[
     {p:'Every measurement carries labels you can move, turn and hide.'},
@@ -15729,8 +15844,27 @@ function settingsHtml(){
     +'</div>';
   if(setTab==='tools'){
     const groups=TOOL_GROUPS.filter(g2=>TOOLS.some(d=>d.g===g2));
-    let h='<div class="setgrp"><h4>On the toolbar</h4>'
-      +'<div class="setrow"><div class="lab"><b>What shows</b><span>Turning one off only takes it off the toolbar — its key still works and it can still go on a palette.</span></div>'
+    const simple=P.level==='simple';
+    let h='<div class="setgrp"><h4>How much of it shows</h4>'
+      +setRow('Size','Simple is the smallest thing that can still do a takeoff \u2014 open a drawing, set the scale, measure runs, read the total. Everything else is a piece you add below.',
+        setSel('level',[{v:'simple',t:'Simple'},{v:'full',t:'Everything'}],P.level||'full'))
+      +'<div class="setrow stack"><div class="lab"><b>Pieces</b><span>'
+      +(simple?'Add one and its tools, its takeoff tabs and its settings all arrive together \u2014 nobody should have to know which is which to get all three.'
+              :'Every piece is on. Choose Simple above and this becomes the list of what to add back.')
+      +'</span></div><div class="ctl fchks">';
+    FEATS.forEach(f=>{
+      const used=featUsed(f.k), on=featOn(f.k);
+      h+='<label class="fchk'+(on?' on':'')+(used?' used':'')+'">'
+        +'<input type="checkbox" data-feat-on="'+f.k+'"'+(on?' checked':'')
+        +((!simple||used)?' disabled':'')+'>'
+        +'<span><b>'+esc(f.t)+'</b><em>'+esc(f.why)+'</em>'
+        +(used?'<i>This job already uses it, so it stays on whatever the size says.</i>'
+              :(!simple?'<i>On, because the size is Everything.</i>':''))
+        +'</span></label>';
+    });
+    h+='</div></div></div>'
+      +'<div class="setgrp"><h4>On the toolbar</h4>'
+      +'<div class="setrow"><div class="lab"><b>What shows</b><span>Turning one off only takes it off the toolbar — its key still works and it can still go on a palette. A tool missing here belongs to a piece that has not been added.</span></div>'
       +'<div class="ctl"><button class="btn sm" data-set="toolsAll">Show every tool</button></div></div>';
     groups.forEach(gname=>{
       h+='<div class="setrow stack"><div class="lab"><b>'+esc(gname)+'</b></div><div class="ctl" style="gap:4px">'
@@ -15840,6 +15974,12 @@ function renderSettings(){
   const body=$('#setBody');
   body.innerHTML=settingsHtml();
   /* the tools tab is buttons rather than inputs, so it is wired on its own */
+  $$('[data-feat-on]',body).forEach(el=>el.onchange=()=>{
+    featAdd(el.dataset.featOn,el.checked);
+    renderSettings();
+    const f=FEATS.find(x=>x.k===el.dataset.featOn);
+    if(f) toast(el.checked?f.t+' added':f.t+' put away \u2014 nothing on the job is lost');
+  });
   $$('[data-tool-on]',body).forEach(el=>el.onchange=()=>{
     P.hideTool=P.hideTool||{};
     if(el.checked) delete P.hideTool[el.dataset.toolOn]; else P.hideTool[el.dataset.toolOn]=true;
@@ -15901,6 +16041,7 @@ function applySetting(el){
     case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
     case 'lblStyle': P.lblStyle=val==='box'?'box':''; drawOverlay(); break;
     case 'stun': P.stun=!!val; break;
+    case 'level': setLevel(val); break;
     case 'rvUrl': P.rvUrl=/^https?:\/\/\S+$/i.test(String(val||'').trim())?String(val).trim():''; break;
     case 'rvAuto': P.rvAuto=!!val; break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
@@ -17087,6 +17228,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
   imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,straighten,lenHelp,parseScale,
   openToolSheet,closeToolSheet,railFit,toolName,btnWord,
+  feats:FEATS,featOn,featUsed,featAdded,featAdd,featOf,featToolOn,setLevel,applyLevel,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,

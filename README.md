@@ -559,6 +559,51 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## How much of it shows
+
+Thirty tools, seven takeoff tabs and eight pages of settings is the right amount
+for somebody doing this all day, and far too much for somebody who wants the
+length of a cove. So the app has a size.
+
+**Simple** is the smallest thing that can still do a takeoff — open a drawing,
+set the scale, measure a run, read the total, export it. Five tools, one takeoff
+tab, nothing else. Everything past that is a **named piece you add**:
+
+| Piece | What arrives with it |
+| --- | --- |
+| Curves, angles and counting | arc, ellipse, radius, angle, count, find-a-symbol |
+| Marking up the drawing | ink, arrow, highlight, text, callouts, boxes, eraser, write-a-sum |
+| Products, cut list and cost | the Library, Cut list & BOM and Pieces tabs, and Estimating settings |
+| Drivers, circuits and wire | feed, splice, home run, driver, and the Power tab |
+| Zones, revisions, photos and issues | spaces, detail scales, legends, clouds, photos, links, the Markups table and Issues |
+
+The point of the grouping is that **nobody should have to know that a driver is a
+tool and Power is a tab and voltage drop is a settings page in order to get all
+three**. You ask for drivers and circuits; you get the lot.
+
+**A piece is never hidden while there is anything in it.** That is the rule the
+whole thing rests on: a pane you cannot see is work you cannot find, so a job
+that already has a driver on it shows Power whatever the size says — and the
+list says *why*, rather than displaying an off switch beside a thing that is
+plainly on. Putting a piece away is not a deletion either; turn it back on and
+the work is where it was.
+
+**Two switches, deliberately.** The size is coarse — whole pieces, for somebody
+who does not want to know what a tool is. Settings › Tools stays fine-grained on
+top of it, for somebody who has a piece and wants one of its tools off the bar.
+The two compose: add Power, keep the home-run tool off the toolbar.
+
+The size travels with the job, so a simple job opens simple on the iPad too, and
+a preset can carry it to every job an office starts. ⌘K finds *Simple*, *Show
+everything*, and each piece by name.
+
+`lvl.mjs` checks the shrink and what survives it, that putting away the tab you
+were looking at lands you somewhere rather than on a blank rail, that adding one
+piece does not drag in the others, that a job with a driver keeps Power with the
+switch reading on and explaining itself, that the coarse and fine switches
+compose, that the size round-trips through a save, and that the simple toolbar
+fits across an iPad mini in portrait.
+
 ## Four silent ones
 
 A standing sweep catches what it was written to catch. These four came out of
