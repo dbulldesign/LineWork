@@ -690,7 +690,24 @@ body.padtop header.tb{padding-top:24px}
 #drawbar.show{display:flex}
 #drawbar .rd{font-family:var(--mono);font-size:12px;color:var(--amber);margin-right:4px;white-space:nowrap}
 .inkbar{display:flex;align-items:center;gap:5px}
-.inkbar .sw{width:17px;height:17px;border-radius:50%}
+/* A colour sits in a cell the size of a tool button with a dot in the middle of
+   it, rather than being a dot the size of a tool button. The target is the same
+   as everything beside it and the weight on screen is a dot, which is what it
+   is: five solid circles as big as the tools read as the loudest thing on the
+   strip, and they are the least important. */
+.inkbar .sw{width:22px;height:22px;border-radius:3px;border:0;display:grid;place-items:center;
+  background:none!important;padding:0}
+.inkbar .sw i{display:block;width:15px;height:15px;border-radius:50%;
+  border:1px solid rgba(255,255,255,.28)}
+.inkbar .sw.on{box-shadow:none;background:var(--s3)!important}
+.inkbar .sw.on i{box-shadow:0 0 0 2px var(--txt)}
+.inkbar .sw.more i{border-style:dashed;background:none;position:relative}
+.inkbar .sw.more i::after{content:'+';position:absolute;inset:0;display:grid;place-items:center;
+  font:600 11px/1 ui-sans-serif,system-ui,sans-serif;color:var(--dim)}
+.swgrid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.swb{aspect-ratio:1;border:1px solid rgba(255,255,255,.22);border-radius:5px;cursor:pointer;padding:0}
+.swb.on{box-shadow:0 0 0 2px var(--txt)}
+@media(pointer:coarse){ .swgrid{grid-template-columns:repeat(6,1fr);gap:8px} }
 /* ---- every tool by name ----
    An icon is a reminder, not a label. Thirty of them in a strip is a lot to hunt
    through with a finger, so ⋯ opens the same set written out. It earns its place
@@ -789,7 +806,6 @@ body.haspen #penFlag{display:inline}
   header.tb .cell{min-width:0}
   .item{padding:13px 12px}
   .item .t{font-size:13px}
-  .inkbar .sw{width:26px;height:26px}
   .sw{width:26px;height:26px}
   input[type=text],input[type=number],select,textarea{padding:9px;font-size:16px;min-height:40px}
   .cell input.val{min-height:0}
@@ -816,11 +832,10 @@ body.haspen #penFlag{display:inline}
 @media(pointer:coarse){
   input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),
   select,textarea{font-size:16px!important}
-  /* 26px is small for a finger and these five get used all day. Growing the
-     target with a pseudo-element around the dot spills outside the bar and the
-     grown areas overlap each other, so the dot is simply bigger: still a dot,
-     and 36px of it. */
-  .inkbar .sw{width:36px;height:36px}
+  /* the cell matches a tool button exactly, so the column of colours lines up
+     with the column of tools and a finger has the same target on both */
+  .inkbar .sw{width:44px;height:42px}
+  .inkbar .sw i{width:22px;height:22px}
 }
 /* the scroll-wheel toggle means nothing without a wheel */
 @media(pointer:coarse) and (hover:none){ #btnScroll{display:none} }
@@ -1209,7 +1224,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.86.0';
+const APP_VER='1.87.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1746,7 +1761,7 @@ const BLANK=()=>{
     docs:[],cal:{},ann:[],treat:[],
     /* a new job shows everything: the size is a choice somebody makes, and
        making it for them on their first drawing is how a tool goes missing */
-    level:'full',feat:{},
+    level:'full',feat:{},inks:[],
     fix:clone((d&&d.fix)||DEF_FIX),ch:clone((d&&d.ch)||DEF_CH),psu:clone((d&&d.psu)||DEF_PSU),
     specs:clone((d&&d.specs)||[]),
     libFrom:d?String(d.savedAt||''):'',
@@ -2185,6 +2200,10 @@ function applyProject(d){
   if(!P.cntRate||typeof P.cntRate!=='object') P.cntRate={};
   /* remembered choices per run type: keys are types, values are field subsets */
   /* a hidden tool has to be a tool, and a palette has to hold tools */
+  P.inks=Array.isArray(P.inks)
+    ? P.inks.map(c=>String(c||'').trim().toUpperCase())
+        .filter(c=>/^#[0-9A-F]{6}$/.test(c)).filter((c,i,a)=>a.indexOf(c)===i).slice(0,7)
+    : [];
   P.level=P.level==='simple'?'simple':'full';
   if(!P.feat||typeof P.feat!=='object'||Array.isArray(P.feat)) P.feat={};
   Object.keys(P.feat).forEach(k=>{ if(!P.feat[k]||!FEATS.some(f=>f.k===k)) delete P.feat[k]; });
@@ -2437,6 +2456,17 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
       else if(f.type==='num') ctl='<input type="number" step="'+(f.step||'any')+'" data-k="'+f.k+'" value="'+esc(f.val??'')+'">';
       else if(f.type==='check') ctl='<label style="display:flex;gap:7px;align-items:center;text-transform:none;letter-spacing:0;font-size:12px;color:var(--txt)"><input type="checkbox" data-k="'+f.k+'" '+(f.val?'checked':'')+' style="width:auto"> '+esc(f.cap||'')+'</label>';
       else if(f.type==='file') ctl='<input type="file" data-k="'+f.k+'"'+(f.accept?' accept="'+esc(f.accept)+'"':'')+'>';
+      /* the platform's own colour picker, which on a tablet is the wheel and is
+         a better wheel than one drawn here */
+      else if(f.type==='color') ctl='<input type="color" data-k="'+f.k+'" value="'+esc(f.val||'#000000')+'" style="width:64px;height:38px;padding:2px">';
+      /* a grid of colours to tap, with the chosen one carried in a hidden field
+         so it grabs like everything else */
+      else if(f.type==='swatch'){
+        ctl='<input type="hidden" data-k="'+f.k+'" value="'+esc(f.val||'')+'">'
+          +'<div class="swgrid" data-swgrid="'+f.k+'">'+(f.opts||[]).map(c=>
+            '<button type="button" class="swb'+(String(c).toLowerCase()===String(f.val).toLowerCase()?' on':'')
+            +'" data-sw="'+esc(c)+'" title="'+esc(c)+'" style="background:'+esc(c)+'"></button>').join('')+'</div>';
+      }
       /* a set of choices rather than one: rendered as a checkbox grid, because a
          native multiple-select is unusable with a finger */
       else if(f.type==='multi'){
@@ -2452,6 +2482,17 @@ function dlg({title,fields=[],ok='Save',cancel='Cancel',note=''}){
         +'" autocorrect="off" autocapitalize="off" spellcheck="false">';
       d.innerHTML=(f.label&&f.type!=='check'?'<label>'+esc(f.label)+'</label>':'')+ctl+(f.hint?'<div class="hint" style="margin-top:4px">'+esc(f.hint)+'</div>':'');
       host.appendChild(d);
+    });
+    /* tapping a swatch fills its field, and says so by lighting up */
+    $$('[data-swgrid]',b).forEach(g=>{
+      const hidden=b.querySelector('input[data-k="'+g.dataset.swgrid+'"]');
+      $$('.swb',g).forEach(btn=>btn.onclick=()=>{
+        if(hidden) hidden.value=btn.dataset.sw;
+        $$('.swb',g).forEach(x=>x.classList.toggle('on',x===btn));
+        /* and the mixer follows it, so the two never disagree about what is chosen */
+        const mix=b.querySelector('input[type=color]');
+        if(mix) mix.value=btn.dataset.sw;
+      });
     });
     /* a select long enough to need it can ask to be typed into */
     fields.forEach(f=>{
@@ -8247,8 +8288,46 @@ $('#dbFinish').onclick=()=>finishDraft();
 $('#dbCancel').onclick=()=>{ V.draft=null; drawOverlay(); syncDrawbar(); };
 $('#dbClose').onclick=()=>{ if(!V.draft) return; V.draft.closed=!V.draft.closed; drawOverlay(); syncDrawbar(); liveLen(V.draft); };
 $('#dbUndoPt').onclick=()=>{ if(!V.draft) return; if(V.draft.pts.length<=2){V.draft=null} else V.draft.pts.splice(-2,1); drawOverlay(); syncDrawbar(); };
-$('#inkbar').innerHTML=COLORS.map((c,i)=>'<span class="sw'+(i===0?' on':'')+'" data-c="'+c+'" style="background:'+c+'"></span>').join('');
-$$('#inkbar .sw').forEach(el=>el.onclick=()=>{ V.color=el.dataset.c; $$('#inkbar .sw').forEach(x=>x.classList.toggle('on',x===el)); });
+/* the five that ship, plus whatever this job has asked for since */
+const inkList=()=>COLORS.concat((P.inks||[]).filter(c=>!COLORS.includes(c))).slice(0,12);
+function renderInks(){
+  const bar=$('#inkbar'); if(!bar) return;
+  bar.innerHTML=inkList().map(c=>'<span class="sw'+(c===V.color?' on':'')+'" data-c="'+c+'" title="'
+    +esc(c)+'"><i style="background:'+esc(c)+'"></i></span>').join('')
+    +'<span class="sw more" data-more="1" title="Any other colour"><i></i></span>';
+  $$('#inkbar .sw').forEach(el=>el.onclick=()=>{
+    if(el.dataset.more){ pickInk(); return; }
+    V.color=el.dataset.c; renderInks();
+  });
+}
+/* Five colours cover a takeoff and not everybody's takeoff. This is the way to
+   any other one: the swatches this job has already used, a grid of the ones a
+   drawing usually wants, and the platform's own colour picker for the rest —
+   which on a tablet is the wheel, and is a better wheel than one drawn here. */
+async function pickInk(){
+  const used=[...new Set(P.ann.map(a=>a.color).filter(Boolean))];
+  const grid=['#E4694F','#F2A93B','#F2DC5B','#8FC46A','#4FB79A','#5AB6DE','#6F7FD6','#C77BD6',
+    '#E4699B','#B08050','#9AA3AD','#1B1D20','#FFFFFF','#7A1F12','#0F5C4A','#123A66'];
+  const r=await dlg({title:'Any colour',fields:[
+    {k:'sw',type:'swatch',label:'Pick one',val:V.color,opts:[...new Set(grid.concat(used))]},
+    {k:'c',type:'color',label:'Or mix one',val:V.color},
+    {k:'hex',label:'Or type it',val:V.color,ph:'#5AB6DE',
+      hint:'Six hex digits. Whatever you choose is added to the strip and kept with the job.'}
+  ],ok:'Use it'});
+  if(!r) return;
+  /* the three fields are three ways of saying the same thing, so the one that
+     was actually changed is the one meant — typed beats mixed beats picked */
+  const hex=String(r.hex||'').trim();
+  let c=/^#?[0-9a-f]{6}$/i.test(hex)&&hex.toLowerCase()!==String(V.color).toLowerCase()
+    ? (hex[0]==='#'?hex:'#'+hex)
+    : (String(r.c||'').toLowerCase()!==String(V.color).toLowerCase() ? r.c : (r.sw||r.c));
+  if(!/^#[0-9a-f]{6}$/i.test(c||'')){ toast('That is not a colour \u2014 six hex digits, like #5AB6DE'); return; }
+  c=c.toUpperCase();
+  V.color=c;
+  P.inks=[c].concat((P.inks||[]).filter(x=>x!==c)).slice(0,7);
+  renderInks(); markDirty();
+}
+renderInks();
 $('#inkW').onchange=e=>{ V.width=+e.target.value;
   /* retro-apply to the selected markup so the control reads as "line weight" */
   const sel=V.sel&&P.ann.find(x=>x.id===V.sel);
@@ -15811,12 +15890,43 @@ function railFit(){
   }
   /* Lay it out at the minimum, then read what the columns came to and say so.
      It takes a few passes: a wider rail lets the buttons in it take their natural
-     width instead of being squeezed, which can call for another column. Reading
-     scrollWidth forces the reflow, so the loop settles rather than spinning. */
+     width instead of being squeezed, which can call for another column.
+
+     Measured off the children rather than off scrollWidth. The strip holds two
+     things that wrap into columns of their own — the tools and the colours — and
+     a wrapped flex column that overflows its container does not always turn up in
+     the container's scrollWidth. It did not here: the rail sized itself to the
+     tools alone, and the colours were laid out in a column on top of the second
+     column of tools, hiding eight buttons behind five dots. Asking each child
+     where its right-hand edge actually is cannot miss that. */
   root.style.setProperty('--railtools','60px');
+  const outOfFlow=el=>{
+    for(let n=el;n&&n!==t;n=n.parentElement){
+      const p2=getComputedStyle(n).position;
+      if(p2==='absolute'||p2==='fixed') return true;
+    }
+    return false;
+  };
+  const widest=()=>{
+    const L=t.getBoundingClientRect().left;
+    let r=0;
+    t.querySelectorAll('*').forEach(el=>{
+      /* the zoom and page strip is a child of the toolbar and deliberately not in
+         it — it floats over the top right of the sheet. Sizing the rail to reach
+         it would make the rail as wide as the window, which is what happened
+         when this looked at the element itself and not at what it is inside:
+         the strip is positioned, its buttons are not, and it is the buttons that
+         are furthest right. Anything taken out of the flow on purpose, at any
+         level above, is not what the rail has to hold. */
+      if(outOfFlow(el)) return;
+      const b=el.getBoundingClientRect();
+      if(b.width||b.height) r=Math.max(r,b.right-L);
+    });
+    return Math.ceil(r);
+  };
   let w=60;
-  for(let i=0;i<5;i++){
-    const need=Math.max(60,t.scrollWidth+2);
+  for(let i=0;i<6;i++){
+    const need=Math.max(60,Math.max(widest(),t.scrollWidth)+2);
     if(need<=w+1) break;
     w=need;
     root.style.setProperty('--railtools',w+'px');
@@ -15983,7 +16093,7 @@ function boot(keepDoc){
   $('#btnFinger').style.display=coarse?'':'none';
   syncMultiBtn(); syncToolFade();
   setDrawScale(1);
-  applyTheme(); applyPanels(); applyLevel();
+  applyTheme(); applyPanels(); applyLevel(); renderInks();
   syncUndo(); syncDrawbar(); syncScrollBtn(); syncFileBtn(); syncSnapBtn();
   wireCpad(); drawCpad(); syncRulerBtn();
   wireGrabs(); applyRailW();
@@ -16250,6 +16360,8 @@ function manualSections(){
       ['Who wins','Records are matched by their id and the later write wins. One person drawing while the other watches, which is what this is for, is exact. Two people editing the same run at the same moment is not: the second write replaces the first.'],
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
+      ['A phone, used as a camera','Live \u2192 Use a phone as a camera makes an invitation the phone\u2019s camera can read. It opens as a camera and nothing else: one button, a caption, and no takeoff on it \u2014 a phone is a bad device for a takeoff and the best one in the room for a photograph, and handing it the whole job to send one back would be the slowest part of the day. It is one way on purpose, so nothing about the job is on the phone and nothing about the job is left there afterwards.'],
+      ['Where the photo lands','On the sheet the other device is looking at. If a run is selected it is pinned beside that run \u2014 which is nearly always what was being photographed, and is what makes the report say COVE Z2 rather than \u201cphoto 4\u201d. Otherwise it lands in the middle of the view, selected, to be dragged where it belongs. Either way it is a pinned photo like any other: it opens, it exports, and it goes into the report with what it is near.'],
       ['More than two devices','A third is not a third kind of connection \u2014 it is another of the one that already works. Add another device on the panel and the same two steps happen again on a link of its own, so the connection you already have is not disturbed. The device that made the first invitation keeps a link to each of the others and passes their changes on, which means nobody has to be able to reach anybody but it. Up to six on one job. One device leaving takes its own link and nothing else: the rest of the room carries on, and it says who left.'],
       ['Undo takes back your own','Undo restores the job as it was, which is right on your own and wrong the moment somebody else is drawing into the same one \u2014 the state it restores predates their last three runs, and putting it back would take those off their screen as well as yours. So every step remembers how much of the other device it had seen, and undoing one leaves everything that arrived after it alone. Your change goes back; theirs stays. A run they deleted after your step stays deleted for the same reason in the other direction, rather than reappearing on both screens. It says how many of their changes it left alone, so nothing is quietly different from what you expected.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
@@ -16302,6 +16414,7 @@ function manualSections(){
     {rows:[
       ['In the line, or in a placard','By default a measurement is the number alone, turned to the direction of the run and sitting in it, with a gap the colour of the paper so the line breaks around it the way a drafted dimension does. The gap is only as tall as the line it interrupts, so the drawing behind the digits is still there — nothing is boxed and nothing is filled, and a plan with thirty runs on it is still a plan you can read. A single measured span carries its number in the middle of itself; a poly labels each leg on that leg and keeps the run total at the far end, where it crosses nothing and so breaks nothing. Where a number will not fit between two corners it steps just off the run, still along it, rather than spilling over the drawing at either end. A region’s edges keep their lengths beside them rather than in them — the number belongs to a boundary, not to a measured run, and a small room has four of them to fit round along with its area and perimeter. Settings \u203a Labels offers the old placard back for anyone who wants the number unmissable.'],
       ['Content-aware placement','Labels step aside instead of stacking. A number that sits in a line slides along that line first — it stays where it was wanted, and shifting a dimension along its own line is what a drafter would do — and only steps off the run when the segment has no clear room left. Anything that ends up away from what it measures grows a leader back to it, whether the layout moved it or you did. In the line a label is grabbed over the number itself and nowhere else, so the run is still there to be picked up either side of it.'],
+      ['Colours','Five ship, and the sixth chip on the strip is any other one: a grid to tap, the platform\u2019s own picker \u2014 which on a tablet is the wheel \u2014 and a box to type a hex code into. Whatever you choose joins the strip and is kept with the job, so a house colour is set once. Each colour sits in a cell the size of a tool button with a dot in the middle of it, so the target matches everything beside it without five solid circles becoming the loudest thing on screen.'],
       ['Turning labels','In the line means along the line, so that is the angle it takes; a placard lies flat unless told otherwise. Either way it can be set per markup or as the default in Settings, and right-click or long-press one label to turn just that one.'],
       ['Size','One setting scales every label; the exporter scales them again for the bitmap it is producing.'],
       ['What is on a label','The run total carries the treatment tag; each segment carries its own length; an arc adds its radius and angle; a region adds its area and perimeter.'],
@@ -17254,6 +17367,7 @@ function liveDrop(){
   LIVE.pc=null; LIVE.ch=null; LIVE.rx=null; LIVE.snap=null; LIVE.sentBundle=false;
   LIVE.gaveJob=false; LIVE.heard=false; LIVE.acked=false;
   LIVE.theirs.clear(); LIVE.tick=0;
+  LIVE.cam=false; LIVE.theirCam=false; LIVE.sentPics=0;
   clearTimeout(LIVE.pushT); LIVE.pushT=null;
   clearTimeout(LIVE.hailT); LIVE.hailT=null;
 }
@@ -17302,7 +17416,7 @@ function liveHail(n){
   clearTimeout(LIVE.hailT); LIVE.hailT=null;
   if(LIVE.state!=='live') return;
   liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
-    ann:P.ann.length,treat:P.treat.length,ack:!!LIVE.peer});
+    ann:P.ann.length,treat:P.treat.length,ack:!!LIVE.peer,cam:camOn()||undefined});
   if(LIVE.heard||n>=6) return;
   LIVE.hailT=setTimeout(()=>liveHail(n+1),700);
 }
@@ -17343,11 +17457,11 @@ function liveWireExtra(link){
 }
 /* the second and later invitations: the same offer/answer as the first, on a
    connection of its own, so nothing about the existing link is disturbed */
-async function liveInviteMore(){
+async function liveInviteMore(cam){
   if(LIVE.state!=='live'){ toast('Connect one device first'); return null; }
   if(liveCount()>=LIVE_MAX-1){ toast('That is as many devices as one job takes'); return null; }
   const pc=liveNewPc();
-  const link={pc,ch:pc.createDataChannel('linework',{ordered:true}),peer:'',up:false};
+  const link={pc,ch:pc.createDataChannel('linework',{ordered:true}),peer:'',up:false,cam:!!cam};
   liveWireExtra(link);
   LIVE.extra.push(link);
   LIVE.more=link;
@@ -17412,10 +17526,14 @@ async function liveAccept(code){
    agrees on. */
 const LV_CHUNK=16*1024;
 /* every link that is up, hub or spoke; a spoke has exactly one */
-function liveChans(){
+/* `noCam` leaves out the links that are phones being used as cameras. A camera
+   is one way on purpose: it has no takeoff on it and is not going to be given
+   one, so pushing it a delta of the job is two things wrong at once — bytes it
+   has no use for, and the takeoff on a phone after being told it would not be. */
+function liveChans(noCam){
   const out=[];
-  if(LIVE.ch&&LIVE.ch.readyState==='open') out.push(LIVE.ch);
-  LIVE.extra.forEach(x=>{ if(x.ch&&x.ch.readyState==='open') out.push(x.ch); });
+  if(LIVE.ch&&LIVE.ch.readyState==='open'&&!(noCam&&LIVE.theirCam)) out.push(LIVE.ch);
+  LIVE.extra.forEach(x=>{ if(x.ch&&x.ch.readyState==='open'&&!(noCam&&x.cam)) out.push(x.ch); });
   return out;
 }
 const liveCount=()=>liveChans().length;
@@ -17435,7 +17553,7 @@ function liveTell(o,only){
    is handed over by the hub itself rather than forwarded. */
 function liveRelay(txt,from){
   if(LIVE.role!=='host') return;
-  liveChans().forEach(ch=>{
+  liveChans(true).forEach(ch=>{
     if(ch===from||ch.readyState!=='open') return;
     try{ ch.send(txt); LIVE.sent++; }catch(e){}
   });
@@ -17542,7 +17660,8 @@ function livePush(){
   const d=liveDiff(LIVE.snap,now);
   LIVE.snap=now;
   if(liveEmpty(d)) return;
-  liveTell(Object.assign({t:'delta'},d));
+  const txt=JSON.stringify(Object.assign({t:'delta'},d));
+  liveChans(true).forEach(ch=>{ try{ ch.send(txt); LIVE.sent++; }catch(e){} });
   /* a sheet the other end has never seen is no use to it without the drawing */
   if(d.docs) liveSendSheets();
 }
@@ -17604,13 +17723,18 @@ function liveHeard(data,from){
     return;
   }
   let m; try{ m=JSON.parse(data); }catch(e){ return; }
+  /* whatever the other end decides to send, a camera holds no takeoff. Refusing
+     here as well as not sending there means the promise does not depend on the
+     other device being the version that keeps it. */
+  if(camOn()&&/^(delta|blob|blobEnd)$/.test(m.t)) return;
   if(m.t==='hello'){
     const link=LIVE.extra.find(x=>x.ch===from);
     if(link){
       /* a spoke beyond the first: its name is its own, and the job goes to it
          down its own link if it arrived with nothing on it */
       link.peer=m.name||'a device';
-      if(!((m.ann||0)+(m.treat||0))&&(P.ann.length+P.treat.length)) liveSendJob(from);
+      link.cam=!!m.cam;
+      if(!m.cam&&!((m.ann||0)+(m.treat||0))&&(P.ann.length+P.treat.length)) liveSendJob(from);
       syncLiveUI();
       return;
     }
@@ -17631,6 +17755,9 @@ function liveHeard(data,from){
        exactly the wrong thing. They say so instead, and the button is there. */
     const mine=P.ann.length+P.treat.length, theirs=(m.ann||0)+(m.treat||0);
     LIVE.bothHave=!!(mine&&theirs);
+    /* a camera is not a device that wants a takeoff, and sending it one would be
+       two megabytes of PDF for a phone that is going to send one back */
+    if(m.cam){ LIVE.theirCam=true; syncLiveUI(); return; }
     /* a repeated hello is the same hello: hand the job over once per connection,
        or a hail that crossed with the handover starts it again from the top */
     if(mine&&!theirs&&!LIVE.gaveJob){ LIVE.gaveJob=true; liveSendJob(); }
@@ -17643,7 +17770,8 @@ function liveHeard(data,from){
     LIVE.pair={room:m.room,peer:m.dev||'',name:m.name||LIVE.peer,at:Date.now()};
     pairSave(LIVE.pair); syncLiveUI(); return;
   }
-  if(m.t==='blob'){ LIVE.rx={kind:m.kind,n:m.n,size:m.size,id:m.id,name:m.name,parts:[],have:0};
+  if(m.t==='blob'){ LIVE.rx={kind:m.kind,n:m.n,size:m.size,id:m.id,name:m.name,parts:[],have:0,
+    mime:m.mime,cap:m.cap,from:m.from};
     syncLiveUI(); return; }
   if(m.t==='blobEnd'){
     const rx=LIVE.rx; LIVE.rx=null;
@@ -17651,6 +17779,7 @@ function liveHeard(data,from){
     const all=new Uint8Array(rx.have);
     let at=0; rx.parts.forEach(q=>{ all.set(q,at); at+=q.length; });
     if(rx.kind==='job') liveTakeJob(all);
+    else if(rx.kind==='photo') liveTakePhoto(rx,all);
     else if(rx.kind==='sheet') liveTakeSheet(rx.id,rx.name,all);
     syncLiveUI();
     return;
@@ -17659,6 +17788,107 @@ function liveHeard(data,from){
      device that can see all of them */
   if(m.t==='delta') liveRelay(data,from);
   if(m.t==='delta'){ liveApply(m); return; }
+}
+/* the phone declares itself in its hello, so the other end knows not to hand it
+   a takeoff it has no use for */
+function camOn(){ return !!LIVE.cam; }
+async function liveJoinCam(code){
+  /* set after, not before: joining begins by dropping whatever connection is
+     open, and dropping one clears this along with everything else about it.
+     The answer comes back before the host can possibly accept it, so the flag
+     is set well before the channel opens and the hello goes out. */
+  const a=await liveJoin(code);
+  if(a) LIVE.cam=true;
+  return a;
+}
+/* One button and a caption. Everything else about this app is in the way of
+   somebody standing on a site holding a phone. */
+function camPanel(){
+  const st=liveStatusLine();
+  let h='<div class="lvstep"><div class="lvn"><span class="lvdot '+st.cls+'"></span></div>'
+    +'<div class="lvb"><b>'+esc(LIVE.state==='live'?('Camera for '+(LIVE.peer||'the other device')):st.txt)+'</b>'
+    +'<span>'+(LIVE.state==='live'
+      ? 'Take a photo and it lands on the drawing over there. Nothing of the takeoff is on this phone.'
+      : 'Waiting to connect.')+'</span></div></div>';
+  if(LIVE.state==='live'){
+    h+='<div class="lvstep on"><div class="lvn">\ud83d\udcf7</div><div class="lvb">'
+      +'<b>Take a photo</b><span>The camera opens; the picture goes straight across.</span>'
+      +'<div class="lvrow" style="margin-top:6px">'
+      +'<input type="text" id="camCap" placeholder="What it shows (optional)" style="flex:1 1 160px">'
+      +'</div>'
+      +'<div class="lvrow"><label class="btn pri" for="camShot" style="cursor:pointer">Take a photo</label>'
+      +'<input type="file" id="camShot" accept="image/*" capture="environment" style="display:none">'
+      +'<button class="btn" data-lv="stop">Disconnect</button></div>'
+      +(LIVE.sentPics?'<div class="hint" style="margin-top:6px">'+LIVE.sentPics+' sent.</div>':'')
+      +'</div></div>';
+  }
+  return h;
+}
+async function camSend(file){
+  if(!file){ return false; }
+  if(LIVE.state!=='live'){ toast('Not connected'); return false; }
+  if(file.size>12*1048576){ toast('That picture is over 12 MB — the phone can shrink it in the camera settings'); return false; }
+  const cap=($('#camCap')&&$('#camCap').value||'').trim();
+  liveTell({t:'busy',what:'sending a photo'});
+  toast('Sending…');
+  try{
+    const bytes=new Uint8Array(await file.arrayBuffer());
+    const ok2=await liveShip('photo',bytes,{name:file.name||'photo.jpg',
+      mime:file.type||'image/jpeg',cap,from:liveName()});
+    liveTell({t:'busy',what:''});
+    if(!ok2){ toast('That did not go through'); return false; }
+  }catch(e){ liveTell({t:'busy',what:''}); toast('Could not read that picture'); return false; }
+  LIVE.sentPics=(LIVE.sentPics||0)+1;
+  if($('#camCap')) $('#camCap').value='';
+  drawLivePanel();
+  toast('Sent — it is on the drawing');
+  return true;
+}
+
+/* ---- a phone, used as a camera ----
+   A phone is a bad device for a takeoff and the best one in the room for a
+   photograph. So it joins the same way anything else does — the QR, or the six
+   characters — but says it is a camera, and then it is a camera: one button, no
+   drawing, no job. It never receives the takeoff, which is the point. A site
+   photo is thirty seconds of walking and two megabytes; handing a phone the
+   whole job to send one back would be the slowest part of the day.
+
+   What arrives lands on the sheet the other device is looking at. If a run is
+   selected it is pinned beside that run, which is nearly always what was being
+   photographed and is what makes it say "COVE Z2" in the report rather than
+   "photo 4". Otherwise it lands in the middle of the view, selected, to be
+   dragged where it belongs. */
+async function liveTakePhoto(rx,bytes){
+  if(!V.docId){ toast('A photo arrived, but no sheet is open to pin it to'); return; }
+  const id=uid('ph_');
+  try{
+    await pdfSave(photoKey(id),bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),
+      {name:rx.name||'photo.jpg',size:bytes.byteLength,mime:rx.mime||'image/jpeg'});
+  }catch(e){ toast('A photo arrived but could not be stored — the browser store may be full'); return; }
+  /* beside the selected run if there is one, otherwise the middle of the view */
+  let at=null, near='';
+  const sel=V.sel&&P.ann.find(x=>x.id===V.sel);
+  if(sel&&sel.doc===V.docId&&sel.page===V.page){
+    const c=annCentre(sel);
+    if(c){ at=[c[0],c[1]]; const t=sel.treat&&P.treat.find(y=>y.id===sel.treat); near=t?tagOf(t):''; }
+  }
+  if(!at){
+    /* visRect is in screen pixels, not sheet points, and reading it as points
+       put the first photo at NaN. The middle of what is on screen has to be
+       converted the same way a tap on the sheet is. */
+    try{
+      const r=visRect();
+      at=V.vp.convertToPdfPoint(r.x+r.w/2,r.y+r.h/2);
+    }catch(e){ at=null; }
+    if(!at||!isFinite(at[0])||!isFinite(at[1])) at=[(+V.pw||612)/2,(+V.ph||792)/2];
+  }
+  snap('Photo from '+(rx.from||'the phone'));
+  const a={id:uid('a_'),type:'photo',doc:V.docId,page:V.page,pts:[at],photo:id,
+    text:String(rx.cap||'').trim(),file:rx.name||'photo.jpg',mime:rx.mime||'image/jpeg',
+    color:'#7FB77E',w:V.width};
+  P.ann.push(a); invalidateAnns(); V.sel=a.id;
+  drawOverlay(); showInspector(a); renderAnnList(); markDirty();
+  toast('Photo from '+(rx.from||'the phone')+(near?' — pinned on '+near:' — pinned here; drag it where it belongs'));
 }
 async function liveTakeSheet(id,name,bytes){
   try{
@@ -17888,6 +18118,14 @@ function syncLiveUI(){
 }
 function drawLivePanel(){
   const body=$('#lvBody'); if(!body) return;
+  /* on a phone that joined as a camera there is nothing else to show */
+  if(camOn()){
+    body.innerHTML=camPanel();
+    const sh=$('#camShot');
+    if(sh) sh.onchange=e=>{ const f=e.target.files&&e.target.files[0]; e.target.value=''; if(f) camSend(f); };
+    $$('[data-lv]',body).forEach(el=>el.onclick=()=>liveAct(el.dataset.lv));
+    return;
+  }
   const st=liveStatusLine();
   const step=(n,on,done,title,note,extra)=>'<div class="lvstep'+(done?' done':(on?' on':''))+'">'
     +'<div class="lvn">'+(done?'✓':n)+'</div><div class="lvb"><b>'+title+'</b>'
@@ -17910,14 +18148,17 @@ function drawLivePanel(){
         +'. Everything goes through here, so the others do not need to reach each other.</div>';
     }
     h+='<div class="lvrow"><button class="btn" data-lv="job">Send the whole job again</button>'
-      +(LIVE.role==='host'?'<button class="btn" data-lv="more">Add another device…</button>':'')
+      +(LIVE.role==='host'?'<button class="btn" data-lv="more">Add another device…</button>'
+        +'<button class="btn" data-lv="cam">Use a phone as a camera…</button>':'')
       +'<button class="btn" data-lv="stop">Disconnect</button>'
       +(LIVE.pair?'<button class="btn" data-lv="forget">Forget this pairing</button>':'')+'</div>';
     if(LIVE.more&&LIVE.more.code&&!LIVE.more.up){
-      const link2=location.origin+location.pathname+'#lw='+LIVE.more.code;
-      h+='<div class="lvstep on"><div class="lvn">+</div><div class="lvb">'
-        +'<b>Point the next device at this</b><span>The same two steps as the first one. '
-        +'It joins the job you are already on.</span>'
+      const cam=!!LIVE.more.cam;
+      const link2=location.origin+location.pathname+'#'+(cam?'lwcam=':'lw=')+LIVE.more.code;
+      h+='<div class="lvstep on"><div class="lvn">'+(cam?'\ud83d\udcf7':'+')+'</div><div class="lvb">'
+        +'<b>'+(cam?'Point the phone\u2019s camera at this':'Point the next device at this')+'</b><span>'
+        +(cam?'It opens as a camera and nothing else \u2014 one button, no takeoff on it. Photos land on the sheet you are looking at, or beside the run you have selected.'
+             :'The same two steps as the first one. It joins the job you are already on.')+'</span>'
         +'<div class="lvqr">'+qrFor(link2)+'</div>'
         +'<textarea class="lvcode" readonly id="lvOut">'+esc(link2)+'</textarea>'
         +'<div class="lvrow"><button class="btn" data-lv="copy">Copy the link</button></div>'
@@ -17998,7 +18239,7 @@ function drawLivePanel(){
     : 'Both devices must be on the same network.';
   $$('[data-lv]',body).forEach(el=>el.onclick=()=>liveAct(el.dataset.lv));
 }
-const lvCode=t=>{ const m=/#lw=([A-Za-z0-9_-]+)/.exec(t||''); return m?m[1]:String(t||'').trim(); };
+const lvCode=t=>{ const m=/#lw(?:cam)?=([A-Za-z0-9_-]+)/.exec(t||''); return m?m[1]:String(t||'').trim(); };
 async function liveAct(what){
   if(what==='host'){ await liveHost(); drawLivePanel(); return; }
   if(what==='join'){
@@ -18018,6 +18259,7 @@ async function liveAct(what){
     return;
   }
   if(what==='more'){ await liveInviteMore(); drawLivePanel(); return; }
+  if(what==='cam'){ await liveInviteMore(true); drawLivePanel(); return; }
   if(what==='acceptmore'){
     const v=$('#lvIn2')&&$('#lvIn2').value;
     if(!v){ toast('Paste the reply first'); return; }
@@ -18095,12 +18337,13 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   csvRows,csvMap,csvPlan,csvApply,importRuns,csvCols:CSV_COLS,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveKeep,liveReinstate,liveMine,liveChans,liveCount,liveInviteMore,liveAcceptMore,
+  liveJoinCam,camOn,camPanel,camSend,liveTakePhoto,
   liveRelay,liveMax:LIVE_MAX,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,
   rvOn,rvUrl,rvCode,rvClean,rvOpen,rvJoinCode,rvReconnect,rvPair,rvSides,
   pairLoad,pairSave,pairForget,deviceId,drawLivePanel,syncLiveUI,
-  inkLbl,alignRuns,chipSvg,chipGrab,chipBox,
+  inkLbl,alignRuns,chipSvg,chipGrab,chipBox,inkList,renderInks,pickInk,colors:COLORS,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
   calcFlush,calcToTreat,GLYPH,cloudOf,cloudMatch,templates,forgetTemplates,inkBox,inkGroups,
@@ -18163,14 +18406,16 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   /* Two devices that have met before meet again by themselves. Quietly: it polls
      for a few seconds and gives up without a word if the other one is not there,
      because a message every time you open a drawing is not seamless either. */
-  if(P.rvAuto!==false&&rvOn()&&pairLoad()&&!/[#&]lw=/.test(location.hash||'')){
+  if(P.rvAuto!==false&&rvOn()&&pairLoad()&&!/[#&]lwc?a?m?=/.test(location.hash||'')){
     setTimeout(()=>{ if(LIVE.state==='off') rvReconnect(true); },1200);
   }
-  const inv=/[#&]lw=([A-Za-z0-9_-]+)/.exec(location.hash||'');
+  /* an ordinary invitation joins the job; a camera one opens as a camera and
+     never asks for the job at all */
+  const inv=/[#&]lw(cam)?=([A-Za-z0-9_-]+)/.exec(location.hash||'');
   if(inv){
     try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
     openLive();
-    await liveJoin(inv[1]);
+    if(inv[1]) await liveJoinCam(inv[2]); else await liveJoin(inv[2]);
     drawLivePanel();
   }
 })();

@@ -602,6 +602,67 @@ tag and are pinned to no drawing, that they reach the calculator and come out as
 pieces, that one undo takes them all back, four kinds of file that are not a
 takeoff, and the type default.
 
+## A phone, used as a camera
+
+A phone is a bad device for a takeoff and the best one in the room for a
+photograph. *Live › Use a phone as a camera* makes an invitation its camera can
+read; it opens as a camera and nothing else — one button, a caption field, and
+**no takeoff on it**.
+
+One way, on purpose, and enforced at both ends. The hub never pushes a delta
+down a camera link, and the camera refuses `delta`, `blob` and `blobEnd` if one
+arrives anyway — so the promise does not depend on the other device being the
+version that keeps it. Handing a phone the whole job so it can send one
+photograph back would be the slowest part of the day, and would leave the job on
+a phone after being told it would not.
+
+**Where the photo lands.** On the sheet the other device is looking at. If a run
+is selected it is pinned beside that run — nearly always what was being
+photographed, and what makes the report say *COVE Z2* rather than "photo 4".
+Otherwise it lands in the middle of the current view, selected, to be dragged
+into place. Either way it is an ordinary pinned photo: it opens, it exports, and
+it goes into the report with what it is near.
+
+`cam.mjs` runs a desktop and a phone-sized browser, joins as a camera, and checks
+the phone is told it is one, the computer knows it, **nothing of the job reaches
+the phone** — not the markups, not the sheets, not even the project name — that
+the panel offers a back-camera button and a caption and nothing else, that a real
+JPEG crosses and is stored rather than referenced, that a photo taken with a run
+selected is pinned on that run, and that the report names both.
+
+## The colour strip
+
+The five that ship, and a sixth chip for any other one: a grid to tap, the
+platform's own picker — which on a tablet is the wheel — and a box to type hex
+into. Whatever is chosen joins the strip and is kept with the job, so a house
+colour is set once.
+
+Each colour sits in a **cell the size of a tool button with a dot in the middle**,
+rather than being a dot the size of a tool button. The tap target matches
+everything beside it, and the weight on screen is a dot, which is what it is.
+
+## The rail, measured properly
+
+The screenshot that prompted this: five colour dots laid out in a column *on top
+of* the second column of tools, hiding eight buttons behind them.
+
+`railFit` sized the rail from `scrollWidth`. The strip holds two things that wrap
+into columns of their own — the tools and the colours — and a wrapped flex column
+that overflows its container does not reliably turn up in that container's
+`scrollWidth`. It did not here, so the rail sized itself to the tools alone and
+the colours were laid out over the top of them.
+
+It measures the children's own right edges now, which cannot miss that. With one
+correction that took a second pass: the zoom-and-page strip is a child of the
+toolbar and deliberately floats over the sheet, and asking whether *the element*
+is positioned was not enough — the strip is positioned, its buttons are not, and
+the buttons are what stick out furthest. Walking up to the toolbar and skipping
+anything inside something out of flow took the rail from 420px back to 142.
+
+`rail2.mjs` checks six iPad sizes for three things: no control drawn on top of
+another, none sticking out past the rail, none running off the bottom — plus that
+a colour is exactly the same target as a tool.
+
 ## More than two devices
 
 A third device is not a third kind of connection: it is another of the one that
