@@ -559,6 +559,40 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## What changed between two revisions
+
+Comparing two renders of a sheet and clustering the changed blocks was already
+here. Two things were missing, and both are about not misleading the reader.
+
+**Which way the change went.** A page is dark ink on light paper, so a patch that
+got *darker* gained ink and one that got *lighter* lost it. Each block votes, and
+each cluster is called **added**, **removed** or **changed** — clouded green, red
+and amber, and labelled.
+
+The third category is the one that earns its keep. A detail that *moved* gains
+and loses ink in about equal measure, and a cluster where the weaker direction is
+more than a quarter of the stronger is reported as redrawn rather than as either
+half of itself. Calling a moved detail "added" sends somebody looking for
+something that is not there; calling it "removed" tells them to stop looking for
+something that is.
+
+**Nothing is clouded until it is accepted.** Clouding everything a diff finds is
+right when the diff is right and wrong the rest of the time — a rescanned sheet,
+a shifted titleblock or a new plot date each produce areas nobody wants clouded,
+and once they are on the drawing they come off one at a time. So every change is
+offered first, with what happened, how big it is, and **which runs are inside it**,
+that last being what actually decides whether an area matters. Everything starts
+ticked, because on a clean compare the answer is usually yes; cancelling leaves
+the sheet untouched. *Cloud everything* and *cloud nothing* are both still there.
+
+`revdiff.mjs` works against two revisions of one sheet with the deltas planted:
+a block only on the old one, a block only on the new one, and a detail moved.
+It checks each is called the right thing, that the clouds carry the label and the
+colour and sit over the right part of the sheet, that turning one down in the
+review leaves it out, that nothing is drawn until the review finishes, that
+cancelling draws nothing at all, that a run inside a changed area is reported and
+one clear of them is not, and that a sheet compared with itself finds nothing.
+
 ## What leaves the app
 
 Three documents for three different people, and deliberately not one document

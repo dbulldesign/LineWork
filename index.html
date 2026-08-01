@@ -1207,7 +1207,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.82.0';
+const APP_VER='1.83.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -14653,14 +14653,18 @@ async function visualSearch(rect,opts){
     capped:found.length>=(opts.cap||1500)};
 }
 /* changed blocks -> merged rectangles, in the *second* page's PDF points */
-function clusterBlocks(mark,bw,bh,scale){
+function clusterBlocks(mark,bw,bh,scale,kind){
   const seen=new Uint8Array(bw*bh), out=[];
   for(let i=0;i<bw*bh;i++){
     if(!mark[i]||seen[i]) continue;
     const q=[i]; seen[i]=1;
     let x0=i%bw,x1=x0,y0=(i/bw)|0,y1=y0,n=0;
+    /* every block in a cluster votes on what happened there, so a detail that
+       is mostly new reads as added even where a few of its blocks also lost ink */
+    let added=0, gone=0;
     while(q.length){
       const c=q.pop(), cx=c%bw, cy=(c/bw)|0; n++;
+      if(kind){ if(kind[c]===1) added++; else if(kind[c]===2) gone++; }
       if(cx<x0)x0=cx; if(cx>x1)x1=cx; if(cy<y0)y0=cy; if(cy>y1)y1=cy;
       /* a 2-block reach bridges the gaps inside one revised detail */
       for(let dy=-2;dy<=2;dy++) for(let dx=-2;dx<=2;dx++){
@@ -14671,7 +14675,16 @@ function clusterBlocks(mark,bw,bh,scale){
       }
     }
     if(n<3) continue;                          /* specks are noise, not revisions */
-    out.push({n,
+    /* Added, removed, or reworked. A block that only gained ink is new work; one
+       that only lost it is something taken off; a cluster with a decent share of
+       both is a detail that was redrawn, and calling that "added" would send
+       somebody looking for something that is not there. */
+    let what='changed';
+    if(kind){
+      const strong=Math.max(added,gone), weak=Math.min(added,gone);
+      if(strong&&weak/strong<0.25) what=(added>gone)?'added':'removed';
+    }
+    out.push({n,what,added,gone,
       x:(x0*CMP_BLOCK)/scale, y:(y0*CMP_BLOCK)/scale,
       w:((x1-x0+1)*CMP_BLOCK)/scale, h:((y1-y0+1)*CMP_BLOCK)/scale});
   }
@@ -14685,23 +14698,35 @@ async function compareSheets(aDoc,aPg,bDoc,bPg){
       +' vs '+B.ptW.toFixed(0)+'×'+B.ptH.toFixed(0)+') — compare like for like');
   const w=Math.min(A.w,B.w), h=Math.min(A.h,B.h);
   const bw=Math.ceil(w/CMP_BLOCK), bh=Math.ceil(h/CMP_BLOCK);
-  const mark=new Uint8Array(bw*bh);
+  const mark=new Uint8Array(bw*bh), kind=new Uint8Array(bw*bh);
   let changed=0;
   for(let by=0;by<bh;by++) for(let bx=0;bx<bw;bx++){
-    let hits=0, cells=0;
+    let hits=0, cells=0, gained=0, lost=0;
     const x1=Math.min(w,(bx+1)*CMP_BLOCK), y1=Math.min(h,(by+1)*CMP_BLOCK);
     for(let y=by*CMP_BLOCK;y<y1;y++){
       const ra=y*A.w, rb=y*B.w;
       for(let x=bx*CMP_BLOCK;x<x1;x++){
         cells++;
-        if(Math.abs(A.g[ra+x]-B.g[rb+x])>CMP_TOL) hits++;
+        const d=A.g[ra+x]-B.g[rb+x];
+        if(Math.abs(d)>CMP_TOL){
+          hits++;
+          /* a page is dark ink on light paper, so the new sheet being darker
+             here means ink arrived, and lighter means ink went away */
+          if(d>0) gained++; else lost++;
+        }
       }
     }
     /* a couple of stray pixels is antialiasing; 4% of a block is a real change */
-    if(cells&&hits/cells>0.04){ mark[by*bw+bx]=1; changed++; }
+    if(cells&&hits/cells>0.04){
+      mark[by*bw+bx]=1; changed++;
+      const strong=Math.max(gained,lost), weak=Math.min(gained,lost);
+      kind[by*bw+bx]=(strong&&weak/strong<0.25)?(gained>lost?1:2):3;
+    }
   }
-  const rects=clusterBlocks(mark,bw,bh,scale);
-  return {rects,blocks:changed,total:bw*bh,
+  const rects=clusterBlocks(mark,bw,bh,scale,kind);
+  const tally={added:0,removed:0,changed:0};
+  rects.forEach(r=>{ tally[r.what]=(tally[r.what]||0)+1; });
+  return {rects,tally,blocks:changed,total:bw*bh,
     pct:bw*bh?changed/(bw*bh):0,ptW:B.ptW,ptH:B.ptH,scale};
 }
 /* ---- revision impact ----
@@ -14756,6 +14781,10 @@ function revImpact(rects,docId,page,ptH){
 }
 /* rectangles are in viewport-style coordinates (y down); markups live in PDF
    user space (y up), so flip as we build the clouds */
+/* what each kind of change is called, and what colour it is clouded in: green
+   for work that arrived, red for work that went, amber for a detail redrawn */
+const REV_KIND={added:{t:'added',c:'#8FC46A'},removed:{t:'removed',c:'#E4694F'},
+  changed:{t:'changed',c:'#F2A93B'}};
 function cloudRects(rects,docId,pg,rev,note,ptH){
   snap();
   const made=[];
@@ -14763,8 +14792,10 @@ function cloudRects(rects,docId,pg,rev,note,ptH){
     const y0=ptH-r.y, y1=ptH-(r.y+r.h);
     const pad=4;
     const pts=[[r.x-pad,y0+pad],[r.x+r.w+pad,y0+pad],[r.x+r.w+pad,y1-pad],[r.x-pad,y1-pad]];
-    made.push({id:uid('a_'),type:'cloud',doc:docId,page:pg,pts,color:'#E4694F',w:V.width,
-      rev:String(rev||'1'),text:note||('changed area '+(i+1))});
+    const k=REV_KIND[r.what]||REV_KIND.changed;
+    made.push({id:uid('a_'),type:'cloud',doc:docId,page:pg,pts,color:k.c,w:V.width,
+      rev:String(rev||'1'),
+      text:note?(note+' \u2014 '+k.t):(k.t+' \u2014 area '+(r.n0!=null?r.n0:i+1))});
   });
   made.forEach(a=>P.ann.push(a));
   invalidateAnns();
@@ -14786,7 +14817,10 @@ async function compareRevisions(){
   const here=P.docs.find(d=>d.id===V.docId);
   const r=await dlg({title:'Compare revisions',fields:[
     {k:'old',type:'select',label:'Compare against',opts,val:opts[0].v},
-    {k:'cloud',type:'check',cap:'Cloud what changed',val:true},
+    {k:'cloud',type:'select',label:'What to cloud',opts:[
+      {v:'ask',t:'Show me each change and let me pick'},
+      {v:'all',t:'Cloud every change'},
+      {v:'none',t:'Do not cloud anything'}],val:'ask'},
     {k:'rev',label:'Revision number for the clouds',val:nextRev()}
   ],ok:'Compare',note:'The sheet on screen ('+sheetLabel(here)+' p'+V.page+') is treated as the new revision. '
     +'Both pages are rendered and diffed — same page size, please.'});
@@ -14798,12 +14832,48 @@ async function compareRevisions(){
     V.cmpPtH=res.ptH;
     V.cmp={rects:res.rects,doc:V.docId,page:V.page};
     if(!res.rects.length){ toast('No differences found between those two pages'); return; }
-    let n=0;
-    if(r.cloud) n=cloudRects(res.rects,V.docId,V.page,r.rev,'rev '+r.rev,res.ptH);
+    /* numbered here, once, so an area is called the same thing in the list, on
+       its cloud and in the impact report even after some are turned down */
+    res.rects.forEach((x,i)=>{ x.n0=i+1; });
+    const say=t=>['added','removed','changed'].filter(k=>t[k])
+      .map(k=>t[k]+' '+k).join(', ');
     toast(res.rects.length+' changed area'+(res.rects.length===1?'':'s')+' found ('
-      +(res.pct*100).toFixed(1)+'% of the sheet)'+(n?' — '+n+' clouded':''));
-    await showImpact(res.rects,V.docId,V.page,res.ptH,r.rev);
+      +say(res.tally)+', '+(res.pct*100).toFixed(1)+'% of the sheet)');
+    let take=res.rects;
+    if(r.cloud==='ask') take=await pickChanges(res,V.docId,V.page,res.ptH);
+    else if(r.cloud==='none') take=[];
+    if(take===null) return;                     /* the review was cancelled */
+    const n=take.length?cloudRects(take,V.docId,V.page,r.rev,'',res.ptH):0;
+    if(n) toast(n+' area'+(n===1?'':'s')+' clouded as rev '+r.rev);
+    await showImpact(take.length?take:res.rects,V.docId,V.page,res.ptH,r.rev);
   }catch(e){ toast(e&&e.message||'Could not compare those pages'); }
+}
+/* ---- accepting the changes one at a time ----
+   Clouding everything a diff found is right when the diff is right and wrong
+   the rest of the time: a rescanned sheet, a moved titleblock or a different
+   plot date will each produce areas nobody wants clouded, and once they are on
+   the drawing they have to be deleted one by one. So they are offered first,
+   each with what happened, how big it is, and which runs it touches — the last
+   being the thing that actually decides whether an area matters. Everything is
+   ticked to begin with, because on a clean compare the answer is usually yes. */
+async function pickChanges(res,docId,page,ptH){
+  const im=revImpact(res.rects,docId,page,ptH);
+  const runsIn={};
+  im.hit.forEach(h=>h.areas.forEach(i=>{ (runsIn[i]=runsIn[i]||[]).push(h.tag); }));
+  const fields=res.rects.map((r,i)=>{
+    const k=REV_KIND[r.what]||REV_KIND.changed;
+    const size=Math.round(r.w)+'\u00d7'+Math.round(r.h)+'pt';
+    const runs=runsIn[i+1];
+    return {k:'a'+i,type:'check',
+      cap:'Area '+r.n0+' \u2014 '+k.t+', '+size
+        +(runs?'  \u00b7  on '+runs.join(', '):'  \u00b7  no runs in it'),
+      val:true};
+  });
+  const r=await dlg({title:'What changed',fields,ok:'Cloud the ticked ones',cancel:'Cancel',
+    note:'Untick anything that is not a revision \u2014 a rescan, a moved titleblock, a new plot date. '
+      +'An area with a run in it is the kind worth keeping.'});
+  if(!r) return null;
+  return res.rects.filter((x,i)=>r['a'+i]);
 }
 /* what moved is only half the answer; which runs are in it is the other half */
 async function showImpact(rects,docId,page,ptH,rev){
@@ -15996,6 +16066,14 @@ function manualSections(){
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
+    ]}]},
+  {id:'revisions',t:'What changed between two revisions',blocks:[
+    {p:'Open the new revision, press Compare revisions on the Sheets rail, and pick the old one. Both pages are rendered and diffed.'},
+    {rows:[
+      ['Which way the change went','Not just that something moved \u2014 whether it arrived, went away, or was redrawn. A page is dark ink on light paper, so a patch that got darker gained ink and one that got lighter lost it. Added is clouded green, removed red, redrawn amber, and each cloud says which it is. A detail that moved gains and loses ink in about equal measure, and reads as redrawn rather than as either half of itself: calling a moved detail \u201cadded\u201d sends somebody looking for something that is not there, and calling it \u201cremoved\u201d tells them to stop looking for something that is.'],
+      ['Nothing is clouded until you say so','Every change is offered first, with what happened, how big it is, and which runs are inside it \u2014 that last being the thing that actually decides whether an area matters. Untick a rescanned titleblock or a new plot date and it never reaches the drawing. Everything starts ticked, because on a clean compare the answer is usually yes, and cancelling the review leaves the sheet alone. Cloud every change, or none, are both still there if you would rather not review.'],
+      ['Which runs it hits','A run is tested segment against rectangle, not bounding box against bounding box, so an L-shaped cove crossing a room is not reported as affected by a change in a corner it never enters. The runs in a changed area can be flagged for re-measure in one press, and an approved run under a change can have its approval withdrawn \u2014 an approved run under a changed area is the expensive kind of stale.'],
+      ['What it will not do','Two pages of different sizes are refused rather than stretched to fit.'],
     ]}]},
   {id:'issuing',t:'What leaves the app',blocks:[
     {p:'Three documents for three different people, and they are not the same document with different stylesheets.'},
@@ -17664,6 +17742,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   feats:FEATS,featOn,featUsed,featAdded,featAdd,featOf,featToolOn,setLevel,applyLevel,
   roomAt,roomFill,roomEdge,placeRoom,edgeAt,snapAt,snapped,snapSegs:()=>SNAP.segN,
   benchHtml,benchCss,openBench,photoOf,photoNear:PHOTO_NEAR,
+  compareSheets,clusterBlocks,cloudRects,revImpact,pickChanges,revKinds:REV_KIND,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,
