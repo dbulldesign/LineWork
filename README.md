@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.74.0**
+**Version 1.74.1**
 
 ## What it does
 
@@ -424,6 +424,22 @@ iPad with the takeoff drawer open *and* the calibrate banner still up, which lea
 
 **To shorten the strip**, Settings › Tools turns off what this job does not need. That is
 the intended lever, and it is remembered with the workspace.
+
+### Icons, not characters
+
+Five buttons on the bar used to lead with a character rather than a drawing: `▭` for the
+ruler, `🖩` for the calculator, `⊹` for snapping, `✋` and `⊕` for what a finger and a
+wheel do. A character is at the mercy of whatever font the device has. **iOS has no glyph
+for the pocket calculator at all**, so that button drew an empty box, and the white
+rectangle drew as exactly that — an empty rectangle, which in a square button reads as a
+button that has failed. Down the side rail, where the word is dropped to keep the columns
+narrow, those two were all you got.
+
+They are drawn now, like every other button, and they mean the same thing on every device.
+The state changes touch the **word only** — setting a button's text takes its icon with it,
+which is how the ruler lost its own label the first time round. The page arrows went the
+same way. A check on every run asserts that nothing on the bar is a bare symbol: every
+control is a drawn icon or a word made of letters.
 
 ## Measurements in the line
 
