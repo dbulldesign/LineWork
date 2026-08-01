@@ -559,6 +559,38 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## More than two devices
+
+A third device is not a third kind of connection: it is another of the one that
+already works. *Add another device* runs the same offer-and-reply on a link of
+its own, so the connection you already have is never disturbed, and every link
+is the pair that is already tested.
+
+The topology is a **star, not a mesh**. The device that made the first invitation
+is the hub; it holds a link to each of the others and passes their deltas on to
+everybody but the sender. Two consequences, and both are why it is a star:
+nobody has to be able to reach anybody except the hub — which matters on the
+kind of Wi-Fi that stops devices seeing each other — and **one device dropping
+off takes its own link and nothing else**. The rest of the room carries on, and
+it says who left. Up to six on one job.
+
+The job goes down the link that needs it rather than to the room: a second
+tablet arriving gets the whole bundle on its own channel, and broadcasting a PDF
+to three devices that already have it is a minute of nothing. Blobs are
+per-link; only deltas are relayed.
+
+The wording follows: two devices have each other, three are a room. The footer
+counts them instead of naming one and quietly dropping the rest, and the panel
+stops saying "either of you". A spoke is not offered *Add another device*,
+because it could not relay for them.
+
+`three.mjs` runs three real browsers: the first pairs exactly as before, the
+second joins without disturbing it, both get the job, a change on the hub reaches
+both, a change on one tablet reaches the other **through** the hub, and one back
+the other way. Then it checks all three converge on the same four runs, that a
+relayed change is not echoed back to whoever sent it, that one device leaving
+leaves the room live and work still crossing, and the wording in both states.
+
 ## Undo, with somebody else drawing
 
 Undo restores a snapshot of the whole job. That is right when you are working

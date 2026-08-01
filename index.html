@@ -1207,7 +1207,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.84.0';
+const APP_VER='1.85.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -16106,6 +16106,7 @@ function manualSections(){
       ['Who wins','Records are matched by their id and the later write wins. One person drawing while the other watches, which is what this is for, is exact. Two people editing the same run at the same moment is not: the second write replaces the first.'],
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
+      ['More than two devices','A third is not a third kind of connection \u2014 it is another of the one that already works. Add another device on the panel and the same two steps happen again on a link of its own, so the connection you already have is not disturbed. The device that made the first invitation keeps a link to each of the others and passes their changes on, which means nobody has to be able to reach anybody but it. Up to six on one job. One device leaving takes its own link and nothing else: the rest of the room carries on, and it says who left.'],
       ['Undo takes back your own','Undo restores the job as it was, which is right on your own and wrong the moment somebody else is drawing into the same one \u2014 the state it restores predates their last three runs, and putting it back would take those off their screen as well as yours. So every step remembers how much of the other device it had seen, and undoing one leaves everything that arrived after it alone. Your change goes back; theirs stays. A run they deleted after your step stays deleted for the same reason in the other direction, rather than reappearing on both screens. It says how many of their changes it left alone, so nothing is quietly different from what you expected.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
     ]}]},
@@ -17028,7 +17029,13 @@ const LIVE={pc:null,ch:null,role:'',state:'off',peer:'',err:'',
   via:'',room:'',showCode:'',pair:null,stop:false,busyWhat:'',announce:'',bothHave:false,
   /* which records came from the other end and when, so an undo here can put
      back what arrived from there rather than reverting it along with your own */
-  tick:0,theirs:new Map()};
+  tick:0,theirs:new Map(),
+  /* A third device is not a third kind of connection: it is another of the one
+     that already works. The device that opened the room keeps a link to each of
+     the others and passes their changes on, so every link is exactly the pair
+     that is already tested and nobody has to reach anybody but the hub. */
+  extra:[]};
+const LIVE_MAX=6;             /* devices on one job, hub included */
 const LIVE_THEIRS=4000;       /* records remembered; a long session is bounded */
 function liveMine(ids){
   /* something you have just edited yourself is yours again, whoever drew it */
@@ -17088,6 +17095,9 @@ function liveIce(){
 function liveDrop(){
   if(LIVE.ch){ try{ LIVE.ch.close(); }catch(e){} }
   if(LIVE.pc){ try{ LIVE.pc.close(); }catch(e){} }
+  LIVE.extra.forEach(x=>{ try{ x.ch&&x.ch.close(); }catch(e){}
+    try{ x.pc&&x.pc.close(); }catch(e){} });
+  LIVE.extra=[]; LIVE.more=null; LIVE.gave=null;
   LIVE.pc=null; LIVE.ch=null; LIVE.rx=null; LIVE.snap=null; LIVE.sentBundle=false;
   LIVE.gaveJob=false; LIVE.heard=false; LIVE.acked=false;
   LIVE.theirs.clear(); LIVE.tick=0;
@@ -17154,8 +17164,56 @@ function liveWire(ch){
     LIVE.snap=liveSnap();
     syncLiveUI();
   };
-  ch.onclose=()=>{ if(LIVE.state==='live') liveTeardown('The other device disconnected.'); };
-  ch.onmessage=e=>liveHeard(e.data);
+  ch.onclose=()=>{ if(LIVE.state==='live'&&!liveCount()) liveTeardown('The other device disconnected.'); };
+  ch.onmessage=e=>liveHeard(e.data,ch);
+}
+/* A link to another device beyond the first. Only the hub holds these, and each
+   is the same connection as the first one — the difference is entirely in who
+   keeps it. One device dropping off takes its own link with it and leaves the
+   rest of the room alone, which is the reason for a star rather than a mesh. */
+function liveWireExtra(link){
+  const ch=link.ch;
+  ch.binaryType='arraybuffer';
+  ch.bufferedAmountLowThreshold=256*1024;
+  ch.onopen=()=>{
+    link.up=true;
+    liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
+      ann:P.ann.length,treat:P.treat.length,ack:true},ch);
+    syncLiveUI();
+  };
+  ch.onclose=()=>{
+    LIVE.extra=LIVE.extra.filter(x=>x!==link);
+    if(LIVE.state==='live'&&!liveCount()) liveTeardown('The other device disconnected.');
+    else { toast((link.peer||'A device')+' left'); syncLiveUI(); }
+  };
+  ch.onmessage=e=>liveHeard(e.data,ch);
+}
+/* the second and later invitations: the same offer/answer as the first, on a
+   connection of its own, so nothing about the existing link is disturbed */
+async function liveInviteMore(){
+  if(LIVE.state!=='live'){ toast('Connect one device first'); return null; }
+  if(liveCount()>=LIVE_MAX-1){ toast('That is as many devices as one job takes'); return null; }
+  const pc=liveNewPc();
+  const link={pc,ch:pc.createDataChannel('linework',{ordered:true}),peer:'',up:false};
+  liveWireExtra(link);
+  LIVE.extra.push(link);
+  LIVE.more=link;
+  await pc.setLocalDescription(await pc.createOffer());
+  await liveGathered(pc);
+  link.code=await squash(JSON.stringify({o:pc.localDescription.sdp}));
+  syncLiveUI();
+  return link.code;
+}
+async function liveAcceptMore(code){
+  const link=LIVE.more;
+  if(!link||!link.pc){ toast('Make the second invitation first'); return false; }
+  let sdp;
+  try{ sdp=JSON.parse(await unsquash(code)).a; }
+  catch(e){ toast('That code did not read as a reply. Copy the whole of it.'); return false; }
+  if(!sdp){ toast('That is an invitation, not a reply'); return false; }
+  await link.pc.setRemoteDescription({type:'answer',sdp});
+  syncLiveUI();
+  return true;
 }
 async function liveHost(){
   liveDrop();
@@ -17200,37 +17258,68 @@ async function liveAccept(code){
    other end rather than splitting it for you. 16KB is the size every browser
    agrees on. */
 const LV_CHUNK=16*1024;
-function liveTell(o){
-  if(!LIVE.ch||LIVE.ch.readyState!=='open') return false;
-  try{ LIVE.ch.send(JSON.stringify(o)); LIVE.sent++; return true; }catch(e){ return false; }
+/* every link that is up, hub or spoke; a spoke has exactly one */
+function liveChans(){
+  const out=[];
+  if(LIVE.ch&&LIVE.ch.readyState==='open') out.push(LIVE.ch);
+  LIVE.extra.forEach(x=>{ if(x.ch&&x.ch.readyState==='open') out.push(x.ch); });
+  return out;
 }
-async function liveShip(kind,bytes,extra){
-  if(!LIVE.ch||LIVE.ch.readyState!=='open') return false;
+const liveCount=()=>liveChans().length;
+function liveTell(o,only){
+  const txt=JSON.stringify(o);
+  const chans=only?[only]:liveChans();
+  let sent=0;
+  chans.forEach(ch=>{
+    if(!ch||ch.readyState!=='open') return;
+    try{ ch.send(txt); sent++; LIVE.sent++; }catch(e){}
+  });
+  return sent>0;
+}
+/* what a spoke's change has to do to reach the other spokes: the hub is the only
+   device that can see all of them, so it passes it on to everybody but the one
+   it came from. Only deltas — a hello belongs to its own link, and the whole job
+   is handed over by the hub itself rather than forwarded. */
+function liveRelay(txt,from){
+  if(LIVE.role!=='host') return;
+  liveChans().forEach(ch=>{
+    if(ch===from||ch.readyState!=='open') return;
+    try{ ch.send(txt); LIVE.sent++; }catch(e){}
+  });
+}
+async function liveShip(kind,bytes,extra,only){
+  const ch0=only||LIVE.ch;
+  if(!ch0||ch0.readyState!=='open') return false;
   const n=Math.ceil(bytes.length/LV_CHUNK);
-  liveTell(Object.assign({t:'blob',kind,n,size:bytes.length},extra||{}));
+  /* a job goes to the device that needs it, down its own link: broadcasting a
+     PDF to three devices that already have it is a minute of nothing */
+  liveTell(Object.assign({t:'blob',kind,n,size:bytes.length},extra||{}),ch0);
   for(let i=0;i<n;i++){
     /* let the channel drain rather than queueing a job's worth of PDF at once */
-    if(LIVE.ch.bufferedAmount>1024*1024)
-      await new Promise(r=>{ const f=()=>{ LIVE.ch.removeEventListener('bufferedamountlow',f); r(); };
-        LIVE.ch.addEventListener('bufferedamountlow',f); setTimeout(f,2000); });
-    if(!LIVE.ch||LIVE.ch.readyState!=='open') return false;
-    LIVE.ch.send(bytes.slice(i*LV_CHUNK,(i+1)*LV_CHUNK));
+    if(ch0.bufferedAmount>1024*1024)
+      await new Promise(r=>{ const f=()=>{ ch0.removeEventListener('bufferedamountlow',f); r(); };
+        ch0.addEventListener('bufferedamountlow',f); setTimeout(f,2000); });
+    if(ch0.readyState!=='open') return false;
+    ch0.send(bytes.slice(i*LV_CHUNK,(i+1)*LV_CHUNK));
   }
-  liveTell({t:'blobEnd',kind});
+  liveTell({t:'blobEnd',kind},ch0);
   return true;
 }
 
 /* ---- the job, all of it, once ---- */
-async function liveSendJob(){
-  if(LIVE.sentBundle) return;
-  LIVE.sentBundle=true;
-  liveTell({t:'busy',what:'packing the job'});
+async function liveSendJob(only){
+  /* once per link, not once per session: a second device arriving needs the job
+     even though the first one has already had it */
+  const seen=LIVE.gave||(LIVE.gave=new Set());
+  if(only){ if(seen.has(only)) return; seen.add(only); }
+  else { if(LIVE.sentBundle) return; LIVE.sentBundle=true; }
+  liveTell({t:'busy',what:'packing the job'},only);
   let b;
   try{ b=await bundleBlob(); }
-  catch(e){ liveTell({t:'busy',what:''}); toast('Could not pack the job to send'); return; }
+  catch(e){ liveTell({t:'busy',what:''},only); toast('Could not pack the job to send'); return; }
   const bytes=new Uint8Array(await b.blob.arrayBuffer());
-  await liveShip('job',bytes,{sheets:b.sheets});
-  liveTell({t:'busy',what:''});
+  await liveShip('job',bytes,{sheets:b.sheets},only);
+  liveTell({t:'busy',what:''},only);
 }
 async function liveTakeJob(bytes){
   /* Taking a job replaces everything, and replacing everything calls markDirty a
@@ -17353,7 +17442,7 @@ function liveApply(d){
 }
 
 /* ---- what arrives ---- */
-function liveHeard(data){
+function liveHeard(data,from){
   if(typeof data!=='string'){
     if(!LIVE.rx) return;
     LIVE.rx.parts.push(new Uint8Array(data));
@@ -17363,6 +17452,15 @@ function liveHeard(data){
   }
   let m; try{ m=JSON.parse(data); }catch(e){ return; }
   if(m.t==='hello'){
+    const link=LIVE.extra.find(x=>x.ch===from);
+    if(link){
+      /* a spoke beyond the first: its name is its own, and the job goes to it
+         down its own link if it arrived with nothing on it */
+      link.peer=m.name||'a device';
+      if(!((m.ann||0)+(m.treat||0))&&(P.ann.length+P.treat.length)) liveSendJob(from);
+      syncLiveUI();
+      return;
+    }
     LIVE.peer=m.name||'the other device';
     LIVE.theirDocs=(m.docs||[]).slice();
     /* they have mine, so there is nothing left to repeat */
@@ -17404,6 +17502,9 @@ function liveHeard(data){
     syncLiveUI();
     return;
   }
+  /* a change from one spoke has to reach the others, and the hub is the only
+     device that can see all of them */
+  if(m.t==='delta') liveRelay(data,from);
   if(m.t==='delta'){ liveApply(m); return; }
 }
 async function liveTakeSheet(id,name,bytes){
@@ -17605,7 +17706,13 @@ async function rvReconnect(quiet){
 
 /* ---- the panel ---- */
 function liveStatusLine(){
-  if(LIVE.state==='live') return {cls:'on',txt:'Live with '+(LIVE.peer||'the other device')};
+  if(LIVE.state==='live'){
+    /* two devices have each other; three or more are a room, and "live with a
+       tablet" would be naming one of them and quietly dropping the rest */
+    const n=liveCount();
+    return {cls:'on',txt:n>1?('Live with '+n+' devices')
+      :('Live with '+(LIVE.peer||'the other device'))};
+  }
   if(LIVE.state==='pairing') return {cls:'wait',txt:'Pairing…'};
   if(LIVE.state==='failed') return {cls:'bad',txt:LIVE.err||'Not connected'};
   return {cls:'',txt:'Not connected'};
@@ -17618,6 +17725,7 @@ function syncLiveUI(){
     let extra='';
     if(LIVE.rx) extra=' · '+Math.round(100*LIVE.rx.have/Math.max(1,LIVE.rx.size))+'%';
     else if(LIVE.busyWhat) extra=' · '+LIVE.busyWhat;
+
     f.innerHTML='<span class="lvdot '+st.cls+'"></span>'+esc(st.txt+extra);
     f.title='Live sync — tap to open';
   }
@@ -17634,14 +17742,36 @@ function drawLivePanel(){
   let h='<div class="lvstep"><div class="lvn"><span class="lvdot '+st.cls+'"></span></div>'
     +'<div class="lvb"><b>'+esc(st.txt)+'</b><span>'
     +(LIVE.state==='live'
-      ? 'Everything either of you draws shows up on the other. '+LIVE.got+' change'+(LIVE.got===1?'':'s')+' in.'
+      ? ((liveCount()>1?'Everything anybody draws shows up on all of them. '
+                        :'Everything either of you draws shows up on the other. ')
+         +LIVE.got+' change'+(LIVE.got===1?'':'s')+' in.')
       : 'Nothing about the job leaves the two devices, and no account is involved. They need to be on the same network.')
     +'</span></div></div>';
 
   if(LIVE.state==='live'){
+    const n=liveCount();
+    if(n>1||LIVE.extra.length){
+      const who=[LIVE.peer].concat(LIVE.extra.filter(x=>x.up).map(x=>x.peer||'a device')).filter(Boolean);
+      h+='<div class="hint" style="margin:2px 0 7px">'+esc(n+' device'+(n===1?'':'s')
+        +' on this job'+(who.length?' — '+who.join(', '):''))
+        +'. Everything goes through here, so the others do not need to reach each other.</div>';
+    }
     h+='<div class="lvrow"><button class="btn" data-lv="job">Send the whole job again</button>'
+      +(LIVE.role==='host'?'<button class="btn" data-lv="more">Add another device…</button>':'')
       +'<button class="btn" data-lv="stop">Disconnect</button>'
       +(LIVE.pair?'<button class="btn" data-lv="forget">Forget this pairing</button>':'')+'</div>';
+    if(LIVE.more&&LIVE.more.code&&!LIVE.more.up){
+      const link2=location.origin+location.pathname+'#lw='+LIVE.more.code;
+      h+='<div class="lvstep on"><div class="lvn">+</div><div class="lvb">'
+        +'<b>Point the next device at this</b><span>The same two steps as the first one. '
+        +'It joins the job you are already on.</span>'
+        +'<div class="lvqr">'+qrFor(link2)+'</div>'
+        +'<textarea class="lvcode" readonly id="lvOut">'+esc(link2)+'</textarea>'
+        +'<div class="lvrow"><button class="btn" data-lv="copy">Copy the link</button></div>'
+        +'<textarea class="lvcode" id="lvIn2" placeholder="paste its reply here"></textarea>'
+        +'<div class="lvrow"><button class="btn pri" data-lv="acceptmore">Connect it</button></div>'
+        +'</div></div>';
+    }
     if(LIVE.bothHave) h+='<div class="note" style="margin-top:7px"><span>\u25b2</span><span>'
       +'Both devices already had work on them, so neither has been replaced \u2014 only changes '
       +'from here on cross. If one of them is the copy you want, send it over with the button above.</span></div>';
@@ -17734,6 +17864,13 @@ async function liveAct(what){
     copyText(txt,what==='copy'?'Link copied':'Code copied');
     return;
   }
+  if(what==='more'){ await liveInviteMore(); drawLivePanel(); return; }
+  if(what==='acceptmore'){
+    const v=$('#lvIn2')&&$('#lvIn2').value;
+    if(!v){ toast('Paste the reply first'); return; }
+    if(await liveAcceptMore(lvCode(v))) toast('Connecting the next device…');
+    drawLivePanel(); return;
+  }
   if(what==='open'){ await rvOpen(); drawLivePanel(); return; }
   if(what==='joincode'){
     const v=$('#lvJoin')&&$('#lvJoin').value;
@@ -17803,7 +17940,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   benchHtml,benchCss,openBench,photoOf,photoNear:PHOTO_NEAR,
   compareSheets,clusterBlocks,cloudRects,revImpact,pickChanges,revKinds:REV_KIND,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
-  liveKeep,liveReinstate,liveMine,
+  liveKeep,liveReinstate,liveMine,liveChans,liveCount,liveInviteMore,liveAcceptMore,
+  liveRelay,liveMax:LIVE_MAX,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,
   rvOn,rvUrl,rvCode,rvClean,rvOpen,rvJoinCode,rvReconnect,rvPair,rvSides,
