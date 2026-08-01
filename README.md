@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.75.0**
+**Version 1.76.0**
 
 ## What it does
 
@@ -412,8 +412,24 @@ A cut that would land **inside a curved segment** is refused and names the segme
 than quietly straightening it. A curve on a segment the cuts left whole travels with the
 part that kept it.
 
-Splitting a *segment* is a different thing and still there: click any segment in the
-inspector's list to put a vertex at its midpoint, which changes no length at all.
+### Splitting one segment
+
+Splitting a *segment* is a different thing: it puts vertices along that one leg and
+**changes no length at all** — the run is the same run, just with somewhere to grab. Every
+row of the inspector's segment list has a **Split** button, and the field under the list
+says how many parts it makes: **any number from 2 to 24**. Two until you say otherwise, and
+the number is remembered, so a leg divided into five bays is one number and then one press
+per leg. The button says the count and its tooltip says what each piece will measure.
+
+A curved segment is refused — splitting an arc is not the same as splitting its chord — and
+it says which one.
+
+That segment list had a bug worth naming: the inspector body is a grid, and a grid track
+sized `auto` gives a **scroll container** nothing to size against, so the list was drawing
+as a 2px line with its rows laid out inside a box that had no height. On any inspector
+narrow enough to matter it was simply invisible. It is wrapped in a plain block now, which
+gives the track something ordinary to measure; the scroller inside still caps a long run at
+its own height.
 
 ## The window on a tablet
 

@@ -324,11 +324,23 @@ input.up{text-transform:uppercase}
 @media(pointer:coarse){ .pick .cutopt{min-height:56px} }
 .note.ok{color:var(--ok)}
 /* per-segment poly readout — scrolls once a run gets long */
-.seglist .kv button{margin-left:6px;padding:1px 6px;font-size:10px;flex:0 0 auto}
+.seglist .kv button{padding:1px 6px;font-size:10px;flex:0 0 auto}
 .btnrow{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
 .btnrow .btn{flex:1 1 auto}
-.seglist{max-height:168px;overflow:auto;margin:5px 0;border:1px solid var(--line);background:var(--s2)}
-.seglist .kv{padding:3px 9px;font-size:11.5px}
+/* The wrapper is load-bearing. The inspector body is a grid, and a grid track
+   sized `auto` gives a scroll container nothing to size against: this list had
+   been drawing as a 2px line with its rows laid out inside a box that had no
+   height, on every inspector narrow enough to matter. Wrapping it in a plain
+   block gives the track something ordinary to measure, and the scroller inside
+   still caps a long run at its own height. */
+.segwrap{display:block}
+.seglist{max-height:168px;overflow:auto;margin:5px 0;
+  border:1px solid var(--line);background:var(--s2)}
+.seglist .kv{padding:3px 9px;font-size:11.5px;flex-wrap:wrap;gap:3px 8px;align-items:center}
+.seglist .kv b{flex:1 1 auto;text-align:right;white-space:nowrap}
+/* the two buttons stay together and stay to the right, on their own line when the
+   inspector is too narrow to hold the row */
+.segb{display:flex;gap:5px;flex:0 0 auto;margin-left:auto}
 .seglist .kv span{color:var(--faint);font-family:var(--mono)}
 .seglist .kv b{font-family:var(--mono);font-weight:500}
 .kv:last-child{border-bottom:0}
@@ -1121,7 +1133,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.75.0';
+const APP_VER='1.76.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2067,6 +2079,7 @@ function applyProject(d){
   P.rowCap=clamp(+P.rowCap||250,10,1e6);
   if(P.lblAlign!=='run') P.lblAlign='flat';
   if(P.lblStyle!=='box') P.lblStyle='';
+  P.segN=clamp(Math.round(+P.segN||2),2,24);
   P.prec=Math.max(0,+P.prec||0);
   if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
@@ -5000,24 +5013,35 @@ async function segToArc(a,i){
     +fmtLen(g.len*k)+' instead of '+fmtLen(chord*k)):'Curved');
   return true;
 }
-function halveSeg(a,i){
-  if(!vertexType(a)||a.free){ toast('Segments can be halved on a run or a region'); return false; }
+/* ---- one segment into equal parts ----
+   Halving a segment adds a vertex at its midpoint and changes no length at all —
+   the run is the same run, just with somewhere to grab. Two is the usual answer
+   and stays one press; anything else is typed, because a cove that has to be
+   divided into five bays is not going to arrive at five by halving. */
+const segParts=()=>clamp(Math.round(+P.segN||2),2,24);
+function cutSeg(a,i,n){
+  n=clamp(Math.round(n)||2,2,24);
+  if(!vertexType(a)||a.free){ toast('Segments can be split on a run or a region'); return false; }
   const pts=annPts(a);
   if(!(i>=1&&i<pts.length)){ toast('Pick a segment first'); return false; }
-  if(bulgeOf(a,i)){ toast('Segment '+i+' is an arc — halving an arc is not the same as halving a chord'); return false; }
+  if(bulgeOf(a,i)){ toast('Segment '+i+' is an arc — splitting an arc is not the same as splitting a chord'); return false; }
   const A=pts[i-1], B=pts[i];
-  const mid=[(A[0]+B[0])/2,(A[1]+B[1])/2];
-  snap('Halve segment');
+  const add=[];
+  for(let k=1;k<n;k++) add.push([A[0]+(B[0]-A[0])*k/n,A[1]+(B[1]-A[1])*k/n]);
+  snap(n===2?'Halve segment':'Split segment into '+n);
   /* on a closed loop the last segment runs back to the first point, so the new
-     vertex goes on the end rather than before a point that is not there */
-  a.pts.splice(Math.min(i,a.pts.length),0,mid);
-  shiftBulge(a,i,1);
+     vertices go on the end rather than before a point that is not there */
+  a.pts.splice(Math.min(i,a.pts.length),0,...add);
+  shiftBulge(a,i,n-1);
   if(a.type==='line'&&!a.poly&&a.pts.length>2) a.poly=true;
   invalidateAnns(); V.sel=a.id;
   drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
-  toast('Segment halved into two of '+fmtLen(ptLen(A,B)*(annPerPt(a)||0)/2));
+  const each=fmtLen(ptLen(A,B)*(annPerPt(a)||0)/n);
+  toast(n===2?'Segment halved into two of '+each
+             :'Segment split into '+n+' of '+each);
   return true;
 }
+const halveSeg=(a,i)=>cutSeg(a,i,2);
 /* the point half way along the path, and the two point lists either side of it */
 function halvePath(pts){
   let total=0; const seg=[];
@@ -7818,7 +7842,9 @@ function ctxForAnn(a){
           invalidateAnns(); drawOverlay(); if(V.sel===a.id) showInspector(a);
           renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
           toast('Segment '+sg.i+' is straight again'); }});
-        items.push({id:'hs',t:'Halve segment '+sg.i,fn:()=>halveSeg(a,sg.i)});
+        items.push({id:'hs',t:'Halve segment '+sg.i,fn:()=>cutSeg(a,sg.i,2)});
+        if(segParts()!==2) items.push({id:'hn',t:'Split segment '+sg.i+' into '+segParts(),
+          fn:()=>cutSeg(a,sg.i,segParts())});
       }
     }
   }
@@ -9299,15 +9325,25 @@ function showInspector(a){
     /* Bluebeam-style per-segment readout */
     if(segs.length>1&&!a.free){
       const kk=annPerPt(a)||0;
-      h+='<div class="seglist">'+segs.map((sg,i)=>{
+      const np=segParts();
+      h+='<div class="segwrap"><div class="seglist">'+segs.map((sg,i)=>{
         const gg=sg.arc;
         return '<div class="kv"><span>'+(a.closed&&i===segs.length-1?'closing':'seg '+(i+1))
         +(gg?' · arc':'')+'</span><b>'+(sg.len==null?'—':fmtLen(sg.len))+'</b>'
+        +'<span class="segb">'
         +'<button class="btn sm" data-arcseg="'+(i+1)+'" title="'+(gg?'Edit this arc':'Curve this segment')+'">'
           +(gg?'R '+(kk?fmtRun(gg.r*kk):'—'):'arc')+'</button>'
-        +'<button class="btn sm" data-halve="'+(i+1)+'" title="Halve this segment">½</button></div>';
-      }).join('')+'</div>'
-        +'<div class="hint"><b>arc</b> turns that segment into a curve and the length follows it — a cove corner measured properly. <b>½</b> puts a vertex at its midpoint and changes no length.</div>';
+        +'<button class="btn sm" data-cutseg="'+(i+1)+'" title="Split this segment into '+np
+          +' equal parts'+(sg.len!=null?' of '+fmtLen(sg.len/np):'')+'">Split '+np+'</button>'
+        +'</span></div>';
+      }).join('')+'</div></div>'
+        +'<div class="f" style="margin-top:5px"><label>Split a segment into</label>'
+        +'<input type="number" data-segn value="'+np+'" min="2" max="24" step="1"'
+        +' style="width:74px" title="How many equal parts Split makes — two unless you say otherwise">'
+        +'</div>'
+        +'<div class="hint"><b>arc</b> turns that segment into a curve and the length follows it — a cove corner measured properly. <b>Split</b> puts '
+        +(np===2?'a vertex at its midpoint':(np-1)+' vertices along it, at '+np+' equal parts')
+        +' and changes no length at all.</div>';
     }
     if(canClose(a)) h+='<button class="btn" data-act="loop">'+(a.closed?'Open loop':'Close loop')+'</button>';
     if(editablePts(a)) h+='<div class="hint">'+a.pts.length+' points. Double-click the run to add one, '
@@ -9485,7 +9521,16 @@ function showInspector(a){
     showInspector(a); drawOverlay(); renderAnnList(); markDirty();
   });
   $$('[data-cut]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); splitRun(a,+el.dataset.cut); });
+  $$('[data-cutseg]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); cutSeg(a,+el.dataset.cutseg,segParts()); });
   $$('[data-halve]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); halveSeg(a,+el.dataset.halve); });
+  /* the number the Split buttons use. It is remembered, so a run divided into
+     five bays takes one number and then a press per segment. */
+  $$('[data-segn]',bd).forEach(el=>{
+    const take=()=>{ const n=clamp(Math.round(+el.value||2),2,24);
+      if(n===segParts()) return; P.segN=n; showInspector(a); markDirty(); };
+    el.onchange=take;
+    el.onkeydown=e=>{ if(e.key==='Enter'){ e.preventDefault(); take(); } };
+  });
   $$('[data-arcseg]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); segToArc(a,+el.dataset.arcseg); });
   $$('[data-up2]',bd).forEach(el=>el.oninput=()=>{
     a[el.dataset.up2]=el.value;
@@ -14475,6 +14520,7 @@ $('#btnCsvZone').onclick=()=>{
    optionally the product library with them — as one file to start from. */
 const PRESET_KEYS=['units','prec','round','waste','load','rate','matUp','labFt','labFeed','labEa',
   'cur','maxHome','whipSlack','whipSpare','wireRate','areaOff','lblAlign','lblStyle','lblSize','snap',
+  'segN',
   'scrollZoom','theme','code','cntRate','tdef','mute','nestBy','minOff','buyBy','keepPdf',
   'whipAwg','vdMax','circuits',
   /* the workspace is a preference like any other: an office standard should carry
@@ -15409,7 +15455,7 @@ function manualSections(){
       ['Rounding corners','The other way a cove turns: the two legs are where they should be and the corner between them is radiused. Round all corners pulls both legs back by the tangent distance and puts an arc between them, so the run gets <em>shorter</em> — the opposite of curving a chord, and both are real. A corner too tight for the radius is left alone and reported rather than forced.'],
       ['Curving while you trace','Hold ctrl (or \u2318) as you place a point and the segment just laid becomes a 90\u00b0 arc, so a run can be traced with its curves in it rather than converted afterwards. Drag its grip to shape it.'],
       ['Curved segments','A cove that turns a corner on a radius is not two straight legs, and measuring it as a chord loses real feet. Every segment of a selected run carries a round grip halfway along it: drag that and the segment bows into an arc, with the radius, the angle and the length live in the status bar as you go. It is magnetic at straight and at 45, 60, 90, 120 and 180\u00b0, \u21e7 forces a quarter circle, and alt-click straightens it again. For an exact figure, right-click the segment \u2014 or use the arc button beside it in the inspector\u2019s segment list \u2014 and give it an included angle or a radius: 90\u00b0 is the usual cove corner, and whichever you give, the other follows. The length then follows the curve everywhere it matters: the run total, the cut list, the piece list, the feed points and the wire schedule. The curve is stored the way a CAD polyline stores one, so the segment is still one segment with two ends you can drag, and the label sits on the arc where the length is. Straighten it again from the same menu. Adding or removing a vertex on a curved segment is refused rather than quietly flattening it, and a split whose halfway point lands inside an arc says so instead.'],
-      ['Split into equal lengths (S)','Two different things, and they are not the same. Splitting a run gives parts of equal length \u2014 in half, into thirds or into quarters, from the inspector, the right-click menu or \u2318K, with S for halves. The cut points are found by walking the path, so a dog-legged polyline divides by length and not by vertex count, and an arc divides into arcs. A stated length divides with it, feed points and splices move to the part they are actually on, and where the run carried a treatment you are asked whether the other parts become runs of their own. A cut that would land inside a curved segment is refused and names the segment rather than quietly straightening it. Halving a segment instead \u2014 click any segment in the inspector\u2019s list \u2014 puts a vertex at its midpoint and changes no length at all.'],
+      ['Split into equal lengths (S)','Two different things, and they are not the same. Splitting a run gives parts of equal length \u2014 in half, into thirds or into quarters, from the inspector, the right-click menu or \u2318K, with S for halves. The cut points are found by walking the path, so a dog-legged polyline divides by length and not by vertex count, and an arc divides into arcs. A stated length divides with it, feed points and splices move to the part they are actually on, and where the run carried a treatment you are asked whether the other parts become runs of their own. A cut that would land inside a curved segment is refused and names the segment rather than quietly straightening it. Splitting a segment instead \u2014 the Split button on any row of the inspector\u2019s segment list \u2014 puts vertices along that one segment and changes no length at all: the run is the same run, just with somewhere to grab. Two is the usual answer; type any number from 2 to 24 into the field under the list and every row\u2019s button follows it, so a leg divided into five bays is one number and one press. A curved segment is refused, because splitting an arc is not the same as splitting its chord.'],
       ['What a split carries','The first half keeps the original run, so anything pointing at it still does. The second half can become its own run with the same product choices, arriving without a zone number and unapproved. Placed feed points and splices move to the half they are actually on and are rescaled to it. A stated length is halved with the run. The original loses its approval, because it was approved against a length that no longer exists.'],
       ['Photos (H)','Pin a site photo where it was taken, with a caption. The picture is kept in this browser alongside the drawings and travels inside a “Save with drawings” file, so the one file really is the whole job. A pin whose picture is not in this browser says so rather than showing a blank.'],
       ['Command palette (\u2318K)','One searched list of every tool, action, setting, sheet and run in the job. Type part of a name \u2014 every word has to appear somewhere, so \u201ccove z4\u201d narrows to that run, and picking it opens the sheet, selects the markup and opens the card. Arrows to move, return to run, escape to close.'],
@@ -15891,7 +15937,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   placePoint,feedsPlaced,splicesOn,alongRun,nearRun,
   openCmd,closeCmd,cmdItems,cmdMatch,presetText,applyPreset,savePreset,presetKeys:PRESET_KEYS,
   placePhoto,photoUrl,openPhoto,photoKey,pdfPrune,grpHead,
-  splitHalf,splitRun,cutRun,cutArc,halveSeg,halvePath,halveArc,halveRun,
+  splitHalf,splitRun,cutRun,cutArc,halveSeg,cutSeg,segParts,halvePath,halveArc,halveRun,
   segToArc,setBulge,shiftBulge,bulgeOf,bulgeGeom,bulgeFromDeg,bulgeFromRadius,bowSign,delPointFrom,
   bowGrip,hitBow,bowFromPoint,roundCorners,roundOne,finishDraft,
   tools:TOOLS,toolGroups:TOOL_GROUPS,toolOrder,toolDef,toolShown,renderToolbar,renderPals,editPal,
