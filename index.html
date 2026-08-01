@@ -1133,6 +1133,7 @@ body.haspen #penFlag{display:inline}
       <div class="tw"><table id="nestTbl"></table></div></div>
     <div class="sec"><h3>Yield</h3><div class="tw"><table id="yieldTbl"></table></div></div>
     <div class="sec"><div class="body" style="display:flex;gap:6px;flex-wrap:wrap">
+      <button class="btn pri" id="btnBench">Bench ticket…</button>
       <button class="btn" id="btnCsvPieces">Export piece list</button>
       <button class="btn" id="btnCsvNest">Export nesting</button>
     </div></div>
@@ -1206,7 +1207,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.81.0';
+const APP_VER='1.82.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -13508,6 +13509,17 @@ function reportCss(){
     +'.sum span{color:#555;font-size:10px;text-transform:uppercase;letter-spacing:.08em}'
     +'.thumb{page-break-inside:avoid;margin-bottom:14px}'
     +'.thumb img{width:100%;border:1px solid #bbb}'
+    /* photographs run three across, small enough to scan and big enough to
+       recognise the condition somebody stood in front of */
+    +'.shots{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}'
+    +'.shot{page-break-inside:avoid;break-inside:avoid}'
+    +'.shot img{width:100%;aspect-ratio:4/3;object-fit:cover;border:1px solid #bbb;display:block}'
+    +'.shot .miss{aspect-ratio:4/3;border:1px dashed #bbb;color:#888;font-size:10px;'
+    +'display:flex;align-items:center;text-align:center;padding:8px}'
+    +'.shot .cap{padding-top:4px}'
+    +'.shot .cap b{display:block;font-size:11px}'
+    +'.shot .cap span{display:block;font-size:10px;color:#666}'
+    +'@media print{.shots{grid-template-columns:repeat(3,1fr)}}'
     +'.flag{color:#b3452f}'
     +'footer{margin-top:26px;border-top:1px solid #ccc;padding-top:7px;color:#666;font-size:10px}'
     +'@media print{body{padding:0}h2{page-break-after:avoid}table{page-break-inside:auto}'
@@ -13662,6 +13674,30 @@ async function reportHtml(opts){
     +warn.slice(0,40).map(w=>'<li>'+rEsc(w)+'</li>').join('')
     +(warn.length>40?'<li>… and '+(warn.length-40)+' more</li>':'')+'</ul>';
   /* sheet thumbnails, marked up */
+  if(opts.photos!==false){
+    const pics=P.ann.filter(a=>a.type==='photo'&&a.photo);
+    if(pics.length){
+      const cards=[];
+      for(const a of pics){
+        let src=null;
+        try{
+          const rec=await pdfLoad(photoKey(a.photo));
+          if(rec&&rec.buf) src=await blobDataUrl(new Blob([rec.buf],{type:rec.mime||'image/jpeg'}));
+        }catch(e){}
+        const near=photoOf(a);
+        const doc=P.docs.find(x=>x.id===a.doc);
+        const where=[near&&near.run?near.run:null,
+          doc?sheetLabel(doc)+(a.page>1?' p'+a.page:''):null].filter(Boolean).join('  \u00b7  ');
+        cards.push('<div class="shot">'
+          +(src?'<img src="'+src+'">':'<div class="miss">Not in this browser \u2014 open the .linework.zip it was saved with</div>')
+          +'<div class="cap"><b>'+rEsc(a.text||a.file||'Site photo')+'</b>'
+          +(where?'<span>'+rEsc(where)+'</span>':'')
+          +(near&&!near.run&&near.ann?'<span>near a run with no treatment on it</span>':'')
+          +'</div></div>');
+      }
+      h+='<h2>Site photos</h2><div class="shots">'+cards.join('')+'</div>';
+    }
+  }
   if(opts.thumbs){
     const shots=[];
     for(const doc of P.docs){
@@ -13681,9 +13717,176 @@ async function reportHtml(opts){
     +rEsc((P.name||'Takeoff')+(P.no?' — '+P.no:''))+'</title><style>'+reportCss()+'</style></head><body>'
     +h+'</body></html>';
 }
+/* the report is one self-contained page, so a picture goes into it rather than
+   being pointed at: a blob URL is dead the moment the tab that made it closes */
+function blobDataUrl(blob){
+  return new Promise(res=>{
+    const r=new FileReader();
+    r.onload=()=>res(String(r.result||''));
+    r.onerror=()=>res(null);
+    r.readAsDataURL(blob);
+  });
+}
+/* ---- what a photograph is a photograph of ----
+   A photo is pinned at a point, which is enough to find it on the sheet and not
+   enough to put it in a report: "photo 4" tells the reader nothing. What it is
+   near does. So the nearest measured run on the same page is found, and if it is
+   close enough to be about that run, the photo carries its tag.
+
+   Close enough is a real question and the answer is stated rather than fudged:
+   within a foot and a half of real distance, which on a quarter-inch plan is
+   about two points on paper. A photo dropped in the middle of a room belongs to
+   the room, not to the cove twenty feet away, and it says so by carrying no tag
+   rather than the wrong one. */
+const PHOTO_NEAR=18;                    /* real inches */
+function photoOf(a){
+  if(!a||a.type!=='photo') return null;
+  const at=annCentre(a); if(!at) return null;
+  const k=annPerPt(a);                  /* real inches per paper point, here */
+  let best=null,bd=Infinity;
+  /* measured in the sheet's own space rather than on screen: which run a photo
+     is of does not depend on where the view happens to be scrolled */
+  P.ann.forEach(x=>{
+    if(x===a||x.doc!==a.doc||x.page!==a.page) return;
+    if(!/^(line|arc|area)$/.test(x.type)) return;
+    const pts=annPts(x); if(!pts||pts.length<2) return;
+    for(let i=1;i<pts.length;i++){
+      const d=distSeg(at,pts[i-1],pts[i]);
+      if(d<bd){ bd=d; best=x; }
+    }
+    if(isClosedType(x)||x.closed){
+      const d=distSeg(at,pts[pts.length-1],pts[0]);
+      if(d<bd){ bd=d; best=x; }
+    }
+  });
+  if(!best||!isFinite(bd)) return null;
+  const real=bd*(k||0);
+  if(!(real<=PHOTO_NEAR)) return {ann:null,run:null,dist:real};
+  const t=best.treat&&P.treat.find(y=>y.id===best.treat);
+  return {ann:best,run:t?tagOf(t):null,dist:real};
+}
+
+/* ---- the ticket that goes to the bench ----
+   The takeoff report is for the office: twenty tables and a cost. What the
+   person cutting needs is one page per zone, in the order the pieces come off
+   the run, big enough to read from arm's length on a bench under a saw, with
+   the mark that goes on the tape and the code that was ordered — and a tick box,
+   because the way you keep your place in forty cuts is by ticking them off.
+
+   Deliberately not the report with a different stylesheet. It is a different
+   document for a different person: no cost, no rollups, nothing to read past
+   what is being cut. Each zone starts a fresh page so a ticket can be torn off
+   and handed over on its own. */
+function benchHtml(opts){
+  opts=opts||{};
+  const all=pieceData();
+  if(!all.length) return null;
+  const pick=opts.zones&&opts.zones.length?new Set(opts.zones):null;
+  const key=r=>r.tag||'(untagged)';
+  const groups=[];
+  all.forEach(r=>{
+    if(pick&&!pick.has(key(r))) return;
+    let g=groups.find(x=>x.k===key(r));
+    if(!g){ g={k:key(r),rows:[],type:r.type,zone:r.zone,detail:r.detail}; groups.push(g); }
+    g.rows.push(r);
+  });
+  if(!groups.length) return null;
+  /* 16'-8" is what somebody sets a stop to; 16.67 ft is what a spreadsheet
+     wants. The app works in the second and the bench reads the first, so the
+     ticket offers both rather than picking for a shop it cannot see. */
+  const cut=r=>opts.ftin?fmtFtIn(r.len):fmtRun(r.len);
+  let h='';
+  groups.forEach((g,gi)=>{
+    const tot=g.rows.reduce((s2,r)=>s2+r.len,0);
+    h+='<section'+(gi?' class="brk"':'')+'>'
+      +'<div class="hd"><div><h1>'+rEsc(g.k)+'</h1>'
+      +'<div class="sub">'+rEsc(P.name||'Untitled Project')+(P.no?'  \u00b7  job '+rEsc(P.no):'')
+      +(g.detail?'  \u00b7  '+rEsc(g.detail):'')+'</div></div>'
+      +'<div class="tot"><span>'+g.rows.length+' piece'+(g.rows.length===1?'':'s')+'</span>'
+      +'<b>'+rEsc(fmtRun(tot))+'</b></div></div>';
+    h+='<table><thead><tr><th class="tick"></th><th>Mark</th><th class="len">Cut</th>'
+      +'<th>Item</th><th>Order code</th><th>Note</th></tr></thead><tbody>';
+    g.rows.forEach(r=>{
+      h+='<tr><td class="tick"><span></span></td>'
+        +'<td class="mark">'+rEsc(r.mark||'')+'</td>'
+        +'<td class="len">'+rEsc(cut(r))+'</td>'
+        +'<td>'+rEsc(r.item||'')+'</td>'
+        +'<td class="code">'+rEsc(r.code||'\u2014')
+        +((r.codeMiss&&r.codeMiss.length)?'<em>'+rEsc(r.codeMiss.join(', '))+' not set</em>':'')+'</td>'
+        +'<td class="note">'+rEsc(r.note||'')+'</td></tr>';
+    });
+    h+='</tbody></table>';
+    /* the off-cut is what the next zone is cut from, so it belongs on the ticket */
+    const chan=g.rows.filter(r=>r.kind==='channel');
+    if(chan.length) h+='<p class="foot">'+chan.length+' channel piece'
+      +(chan.length===1?'':'s')+' on this ticket. Nest off-cuts before cutting the next zone.</p>';
+    h+='<div class="sign"><span>Cut by</span><span>Checked</span><span>Date</span></div>';
+    h+='</section>';
+  });
+  return '<!doctype html><html><head><meta charset="utf-8"><title>'
+    +rEsc('Bench ticket \u2014 '+(P.name||'Takeoff'))+'</title><style>'+benchCss()+'</style></head><body>'
+    +h+'</body></html>';
+}
+function benchCss(){
+  /* sized for arm's length on a bench, not for a screen: a 14pt body, marks at
+     22, and black on white because a shop printer is not a colour one */
+  return '@page{size:letter;margin:14mm}'
+    +'*{box-sizing:border-box}'
+    +'body{font:14pt/1.35 ui-sans-serif,system-ui,Helvetica,Arial,sans-serif;color:#000;background:#fff;margin:0}'
+    +'section{padding:0 0 8mm}'
+    +'.brk{break-before:page;page-break-before:always}'
+    +'.hd{display:flex;align-items:flex-end;gap:10mm;border-bottom:2.5pt solid #000;padding-bottom:3mm;margin-bottom:5mm}'
+    +'h1{font-size:30pt;margin:0;letter-spacing:.5pt}'
+    +'.sub{font-size:11pt;margin-top:1mm}'
+    +'.tot{margin-left:auto;text-align:right;white-space:nowrap}'
+    +'.tot span{display:block;font-size:10pt}'
+    +'.tot b{font-size:20pt}'
+    +'table{width:100%;border-collapse:collapse}'
+    +'th{text-align:left;font-size:10pt;font-weight:600;text-transform:uppercase;letter-spacing:.6pt;'
+    +'border-bottom:1pt solid #000;padding:0 3mm 1.5mm 0}'
+    +'td{padding:2.6mm 3mm 2.6mm 0;border-bottom:.6pt solid #bbb;vertical-align:top}'
+    +'tr{break-inside:avoid;page-break-inside:avoid}'
+    +'.tick{width:9mm}'
+    +'.tick span{display:block;width:6.5mm;height:6.5mm;border:1.4pt solid #000;border-radius:1mm}'
+    +'.mark{font-weight:700;font-size:18pt;white-space:nowrap}'
+    +'.len{font-size:18pt;font-variant-numeric:tabular-nums;white-space:nowrap;text-align:right;'
+    +'padding-right:6mm}'
+    +'th.len{text-align:right;padding-right:6mm}'
+    +'.code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11pt;word-break:break-all}'
+    +'.code em{display:block;font-style:normal;font-size:9pt;color:#666}'
+    +'.note{font-size:10.5pt;color:#444}'
+    +'.foot{font-size:10.5pt;margin:4mm 0 0}'
+    +'.sign{display:flex;gap:12mm;margin-top:9mm}'
+    +'.sign span{flex:1;border-top:.8pt solid #000;padding-top:1.5mm;font-size:9.5pt}';
+}
+async function openBench(){
+  const all=pieceData();
+  if(!all.length){ toast('Nothing to cut yet — a run needs a product on it first'); return; }
+  const tags=[...new Set(all.map(r=>r.tag||'(untagged)'))];
+  const r=await dlg({title:'Bench ticket',fields:[
+    {k:'which',type:'select',label:'Zones',opts:[{v:'',t:'All '+tags.length+' of them'}]
+      .concat(tags.map(t=>({v:t,t:t+' only'}))),val:''},
+    {k:'ftin',type:'check',cap:'Cut lengths as feet and inches (16\'-8") rather than decimal feet',val:true},
+    {k:'how',type:'select',label:'Then',opts:[{v:'open',t:'Open it for printing'},
+      {v:'save',t:'Save it as an HTML file'}],val:'open'}
+  ],ok:'Build',
+    note:'One page per zone, in the order the pieces come off the run, with the mark that goes on the tape and a box to tick. No cost and no rollups \u2014 it is for the bench, not the office.'});
+  if(!r) return;
+  const html=benchHtml({zones:r.which?[r.which]:null,ftin:!!r.ftin});
+  if(!html){ toast('Nothing to cut in that zone'); return; }
+  if(r.how==='save'){ download(slug(P.name)+'-bench.html',html,'text/html'); toast('Saved the ticket'); return; }
+  const w=window.open('','_blank');
+  if(!w){ download(slug(P.name)+'-bench.html',html,'text/html');
+    toast('Pop-up blocked — the ticket was downloaded instead'); return; }
+  w.document.open(); w.document.write(html); w.document.close();
+  setTimeout(()=>{ try{ w.focus(); w.print(); }catch(e){} },350);
+  toast('Bench ticket built');
+}
 async function openReport(){
+  const nPics=P.ann.filter(a=>a.type==='photo'&&a.photo).length;
   const r=await dlg({title:'Takeoff report',fields:[
     {k:'labels',type:'check',cap:'Include piece labels for the shop',val:true},
+    {k:'photos',type:'check',cap:nPics?('Include the '+nPics+' site photo'+(nPics===1?'':'s')+', with what each is near'):'Include site photos',val:nPics>0},
     {k:'thumbs',type:'check',cap:'Include a marked-up thumbnail of each sheet',val:false},
     {k:'how',type:'select',label:'Then',opts:[{v:'open',t:'Open it for printing'},
       {v:'save',t:'Save it as an HTML file'}],val:'open'}
@@ -13691,7 +13894,7 @@ async function openReport(){
   if(!r) return;
   toast('Building the report…');
   try{
-    const html=await reportHtml({labels:r.labels,thumbs:r.thumbs});
+    const html=await reportHtml({labels:r.labels,thumbs:r.thumbs,photos:r.photos});
     if(r.how==='save'){ download(slug(P.name)+'-takeoff.html',html,'text/html'); toast('Saved the report'); return; }
     const w=window.open('','_blank');
     if(!w){ download(slug(P.name)+'-takeoff.html',html,'text/html');
@@ -14838,6 +15041,7 @@ async function openProjectFile(file){
 $('#btnPdf').onclick=exportSheetPdf;
 $('#btnFlat').onclick=flattenMarkups;
 $('#btnUnflat').onclick=unflattenMarkups;
+$('#btnBench').onclick=()=>openBench();
 $('#btnCsvPieces').onclick=()=>{
   const rows=[['Mark','Piece','Of','Tag','Type','Zone','Detail','Run','Kind','Item','Order code',
     'Cut length (ft)','Cut length (in)','Note','Locked']];
@@ -15595,6 +15799,8 @@ function cmdItems(){
   add('File','Open the printable report',openReport);
   add('View','Settings…',openSettings,'⌘,');
   add('View','Tools — every tool by name…',openToolSheet);
+  add('Export','Bench ticket — one page per zone for the shop…',()=>openBench());
+  add('Takeoff','Renumber zones…',()=>renumber());
   add('View','Tools — what shows, and palettes…',()=>{ setTab='tools'; openSettings(); });
   add('View',P.level==='simple'?'Show everything':'Simple — the smallest useful app',
     ()=>{ setLevel(P.level==='simple'?'full':'simple');
@@ -15790,6 +15996,14 @@ function manualSections(){
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
+    ]}]},
+  {id:'issuing',t:'What leaves the app',blocks:[
+    {p:'Three documents for three different people, and they are not the same document with different stylesheets.'},
+    {rows:[
+      ['The bench ticket','Pieces \u203a Bench ticket. One page per zone, in the order the pieces come off the run: the mark that goes on the tape, the cut length, the item, the order code, and a box to tick \u2014 because the way anybody keeps their place in forty cuts is by ticking them off. Set in fourteen point with the mark and the length at eighteen, so it reads from arm\u2019s length on a bench, and in black on white because a shop printer is not a colour one. Each zone starts a fresh page so a ticket can be torn off and handed over on its own, and each has somewhere to sign it off.'],
+      ['Feet and inches, or decimal feet','16\u2032-8\u2033 is what somebody sets a stop to; 16.67 ft is what a spreadsheet wants. The ticket offers both rather than choosing for a shop it cannot see.'],
+      ['No cost on it','Nothing about money, no rollups, nothing to read past what is being cut. The takeoff report is the document for the office.'],
+      ['Site photos in the report','A photo pinned on the plan goes into the report with what it is a photograph of \u2014 the tag of the nearest run, and the sheet it was taken on. Near means within a foot and a half of real distance: a photo dropped in the middle of a room belongs to the room, not to the cove twenty feet away, so it carries no tag rather than the wrong one. The pictures are put into the page itself, so the report is still one file that prints from a site laptop, and a picture that is not in this browser says so rather than printing a broken frame.'],
     ]}]},
   {id:'offthedrawing',t:'Taking it off the drawing',blocks:[
     {p:'The drawing already knows where its walls are. Two things read them rather than asking you to.'},
@@ -17449,6 +17663,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   openToolSheet,closeToolSheet,railFit,toolName,btnWord,
   feats:FEATS,featOn,featUsed,featAdded,featAdd,featOf,featToolOn,setLevel,applyLevel,
   roomAt,roomFill,roomEdge,placeRoom,edgeAt,snapAt,snapped,snapSegs:()=>SNAP.segN,
+  benchHtml,benchCss,openBench,photoOf,photoNear:PHOTO_NEAR,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,

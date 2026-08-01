@@ -559,6 +559,42 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## What leaves the app
+
+Three documents for three different people, and deliberately not one document
+with three stylesheets.
+
+**The bench ticket** (*Pieces › Bench ticket*). One page per zone, in the order
+the pieces come off the run: the mark that goes on the tape, the cut length, the
+item, the order code, and a **box to tick** — the way anybody keeps their place
+in forty cuts is by ticking them off. Fourteen point body with the mark and the
+length at eighteen, so it reads from arm's length on a bench under a saw; black
+on white, because a shop printer is not a colour one. Each zone starts a fresh
+page so a ticket can be torn off and handed over alone, and each has somewhere to
+sign it off. **No cost anywhere on it** — that is the office's document.
+
+Lengths go either as `16'-8"`, which is what somebody sets a stop to, or as
+decimal feet, which is what a spreadsheet wants. The ticket offers both rather
+than choosing for a shop it cannot see.
+
+**Site photos in the report.** A photo pinned on the plan now carries what it is
+a photograph *of* — the tag of the nearest run and the sheet it was taken on.
+"Photo 4" tells a reader nothing; "COVE Z2, A-101" does.
+
+Near is a real question and the answer is stated rather than fudged: **within a
+foot and a half of real distance**, measured in the sheet's own space so it does
+not depend on where the view is scrolled. A photo dropped in the middle of a room
+belongs to the room, not to the cove twenty feet away, and it says so by carrying
+no tag rather than the wrong one. Pictures are embedded as data URIs, so the
+report stays one file that prints from a site laptop, and one that is not in this
+browser's store says so rather than printing a broken frame.
+
+`bench.mjs` parses both documents rather than eyeballing them: one section per
+zone with a page break between, a row and a tick box and a mark per piece, a
+signature block on each, no currency symbol anywhere, the type sizes read out of
+the stylesheet, both length formats, and — for the report — that the near photo
+gets a tag, the far one does not, and nothing on the page points off it.
+
 ## Taking it off the drawing
 
 The drawing already knows where its walls are. Two things read them rather than
