@@ -1206,7 +1206,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.80.0';
+const APP_VER='1.81.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2959,13 +2959,15 @@ const SNAP_TOL=11;              /* screen px */
 const SNAP_CAP=120000;          /* points; a very dense sheet is truncated */
 const SNAP_CELL=24;             /* grid cell, PDF points */
 const SNAP_KEEP=6;              /* pages of geometry kept in memory */
-const SNAP={key:null,grid:null,n:0,truncated:false,building:false,busy:null,cache:new Map()};
+const SNAP_SEGCAP=60000;        /* segments; the same sheet, kept as edges */
+const SNAP={key:null,grid:null,n:0,truncated:false,building:false,busy:null,cache:new Map(),
+  seg:null,segN:0};
 
 /* Paging back and forth used to rebuild the geometry every time, and
    getOperatorList on a dense sheet is the longest stall in the app. Keep the
    last few pages instead — the grids are small next to a rendered bitmap. */
-function snapRemember(key,grid,n,truncated){
-  SNAP.cache.set(key,{grid,n,truncated});
+function snapRemember(key,grid,n,truncated,seg,segN){
+  SNAP.cache.set(key,{grid,n,truncated,seg,segN});
   while(SNAP.cache.size>SNAP_KEEP) SNAP.cache.delete(SNAP.cache.keys().next().value);
 }
 function snapUse(key){
@@ -2973,11 +2975,13 @@ function snapUse(key){
   if(!hit) return false;
   SNAP.cache.delete(key); SNAP.cache.set(key,hit);        /* most recently used */
   SNAP.grid=hit.grid; SNAP.n=hit.n; SNAP.truncated=hit.truncated; SNAP.key=key;
+  SNAP.seg=hit.seg||null; SNAP.segN=hit.segN||0;
   return true;
 }
 function snapReset(){
   /* the current page's grid goes back to the cache rather than being thrown away */
   SNAP.key=null; SNAP.grid=null; SNAP.n=0; SNAP.truncated=false;
+  SNAP.seg=null; SNAP.segN=0;
 }
 function mul(m,n){ return [
   m[0]*n[0]+m[2]*n[1], m[1]*n[0]+m[3]*n[1],
@@ -2999,10 +3003,34 @@ function buildSnap(){
 async function buildSnapNow(key){
   SNAP.building=true;
   const grid=new Map(); let n=0, truncated=false;
+  /* Corners are what a drawing gives you for free, and they are not enough: a
+     wall is a line, and the place you want to start a cove is very often part
+     way along it where there is no vertex at all. So the edges are kept too,
+     in their own grid, and used when no corner is near enough. */
+  const seg=new Map(); let segN=0;
+  const segAdd=(a2,b2)=>{
+    if(segN>=SNAP_SEGCAP) return;
+    const dx=b2[0]-a2[0], dy=b2[1]-a2[1];
+    if(dx*dx+dy*dy<0.04) return;                    /* a segment of no length is a point */
+    const rec=[a2[0],a2[1],b2[0],b2[1]];
+    const i0=Math.floor(Math.min(a2[0],b2[0])/SNAP_CELL), i1=Math.floor(Math.max(a2[0],b2[0])/SNAP_CELL);
+    const j0=Math.floor(Math.min(a2[1],b2[1])/SNAP_CELL), j1=Math.floor(Math.max(a2[1],b2[1])/SNAP_CELL);
+    /* a segment crossing forty cells is a border line; index its ends only and
+       let the corner grid carry it, rather than filling the map with one edge */
+    if((i1-i0)+(j1-j0)>40){
+      [[i0,j0],[i1,j1]].forEach(([i,j])=>{ const k=i+','+j; let b3=seg.get(k); if(!b3){ b3=[]; seg.set(k,b3); } b3.push(rec); });
+      segN++; return;
+    }
+    for(let i=i0;i<=i1;i++) for(let j=j0;j<=j1;j++){
+      const k=i+','+j; let b3=seg.get(k); if(!b3){ b3=[]; seg.set(k,b3); } b3.push(rec);
+    }
+    segN++;
+  };
   try{
     const ops=await V.pageObj.getOperatorList();
     const OPS=pdfjsLib.OPS;
     let m=[1,0,0,1,0,0]; const stack=[];
+    let cur=null, first=null;              /* where the subpath is, for the edges */
     const add=(x,y)=>{
       if(n>=SNAP_CAP){ truncated=true; return; }
       const p=apply(m,x,y);
@@ -3011,6 +3039,12 @@ async function buildSnapNow(key){
       /* collapse duplicates: drawings repeat the same corner constantly */
       for(const q of b) if(Math.abs(q[0]-p[0])<.05&&Math.abs(q[1]-p[1])<.05) return;
       b.push(p); n++;
+    };
+    const go=(x,y,draw)=>{
+      const p=apply(m,x,y);
+      if(draw&&cur) segAdd(cur,p);
+      cur=p; if(!draw||!first) first=first||p;
+      return p;
     };
     for(let i=0;i<ops.fnArray.length;i++){
       const fn=ops.fnArray[i], args=ops.argsArray[i];
@@ -3021,21 +3055,29 @@ async function buildSnapNow(key){
         const sub=args[0], co=args[1];
         let c=0;
         for(const op of sub){
-          if(op===OPS.moveTo||op===OPS.lineTo){ add(co[c],co[c+1]); c+=2; }
-          else if(op===OPS.curveTo){ add(co[c],co[c+1]); add(co[c+2],co[c+3]); add(co[c+4],co[c+5]); c+=6; }
-          else if(op===OPS.curveTo2||op===OPS.curveTo3){ add(co[c],co[c+1]); add(co[c+2],co[c+3]); c+=4; }
+          if(op===OPS.moveTo){ add(co[c],co[c+1]); cur=null; first=null; go(co[c],co[c+1],false); c+=2; }
+          else if(op===OPS.lineTo){ add(co[c],co[c+1]); go(co[c],co[c+1],true); c+=2; }
+          else if(op===OPS.curveTo){ add(co[c],co[c+1]); add(co[c+2],co[c+3]); add(co[c+4],co[c+5]);
+            /* a curve is walked as its three control steps: near enough to snap
+               to, and a Bezier flattening pass is not worth the sheet it costs */
+            go(co[c],co[c+1],true); go(co[c+2],co[c+3],true); go(co[c+4],co[c+5],true); c+=6; }
+          else if(op===OPS.curveTo2||op===OPS.curveTo3){ add(co[c],co[c+1]); add(co[c+2],co[c+3]);
+            go(co[c],co[c+1],true); go(co[c+2],co[c+3],true); c+=4; }
           else if(op===OPS.rectangle){
             const [x,y,w,h]=[co[c],co[c+1],co[c+2],co[c+3]];
-            add(x,y); add(x+w,y); add(x+w,y+h); add(x,y+h); c+=4;
+            add(x,y); add(x+w,y); add(x+w,y+h); add(x,y+h);
+            cur=null; go(x,y,false); go(x+w,y,true); go(x+w,y+h,true); go(x,y+h,true); go(x,y,true);
+            cur=null; first=null; c+=4;
           }
-          else if(op===OPS.closePath){ /* no new point */ }
+          else if(op===OPS.closePath){ if(cur&&first) segAdd(cur,first); cur=first; }
         }
       }
       if(truncated) break;
     }
     SNAP.grid=grid; SNAP.n=n; SNAP.truncated=truncated; SNAP.key=key;
-    snapRemember(key,grid,n,truncated);
-  }catch(e){ SNAP.grid=null; SNAP.key=key; SNAP.n=0; }   /* snapping simply stays off */
+    SNAP.seg=seg; SNAP.segN=segN;
+    snapRemember(key,grid,n,truncated,seg,segN);
+  }catch(e){ SNAP.grid=null; SNAP.seg=null; SNAP.key=key; SNAP.n=0; SNAP.segN=0; }
   SNAP.building=false; SNAP.busy=null;
   syncSnapBtn();
 }
@@ -3055,9 +3097,35 @@ function snapAt(p){
   }
   return best?best.slice():null;
 }
+/* nearest point lying on an edge, which is not the same question as the nearest
+   corner: a wall is a line and the place a cove starts is usually part way along
+   one. A corner still wins where there is one, because a corner is a decision
+   somebody drew and a point on an edge is only the nearest place to stand. */
+function edgeAt(p){
+  if(P.snap===false||!SNAP.seg||!V.vp) return null;
+  const tolPt=SNAP_TOL/Math.max(V.zoom,.01);
+  const c0=Math.floor(p[0]/SNAP_CELL), c1=Math.floor(p[1]/SNAP_CELL);
+  const reach=Math.ceil(tolPt/SNAP_CELL);
+  let best=null,bd=tolPt*tolPt;
+  for(let i=c0-reach;i<=c0+reach;i++) for(let j=c1-reach;j<=c1+reach;j++){
+    const b=SNAP.seg.get(i+','+j); if(!b) continue;
+    for(const r of b){
+      const dx=r[2]-r[0], dy=r[3]-r[1], L2=dx*dx+dy*dy;
+      if(!L2) continue;
+      let t=((p[0]-r[0])*dx+(p[1]-r[1])*dy)/L2;
+      t=t<0?0:t>1?1:t;
+      const qx=r[0]+t*dx, qy=r[1]+t*dy;
+      const d=(qx-p[0])*(qx-p[0])+(qy-p[1])*(qy-p[1]);
+      if(d<bd){ bd=d; best=[qx,qy]; }
+    }
+  }
+  return best;
+}
 /* snap a candidate point, remembering it so the cursor can show the hit */
 function snapped(p){
-  const q=snapAt(p);
+  let q=snapAt(p), onEdge=false;
+  if(!q){ q=edgeAt(p); onEdge=!!q; }
+  V.snapEdge=onEdge;
   V.snapHit=q?q.slice():null;
   /* the drawing's own corners beat a ruler you put there by hand; where there is no
      corner to take, a point drawn against the ruler lands on its edge exactly */
@@ -3959,8 +4027,12 @@ function marqueeSvg(){
 function snapCursorSvg(){
   if(!(V.snapHit&&(isMeasureTool(V.tool)||V.tool==='cal'))) return '';
   const q=sp(V.snapHit);
-  return '<g stroke="#8FC46A" stroke-width="1.6" fill="none">'
-    +'<rect x="'+(q[0]-5.5).toFixed(1)+'" y="'+(q[1]-5.5).toFixed(1)+'" width="11" height="11"/>'
+  /* a square for a corner somebody drew, a diamond for a place on an edge: they
+     are different promises and the cursor should not make them look alike */
+  const box=V.snapEdge
+    ? '<path d="M'+q[0]+' '+(q[1]-6.5)+'L'+(q[0]+6.5)+' '+q[1]+'L'+q[0]+' '+(q[1]+6.5)+'L'+(q[0]-6.5)+' '+q[1]+'Z"/>'
+    : '<rect x="'+(q[0]-5.5).toFixed(1)+'" y="'+(q[1]-5.5).toFixed(1)+'" width="11" height="11"/>';
+  return '<g stroke="#8FC46A" stroke-width="1.6" fill="none">'+box
     +'<path d="M'+(q[0]-9)+' '+q[1]+' h4 M'+(q[0]+5)+' '+q[1]+' h4 M'+q[0]+' '+(q[1]-9)+' v4 M'+q[0]+' '+(q[1]+5)+' v4"/></g>';
 }
 function assembleOverlay(){
@@ -5524,6 +5596,7 @@ const TOOLS=[
   {k:'arc',g:'Measure',key:'A',t:"Arc length \u2014 click start, a point along the curve, then the end",svg:'<svg viewBox="0 0 24 24"><path d="M3 19a16 16 0 0118 0"/><circle cx="3" cy="19" r="1.9"/><circle cx="12" cy="11.6" r="1.9"/><circle cx="21" cy="19" r="1.9"/></svg>'},
   {k:'poly',g:'Measure',key:'G',t:"Poly length \u2014 click each corner, per-segment lengths",svg:'<svg viewBox="0 0 24 24"><path d="M3 18l5-9 5 5 8-10"/><circle cx="3" cy="18" r="1.9"/><circle cx="8" cy="9" r="1.9"/><circle cx="13" cy="14" r="1.9"/><circle cx="21" cy="4" r="1.9"/></svg>'},
   {k:'area',g:'Measure',key:'R',t:"Region \u2014 trace a room for its area, perimeter and cove run",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l6-3 7 4 5-2v11l-6 3-7-4z"/><path d="M9 4v13M16 8v11"/></svg>'},
+  {k:'room',g:'Measure',key:'',t:"Fill a room \u2014 click the floor and take its walls off the drawing",svg:'<svg viewBox="0 0 24 24"><path d="M3 20V7l7-4 7 4v13z"/><path d="M7 16.5h6"/><path d="M7 13h9"/><path d="M14 20v-4h3"/></svg>'},
   {k:'count',g:'Measure',key:'M',t:"Count \u2014 stamp and tally a symbol",svg:'<svg viewBox="0 0 24 24"><circle cx="7" cy="7" r="2.6"/><circle cx="17" cy="7" r="2.6"/><circle cx="7" cy="17" r="2.6"/><circle cx="17" cy="17" r="2.6"/></svg>'},
   {k:'ell',g:'Measure',key:'O',t:"Ellipse — a round cove, measured round its edge",svg:'<svg viewBox="0 0 24 24"><ellipse cx="12" cy="12" rx="9" ry="6.5"/></svg>'},
   {k:'ang',g:'Measure',key:'Y',t:"Angle — click the two legs of a corner",svg:'<svg viewBox="0 0 24 24"><path d="M4 20h16"/><path d="M4 20L17 6"/><path d="M11 20a7 7 0 00 2.1-5" /></svg>'},
@@ -5711,6 +5784,7 @@ function setTool(t){
   $$('.tool[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===t));
   viewport.classList.toggle('pan',t==='pan'); viewport.classList.toggle('draw',t!=='pan');
   const names={pan:'Select / pan',cal:'Calibrate — drag along a known dimension',
+    room:'Fill a room — click the open floor inside it',
     line:'Dimension — drag to trace a curved run, or tap each corner',
     poly:'Poly length — click each corner, ⏎ or double-click to finish, or close the loop',
     arc:'Arc length — click the start, a point along the curve, then the end',
@@ -7371,8 +7445,13 @@ stage.addEventListener('pointermove',e=>{
         if(Math.hypot(q[0]-l[0],q[1]-l[1])*V.zoom>1.4) press.free.push(q); });
       V.draft.pts=press.free; drawOverlayFor(); liveLen(V.draft); return; }
   }
-  if(isMeasureTool(V.tool)||V.tool==='cal'){ snapAt(p)?(V.snapHit=snapAt(p)):(V.snapHit=null); }
-  else V.snapHit=null;
+  if(isMeasureTool(V.tool)||V.tool==='cal'){
+    /* whatever the click is about to take, so the mark under the cursor is a
+       promise rather than a guess */
+    const c=snapAt(p), q=c||edgeAt(p);
+    V.snapHit=q||null; V.snapEdge=!c&&!!q;
+  }
+  else { V.snapHit=null; V.snapEdge=false; }
   if(V.draft&&V.draft.type==='arc'&&!press){
     V.draft.pts[Math.min(V.arcN||1,2)]=p;
     if((V.arcN||1)<2) V.draft.pts[2]=p;
@@ -7429,6 +7508,7 @@ function endPointer(e){
   if(tool==='erase') return;
   if(/^(box|tbox|arrow|hl|ell|vs)$/.test(tool)){ if(V.draft&&pr.moved) finishDraft(); else { V.draft=null; drawOverlay(); } return; }
   if(tool==='ang'||tool==='rad'){ tapThree(p); return; }
+  if(tool==='room'){ if(!pr.moved) placeRoom(p); return; }
   if(tool==='count'){ if(!pr.moved) placeCount(p); return; }
   if(tool==='driver'){ if(!pr.moved) placeDriver(p); return; }
   if(tool==='feed'||tool==='splice'){ if(!pr.moved) placePoint(tool,p); return; }
@@ -14119,6 +14199,136 @@ async function pageGray(docId,pg,scale){
   return {g,w:c.width,h:c.height,ptW:pageObj.getViewport({scale:1}).width,
     ptH:pageObj.getViewport({scale:1}).height};
 }
+/* ---- one click for a room ----
+   Tracing a rectangular room corner by corner is thirty seconds of clicking to
+   arrive at four numbers the drawing already knows. This takes them off it: the
+   page is rendered, the paper inside the walls is filled from the point that was
+   clicked, the edge of what filled is walked, and the result is simplified into
+   a region.
+
+   Raster rather than vector, deliberately. Walls are drawn as two parallel lines
+   with door openings punched through the middle of them and hatching between,
+   and no amount of walking the operator list makes a reliable loop out of that.
+   Ink is ink: what a person sees as a closed room fills as one, and what does
+   not fill is exactly the case that needs a person anyway. Corners are pulled
+   back onto real geometry afterwards, where there is any, so the result is as
+   exact as a traced one.
+
+   The boundary comes out on the inside face of the wall, which is where a cove
+   actually runs. */
+const ROOM_SCALE=2;             /* render scale for the fill */
+const ROOM_INK=205;             /* darker than this is a line, not paper */
+const ROOM_MAXFRAC=0.55;        /* filling more of the sheet than this is a leak */
+function roomFill(g,w,h,sx,sy){
+  const n=w*h, seen=new Uint8Array(n);
+  const start=sy*w+sx;
+  if(g[start]<ROOM_INK) return {err:'That is on a line, not inside a room — click on the open floor.'};
+  const cap=Math.floor(n*ROOM_MAXFRAC);
+  /* a scanline flood: the same answer as four-way, a fraction of the pushes,
+     which matters when a sheet is four million pixels */
+  const stack=[start]; let count=0;
+  seen[start]=1;
+  while(stack.length){
+    const at=stack.pop();
+    let y=(at/w)|0, xl=at%w, xr=xl;
+    while(xl>0&&!seen[y*w+xl-1]&&g[y*w+xl-1]>=ROOM_INK) seen[y*w+(--xl)]=1;
+    while(xr<w-1&&!seen[y*w+xr+1]&&g[y*w+xr+1]>=ROOM_INK) seen[y*w+(++xr)]=1;
+    count+=xr-xl+1;
+    if(count>cap) return {err:'That did not close — the fill ran off across the sheet. There is a gap in the wall, or the room is open on one side.'};
+    for(const dy of [-1,1]){
+      const ny=y+dy; if(ny<0||ny>=h) continue;
+      for(let x=xl;x<=xr;x++){
+        const i=ny*w+x;
+        if(!seen[i]&&g[i]>=ROOM_INK){ seen[i]=1; stack.push(i); }
+      }
+    }
+  }
+  if(count<64) return {err:'Nothing to fill there — that space is smaller than a room.'};
+  return {mask:seen,count};
+}
+/* Moore-neighbour trace of the outside edge of what filled, walked on the pixel
+   corners rather than the pixel centres so the result is the boundary itself */
+function roomEdge(mask,w,h){
+  let s=-1;
+  for(let i=0;i<mask.length;i++) if(mask[i]){ s=i; break; }
+  if(s<0) return null;
+  const inside=(x,y)=>x>=0&&y>=0&&x<w&&y<h&&!!mask[y*w+x];
+  /* march the square lattice: at each corner the four pixels around it say
+     which way the boundary leaves, and the walk closes on itself */
+  const sx=s%w, sy=(s/w)|0;
+  let cx=sx, cy=sy, dir=0;                 /* 0 right, 1 down, 2 left, 3 up */
+  const out=[]; const seenC=new Set();
+  const step=[[1,0],[0,1],[-1,0],[0,-1]];
+  for(let guard=0;guard<w*h*4;guard++){
+    out.push([cx,cy]);
+    const tl=inside(cx-1,cy-1), tr=inside(cx,cy-1), bl=inside(cx-1,cy), br=inside(cx,cy);
+    const code=(tl?1:0)|(tr?2:0)|(bl?4:0)|(br?8:0);
+    let nd;
+    /* the two ambiguous saddles are resolved consistently, which is what keeps
+       a diagonal pinch from sending the walk back on itself for ever */
+    if(code===6) nd=(dir===3)?0:2;
+    else if(code===9) nd=(dir===0)?1:3;
+    else nd=[null,3,0,0,2,3,null,0,1,null,1,1,2,3,2,null][code];
+    if(nd==null) break;
+    dir=nd; cx+=step[dir][0]; cy+=step[dir][1];
+    const k=cx+','+cy+','+dir;
+    if(seenC.has(k)) break;
+    seenC.add(k);
+    if(cx===sx&&cy===sy&&out.length>3) break;
+  }
+  return out.length>7?out:null;
+}
+/* the whole of it: click a point, get the corners of the room it is in */
+async function roomAt(pdfPt){
+  const d=FILES[V.docId];
+  if(!d) return {err:'Open a drawing first'};
+  let gray;
+  try{ gray=await pageGray(V.docId,V.page,ROOM_SCALE); }
+  catch(e){ return {err:'Could not read the sheet — '+(e&&e.message||'unknown')}; }
+  const {g,w,h,ptW,ptH}=gray;
+  /* A raster counts down the page and a PDF counts up it, and markups are kept
+     in the PDF's space. Getting this wrong traces the room the drawing has at
+     the mirror of where you clicked, which is a wrong answer that looks like a
+     right one — the corners are exact, they are simply somewhere else. */
+  const sx=Math.round(pdfPt[0]*w/ptW), sy=Math.round((ptH-pdfPt[1])*h/ptH);
+  if(sx<0||sy<0||sx>=w||sy>=h) return {err:'That is off the sheet'};
+  const f=roomFill(g,w,h,sx,sy);
+  if(f.err) return f;
+  const edge=roomEdge(f.mask,w,h);
+  if(!edge) return {err:'Filled, but the edge of it could not be walked. Trace it by hand.'};
+  /* pixels to PDF points, then thrown away down to the corners that matter */
+  let pts=edge.map(([x,y])=>[x*ptW/w,ptH-y*ptH/h]);
+  pts=rdp(pts,Math.max(ptW,ptH)/700);
+  if(pts.length>2&&ptLen(pts[0],pts[pts.length-1])<1) pts.pop();
+  /* the fill lands a pixel or two off the true line; where the drawing has a
+     corner within reach, take the drawing's */
+  pts=pts.map(q=>{ const s2=snapAt(q); return s2||q; });
+  /* two corners the fill split across a jagged pixel are one corner */
+  const keep=[];
+  for(const q of pts) if(!keep.length||ptLen(keep[keep.length-1],q)>Math.max(ptW,ptH)/900) keep.push(q);
+  if(keep.length>2&&ptLen(keep[0],keep[keep.length-1])<Math.max(ptW,ptH)/900) keep.pop();
+  if(keep.length<3) return {err:'That came out as fewer than three corners.'};
+  return {pts:keep,px:f.count,scale:ROOM_SCALE};
+}
+async function placeRoom(p){
+  if(V.busyRoom) return;
+  V.busyRoom=true;
+  toast('Reading the sheet…');
+  let r;
+  try{ r=await roomAt(p); }
+  finally{ V.busyRoom=false; }
+  if(!r||r.err){ toast(r&&r.err||'Could not read that room'); return; }
+  snap('Fill a room');
+  const a={id:uid('a_'),type:'area',doc:V.docId,page:V.page,pts:r.pts,
+    color:V.color,w:V.width,text:'',closed:true};
+  P.ann.push(a); V.sel=a.id;
+  invalidateAnns(); drawOverlay(); showInspector(a); renderAnnList(); stats(); markDirty();
+  const m=areaMetrics(a);
+  toast('Room traced — '+r.pts.length+' corners'
+    +(m&&m.perim?', '+fmtRun(m.perim)+' round the walls':'')
+    +'. Drag a corner to correct it.');
+}
+
 /* ---- visual search ----
    Drawings repeat a symbol, and counting them by hand is where an evening goes.
    Box one and this finds the rest by matching ink: the page is rendered, both the
@@ -15580,6 +15790,15 @@ function manualSections(){
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
+    ]}]},
+  {id:'offthedrawing',t:'Taking it off the drawing',blocks:[
+    {p:'The drawing already knows where its walls are. Two things read them rather than asking you to.'},
+    {rows:[
+      ['Snapping to a wall, not only to a corner','Snap has always taken the corners a drawing is made of. A wall is a line, though, and the place a cove starts is very often part way along one where there is no corner at all \u2014 so a point on the nearest edge is offered where no corner is near enough. A corner still wins where there is one: a corner is a decision somebody drew, a point on an edge is only the nearest place to stand. The cursor shows which you are about to get \u2014 a square for a corner, a diamond for a place on a wall.'],
+      ['Fill a room','Click the open floor inside a room and its walls come off the drawing as a region, with its area, its perimeter and its cove run. A rectangular room comes back as four corners, not four hundred, and every corner is pulled onto real geometry where the drawing has any, so it is as exact as one traced by hand. Drag a corner afterwards like any other region.'],
+      ['Why it reads the picture rather than the file','Walls are drawn as two parallel lines with door openings punched through them and hatching in between, and no amount of reading the file makes a reliable loop out of that. What a person sees as a closed room fills as one. What does not fill is exactly the case that needed a person anyway.'],
+      ['When it will not','A wall with a gap in it lets the fill run off across the sheet, and it says so rather than handing back the outline of the whole building. Clicking a line instead of the floor says that too. Neither is a guess dressed up as an answer.'],
+      ['Where the line lands','On the inside face of the wall, which is where a cove actually runs.'],
     ]}]},
   {id:'size',t:'How much of it shows',blocks:[
     {p:'Thirty tools, seven takeoff tabs and eight pages of settings is the right amount for somebody doing this all day and far too much for somebody who wants the length of a cove. So the app has a size.'},
@@ -17229,6 +17448,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,straighten,lenHelp,parseScale,
   openToolSheet,closeToolSheet,railFit,toolName,btnWord,
   feats:FEATS,featOn,featUsed,featAdded,featAdd,featOf,featToolOn,setLevel,applyLevel,
+  roomAt,roomFill,roomEdge,placeRoom,edgeAt,snapAt,snapped,snapSegs:()=>SNAP.segN,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,

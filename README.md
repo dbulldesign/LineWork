@@ -559,6 +559,52 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## Taking it off the drawing
+
+The drawing already knows where its walls are. Two things read them rather than
+asking you to.
+
+**Snapping to a wall, not only to a corner.** Snap has always taken the corners
+a drawing is made of, straight out of the PDF's operator list. But a wall is a
+*line*, and the place a cove starts is very often part way along one where there
+is no vertex at all — which was a click that snapped to nothing. The edges are
+kept now as well as their endpoints, in their own spatial grid, and the nearest
+point *on* an edge is offered when no corner is near enough. A corner still wins
+where there is one: a corner is a decision somebody drew, a point on an edge is
+only the nearest place to stand. The cursor distinguishes them — a square for a
+corner, a diamond for a place on a wall — because they are different promises.
+
+**Fill a room.** Click the open floor and the room's walls come off the drawing
+as a region, with its area, perimeter and cove run.
+
+Raster, not vector, and deliberately. Walls are drawn as two parallel lines with
+door openings punched through them and hatching between, and no amount of
+walking the operator list makes a reliable loop out of that. Ink is ink: what a
+person sees as a closed room fills as one. So the page is rendered, the paper
+inside the walls is scanline-flooded from the point clicked, the boundary of
+what filled is walked with a marching-squares trace, and the result is simplified
+with the same RDP the freehand tool uses. Corners are then pulled onto real
+vector geometry where there is any — so the answer is as exact as a traced one,
+and a rectangular room comes back as **four corners, not four hundred**.
+
+What does not fill is exactly the case that needed a person anyway, and it says
+so: a wall with a gap lets the flood run off across the sheet, which is caught by
+an area cap and reported as a gap rather than handed back as the outline of the
+whole building. Clicking a line instead of the floor says that too.
+
+The boundary lands on the inside face of the wall, which is where a cove runs.
+
+`room.mjs` measures both against a plan drawn on purpose — `ROOMS.pdf`, walls at
+coordinates the test knows — so the traced corners are checked against arithmetic
+rather than a screenshot. The room clicked comes back at x 72..306 and y 510..720
+against walls drawn at exactly those, 152 sq ft and 49 ft round.
+
+Writing that test in screen coordinates is what caught the tracer converting the
+raster without flipping it: a raster counts down the page and a PDF counts up it,
+and markups are kept in the PDF's space. The corners were exact and at the mirror
+of the room that was clicked — a wrong answer wearing the shape of a right one.
+There is now an assertion that the point you clicked is inside the room you got.
+
 ## How much of it shows
 
 Thirty tools, seven takeoff tabs and eight pages of settings is the right amount
