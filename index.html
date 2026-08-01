@@ -325,6 +325,8 @@ input.up{text-transform:uppercase}
 .note.ok{color:var(--ok)}
 /* per-segment poly readout — scrolls once a run gets long */
 .seglist .kv button{margin-left:6px;padding:1px 6px;font-size:10px;flex:0 0 auto}
+.btnrow{display:flex;gap:5px;flex-wrap:wrap;margin-top:2px}
+.btnrow .btn{flex:1 1 auto}
 .seglist{max-height:168px;overflow:auto;margin:5px 0;border:1px solid var(--line);background:var(--s2)}
 .seglist .kv{padding:3px 9px;font-size:11.5px}
 .seglist .kv span{color:var(--faint);font-family:var(--mono)}
@@ -1119,7 +1121,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.74.1';
+const APP_VER='1.75.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -5036,10 +5038,15 @@ function halvePath(pts){
   }
   return null;
 }
-/* Halving a run by vertex segments, so a curve can be carried into the half it
-   belongs to. Each segment contributes its real length — arc where it is bowed —
-   and the cut is reported as falling inside an arc rather than flattening it. */
-function halveRun(a){
+/* ---- cutting a run into equal lengths ----
+   Halves are what gets asked for most, but a cove that has to be made in three
+   or four pieces is just as ordinary, and doing it by halving twice only gives
+   you quarters. So the cut takes a number.
+   Each segment contributes its real length — arc where it is bowed — so a
+   dog-legged polyline divides by length rather than by vertex count, and a cut
+   that lands inside an arc is reported rather than quietly straightening it. */
+function cutRun(a,n){
+  n=clamp(Math.round(n)||2,2,12);
   const pts=annPts(a);
   if(!pts||pts.length<2) return null;
   const lens=[];
@@ -5051,113 +5058,181 @@ function halveRun(a){
     lens.push(L); total+=L;
   }
   if(!(total>0)) return null;
-  const want=total/2;
-  let acc=0;
-  for(let i=0;i<lens.length;i++){
-    if(acc+lens[i]>=want-1e-9){
-      const segNo=i+1;
-      if(bulgeOf(a,segNo)) return {inArc:true,seg:segNo};
-      const f=lens[i]>0?(want-acc)/lens[i]:0;
-      const A=pts[i], B=pts[i+1];
-      const m=[A[0]+(B[0]-A[0])*f,A[1]+(B[1]-A[1])*f];
-      /* the first half keeps segments 1..i, the second is renumbered from 1 */
-      const bA={}, bB={};
-      const map=bulgeMap(a)||{};
-      Object.keys(map).forEach(k=>{
-        const n=+k, v=+map[k];
-        if(!isFinite(n)||!v) return;
-        if(n<segNo) bA[n]=v;
-        else if(n>segNo) bB[n-segNo+1]=v;
-      });
-      return {mid:m,total,seg:segNo,
-        first:pts.slice(0,i+1).concat([m]),
-        second:[m].concat(pts.slice(i+1)),
-        bulgeA:Object.keys(bA).length?bA:null,
-        bulgeB:Object.keys(bB).length?bB:null};
+  /* where each cut lands: the segment it falls on, and the point itself */
+  const cuts=[];
+  for(let k=1;k<n;k++){
+    const want=total*k/n;
+    let acc=0, at=null;
+    for(let i=0;i<lens.length;i++){
+      if(acc+lens[i]>=want-1e-9){ at={i,f:lens[i]>0?(want-acc)/lens[i]:0}; break; }
+      acc+=lens[i];
     }
-    acc+=lens[i];
+    if(!at) return null;
+    /* the parts are rebuilt from vertices, so a cut inside a curve has nowhere
+       to go — say which segment rather than flattening it */
+    if(bulgeOf(a,at.i+1)) return {inArc:true,seg:at.i+1};
+    const A=pts[at.i], B=pts[at.i+1];
+    cuts.push({i:at.i,p:[A[0]+(B[0]-A[0])*at.f,A[1]+(B[1]-A[1])*at.f]});
   }
-  return null;
+  const map=bulgeMap(a)||{};
+  const onCut=i=>cuts.some(c=>c.i===i);
+  const parts=[];
+  for(let k=0;k<n;k++){
+    const lo=k?cuts[k-1].i:0, hi=k<n-1?cuts[k].i:pts.length-2;
+    /* src[j] is the original segment whose far end is list[j], so a curve follows
+       the segment it belongs to however the parts renumber around it */
+    const list=[], src=[];
+    const push=(q,seg)=>{
+      if(list.length&&ptLen(q,list[list.length-1])<=1e-9) return;
+      list.push(q.slice()); src.push(seg);
+    };
+    push(k?cuts[k-1].p:pts[0],0);
+    for(let v=lo+1;v<=hi;v++) push(pts[v],v);
+    push(k<n-1?cuts[k].p:pts[pts.length-1],hi+1);
+    if(list.length<2) return null;
+    const bul={};
+    for(let j=1;j<list.length;j++){
+      const m=src[j];
+      /* only a segment the cuts left whole carries its curve across */
+      if(map[m]&&!onCut(m-1)&&j>0&&src[j-1]===m-1) bul[j]=+map[m];
+    }
+    parts.push({pts:list,bulge:Object.keys(bul).length?bul:null});
+  }
+  return {parts,total,each:total/n,cuts:cuts.map(c=>c.p),n};
 }
-/* an arc halves into two arcs, each needing its own point along the curve */
-function halveArc(a){
+/* an arc divides into n arcs, each needing its own point along the curve */
+function cutArc(a,n){
+  n=clamp(Math.round(n)||2,2,12);
   const g=arcOf(a); if(!g) return null;
   const at=f=>{ const t=g.a0+g.sweep*f;
     return [g.c[0]+g.r*Math.cos(t),g.c[1]+g.r*Math.sin(t)]; };
-  return {first:[at(0),at(0.25),at(0.5)],second:[at(0.5),at(0.75),at(1)],mid:at(0.5)};
+  const parts=[];
+  for(let k=0;k<n;k++){
+    const f0=k/n, f1=(k+1)/n;
+    parts.push({pts:[at(f0),at((f0+f1)/2),at(f1)],bulge:null});
+  }
+  return {parts,cuts:parts.slice(1).map(q=>q.pts[0].slice()),n};
 }
-async function splitHalf(a){
+/* the two the old code returned, kept because they say something the new one
+   does not: which single point the middle is */
+const halveRun=a=>{
+  const c=cutRun(a,2);
+  if(!c||c.inArc) return c;
+  return {mid:c.cuts[0],total:c.total,first:c.parts[0].pts,second:c.parts[1].pts,
+    bulgeA:c.parts[0].bulge,bulgeB:c.parts[1].bulge};
+};
+const halveArc=a=>{
+  const c=cutArc(a,2);
+  return c?{first:c.parts[0].pts,second:c.parts[1].pts,mid:c.cuts[0]}:null;
+};
+/* how to say it: halves, thirds and quarters have names, anything past that is a
+   number, and the run reads better than the arithmetic either way */
+const CUT_WORD=n=>n===2?'in half':n===3?'into thirds':n===4?'into quarters':'into '+n;
+const CUT_PARTS=n=>n===2?'halves':n===3?'thirds':n===4?'quarters':n+' parts';
+const CUT_ONE=n=>n===2?'half':n===3?'third':n===4?'quarter':'part';
+async function splitRun(a,n){
+  n=clamp(Math.round(n)||2,2,12);
   if(!a){ toast('Select a run first'); return; }
   if(a.type==='area'||isClosedType(a)||a.closed){
-    toast('A closed loop has no halves — halve one of its segments instead'); return;
+    toast('A closed loop has no '+CUT_PARTS(n)+' — split one of its segments instead'); return;
   }
   if(a.type!=='line'&&a.type!=='arc'&&a.type!=='whip'){
     toast(( ANN_NAMES[a.type]||'That markup')+' cannot be split'); return;
   }
-  const parts=a.type==='arc'?halveArc(a):halveRun(a);
-  if(!parts){ toast('That run is too short to split'); return; }
-  /* the halves are rebuilt from vertices, so a cut inside an arc has nowhere to go */
-  if(parts.inArc){
-    toast('The halfway point falls inside the arc on segment '+parts.seg
-      +' — straighten it, or halve one of the straight segments instead');
+  const cut=a.type==='arc'?cutArc(a,n):cutRun(a,n);
+  if(!cut){ toast('That run is too short to split '+CUT_WORD(n)); return; }
+  /* the parts are rebuilt from vertices, so a cut inside an arc has nowhere to go */
+  if(cut.inArc){
+    toast('A cut falls inside the arc on segment '+cut.seg
+      +' — straighten it, or split one of the straight segments instead');
     return;
   }
   const t=a.treat&&P.treat.find(x=>x.id===a.treat);
   const st=statedOf(a);
-  const half=annLen(a)!=null?annLen(a)/2:null;
+  const each=annLen(a)!=null?annLen(a)/n:null;
   let mode='one';
   if(t){
-    const r=await dlg({title:'Split '+tagOf(t)+' in half',fields:[
-      {k:'mode',type:'select',label:'The second half',opts:[
-        {v:'two',t:'becomes its own run, same product choices'},
-        {v:'one',t:'is just a markup — no run on it'}],val:'two'}
+    const r=await dlg({title:'Split '+tagOf(t)+' '+CUT_WORD(n),fields:[
+      {k:'mode',type:'select',label:n===2?'The second half':'The other '+(n-1)+' parts',opts:[
+        {v:'two',t:n===2?'becomes its own run, same product choices'
+                        :'become runs of their own, same product choices'},
+        {v:'one',t:n===2?'is just a markup — no run on it'
+                        :'are just markups — no runs on them'}],val:'two'}
     ],ok:'Split',
-      note:(half!=null?'Each half measures '+fmtLen(half)+'. ':'')
-        +tagOf(t)+' stays on the first half. A second run arrives without a zone number and unapproved — press Renumber to fold it in.'});
+      note:(each!=null?'Each '+CUT_ONE(n)+' measures '+fmtLen(each)+'. ':'')
+        +tagOf(t)+' stays on the first. '
+        +(n===2?'A second run arrives':'The new runs arrive')
+        +' without a zone number and unapproved — press Renumber to fold '
+        +(n===2?'it':'them')+' in.'});
     if(!r) return;
     mode=r.mode;
   }
-  snap('Split in half');
-  /* the second half is a new markup; the first keeps the original id so anything
+  snap('Split '+CUT_WORD(n));
+  /* the later parts are new markups; the first keeps the original id so anything
      pointing at it — the run, its feed points, its splices — still points at it */
-  const b={id:uid('a_'),type:a.type,doc:a.doc,page:a.page,pts:parts.second.map(q=>q.slice()),
-    color:a.color,w:a.w,text:''};
-  if(a.poly) b.poly=true;
-  if(a.free) b.free=true;
-  if(a.type==='whip'){ b.from=null; b.to=a.to; a.to=null; }
-  if(st>0){ a.stated=st/2; b.stated=st/2; }
-  if(parts.bulgeB) b.bulge=parts.bulgeB;
-  a.pts=parts.first.map(q=>q.slice());
-  if(parts.bulgeA) a.bulge=parts.bulgeA; else delete a.bulge;
-  if(a.type==='line'&&a.pts.length>2) a.poly=true;
-  P.ann.push(b);
-  let t2=null;
-  if(t&&mode==='two'){
-    t2=clone(t); t2.id=uid('t_'); t2.annId=b.id; b.treat=t2.id;
-    t2.zone=''; t2.manual=0;
-    unapproveTreat(t2); delete t2.rev;
-    P.treat.push(t2);
+  const made=[];
+  for(let k=1;k<n;k++){
+    const b={id:uid('a_'),type:a.type,doc:a.doc,page:a.page,
+      pts:cut.parts[k].pts.map(q=>q.slice()),color:a.color,w:a.w,text:''};
+    if(a.poly) b.poly=true;
+    if(a.free) b.free=true;
+    if(cut.parts[k].bulge) b.bulge=cut.parts[k].bulge;
+    if(st>0) b.stated=st/n;
+    made.push(b);
   }
+  /* a whip runs from something to something: the far end belongs to the last part
+     and the joins in between are open */
+  if(a.type==='whip'){
+    made.forEach(b=>{ b.from=null; b.to=null; });
+    made[made.length-1].to=a.to; a.to=null;
+  }
+  if(st>0) a.stated=st/n;
+  a.pts=cut.parts[0].pts.map(q=>q.slice());
+  if(cut.parts[0].bulge) a.bulge=cut.parts[0].bulge; else delete a.bulge;
+  if(a.type==='line'&&a.pts.length>2) a.poly=true;
+  made.forEach(b=>P.ann.push(b));
+  /* runs[k] is the treatment the k-th part ends up on, or null where it is only
+     a markup — the feed points read it to find where they have moved to */
+  const runs=[t||null];
+  made.forEach(b=>{
+    if(t&&mode==='two'){
+      const t2=clone(t); t2.id=uid('t_'); t2.annId=b.id; b.treat=t2.id;
+      t2.zone=''; t2.manual=0;
+      unapproveTreat(t2); delete t2.rev;
+      P.treat.push(t2); runs.push(t2);
+    }else runs.push(null);
+  });
   /* placed feed points and splices know how far along the old path they sat, so
-     each one moves to the half it is actually on, rescaled to that half */
+     each one moves to the part it is actually on, rescaled to that part */
   if(t){
     P.ann.filter(x=>(x.type==='feed'||x.type==='splice')&&x.treat===t.id).forEach(x=>{
       const at=clamp(+x.at||0,0,1);
-      if(at<=0.5){ x.at=at*2; }
-      else{
-        x.at=(at-0.5)*2;
-        if(t2) x.treat=t2.id;
-        else{ P.ann=P.ann.filter(y=>y.id!==x.id); return; }
-      }
+      const k=Math.min(n-1,Math.floor(at*n));
+      x.at=clamp(at*n-k,0,1);
+      if(!k) return;
+      if(runs[k]) x.treat=runs[k].id;
+      else P.ann=P.ann.filter(y=>y.id!==x.id);
     });
   }
   /* the original was approved against a length that no longer exists */
   if(t&&t.approved) unapproveTreat(t);
   invalidateAnns(); V.sel=a.id;
   drawOverlay(); showInspector(a); renderAnnList(); renderTreatments(); renderBom(); stats(); markDirty();
-  toast('Split into two of '+(half!=null?fmtLen(half):'equal length')
-    +(t2?' — '+tagOf(t)+' and a new run':(t?' — '+tagOf(t)+' keeps the first half':'')));
+  const fresh=runs.filter((r,i)=>i&&r).length;
+  toast('Split into '+n+' of '+(each!=null?fmtLen(each):'equal length')
+    +(fresh?' — '+tagOf(t)+' and '+fresh+' new run'+(fresh===1?'':'s')
+           :(t?' — '+tagOf(t)+' keeps the first':'')));
 }
+const splitHalf=a=>splitRun(a,2);
+/* Halves, thirds and quarters in one row rather than three stacked buttons: they
+   are the same action asked three ways, and a cove that has to arrive in three
+   pieces is as ordinary a thing as one that arrives in two. */
+const splitRow=()=>'<div class="f" style="margin-top:6px">'
+  +'<label>Split into equal lengths</label><div class="btnrow">'
+  +'<button class="btn sm" data-act="cut2">In half  <span class="hint">S</span></button>'
+  +'<button class="btn sm" data-act="cut3">Thirds</button>'
+  +'<button class="btn sm" data-act="cut4">Quarters</button>'
+  +'</div></div>';
 function addPointTo(a,pdfPt,sx,sy){
   if(!vertexType(a)||a.free){ toast('Points can only be added to a run or a region'); return false; }
   const seg=nearestSeg(a,sx,sy);
@@ -7774,7 +7849,9 @@ function ctxForAnn(a){
     {id:'cp',t:'Copy markup',k:'⌘C',fn:()=>copyAnn()},
     {id:'du',t:'Duplicate',k:'⌘D',fn:()=>{ V.sel=a.id; pasteAnn(null,a); }},
     {id:'ar',t:'Array along the grid…',fn:()=>arrayAnn(a)},
-    {id:'hf',t:'Split in half',k:'S',fn:()=>splitHalf(a)});
+    {id:'hf',t:'Split in half',k:'S',fn:()=>splitRun(a,2)},
+    {id:'h3',t:'Split into thirds',fn:()=>splitRun(a,3)},
+    {id:'h4',t:'Split into quarters',fn:()=>splitRun(a,4)});
   if(a.type!=='cal'&&a.type!=='link') items.push({sw:1});
   items.push({hr:1},{id:'dl',t:'Delete markup',k:'⌫',danger:1,fn:()=>{
     snap(); P.ann=P.ann.filter(x=>x.id!==a.id); P.treat.forEach(x=>{if(x.annId===a.id)x.annId=null});
@@ -9096,7 +9173,7 @@ function showInspector(a){
     const t2=a.treat&&P.treat.find(x=>x.id===a.treat);
     h+= t2? '<button class="btn" data-act="go">Open treatment '+esc(tagOf(t2))+'</button>'
           : '<button class="btn pri" data-act="mk">Create treatment from this</button>';
-    h+='<button class="btn" data-act="half">Split in half  <span class="hint">S</span></button>';
+    h+=splitRow();
     h+='<div class="hint">Drag the middle handle to change the bow, the ends to move it.</div>';
   }
   if(a.type==='ell'){
@@ -9217,7 +9294,7 @@ function showInspector(a){
     if(a.pts.length>1&&!a.free) h+='<button class="btn" data-act="off">Parallel run…</button>';
     h+='<button class="btn" data-act="arr">Array along the grid…</button>';
     if(a.pts.length>2) h+='<button class="btn" data-act="rnd">Round all corners…</button>';
-    if(!a.closed) h+='<button class="btn" data-act="half">Split in half  <span class="hint">S</span></button>';
+    if(!a.closed) h+=splitRow();
     h+='<div class="kv"><span>Segments</span><b>'+segs.length+(a.closed?' · closed':'')+'</b></div>';
     /* Bluebeam-style per-segment readout */
     if(segs.length>1&&!a.free){
@@ -9407,6 +9484,7 @@ function showInspector(a){
     ovInvalidate(a.id);
     showInspector(a); drawOverlay(); renderAnnList(); markDirty();
   });
+  $$('[data-cut]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); splitRun(a,+el.dataset.cut); });
   $$('[data-halve]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); halveSeg(a,+el.dataset.halve); });
   $$('[data-arcseg]',bd).forEach(el=>el.onclick=e=>{ e.stopPropagation(); segToArc(a,+el.dataset.arcseg); });
   $$('[data-up2]',bd).forEach(el=>el.oninput=()=>{
@@ -9433,7 +9511,8 @@ function showInspector(a){
     if(act==='off') offsetAnn(a);
     if(act==='arr') arrayAnn(a);
     if(act==='pho') openPhoto(a);
-    if(act==='half') splitHalf(a);
+    if(act==='half') splitRun(a,2);
+    if(/^cut([2-9]|1[0-2])$/.test(act)) splitRun(a,+act.slice(3));
     if(act==='rnd') roundCorners(a);
     if(act==='spn') nameSpace(a,false);
     if(act==='rsc') rgnScaleDlg(a,false);
@@ -15042,10 +15121,10 @@ function cmdItems(){
   add('Do','Add a treatment',()=>{ const t=newTreat(null); renderTreatments(); renderBom(); openTreat(t.id,true); });
   add('Do','Edit the picked runs together',editMany);
   add('Do','Renumber zones…',renumber);
-  add('Do','Split the selected run in half',()=>{
+  [2,3,4].forEach(n=>add('Do','Split the selected run '+CUT_WORD(n),()=>{
     const a=P.ann.find(x=>x.id===V.sel);
-    if(a) splitHalf(a); else toast('Select a run on the drawing first');
-  },'S');
+    if(a) splitRun(a,n); else toast('Select a run on the drawing first');
+  },n===2?'S':''));
   add('Do','Compare revisions…',compareRevisions);
   add('Do','Scan titleblocks',()=>scanTitleblocks(false));
   add('Do','Set a baseline…',()=>$('#btnBase').click());
@@ -15132,7 +15211,7 @@ const KEYS=[
   {g:'Tools',k:'A',t:'Arc length — start, a point along the curve, then the end'},
   {g:'Tools',k:'R',t:'Region — area, perimeter and the cove run inside it'},
   {g:'Tools',k:'H',t:'Photo — pin a site photo where it was taken'},
-  {g:'Editing',k:'S',t:'Split the selected run in half — again for quarters'},
+  {g:'Editing',k:'S',t:'Split the selected run in half — the inspector and the right-click menu also do thirds and quarters'},
   {g:'Tools',k:'F',t:'Feed point — place one on a run'},
   {g:'Tools',k:'J',t:'Splice — mark where two pieces join'},
   {g:'Tools',k:'W',t:'Home run — route the wire from a driver to a feed'},
@@ -15330,7 +15409,7 @@ function manualSections(){
       ['Rounding corners','The other way a cove turns: the two legs are where they should be and the corner between them is radiused. Round all corners pulls both legs back by the tangent distance and puts an arc between them, so the run gets <em>shorter</em> — the opposite of curving a chord, and both are real. A corner too tight for the radius is left alone and reported rather than forced.'],
       ['Curving while you trace','Hold ctrl (or \u2318) as you place a point and the segment just laid becomes a 90\u00b0 arc, so a run can be traced with its curves in it rather than converted afterwards. Drag its grip to shape it.'],
       ['Curved segments','A cove that turns a corner on a radius is not two straight legs, and measuring it as a chord loses real feet. Every segment of a selected run carries a round grip halfway along it: drag that and the segment bows into an arc, with the radius, the angle and the length live in the status bar as you go. It is magnetic at straight and at 45, 60, 90, 120 and 180\u00b0, \u21e7 forces a quarter circle, and alt-click straightens it again. For an exact figure, right-click the segment \u2014 or use the arc button beside it in the inspector\u2019s segment list \u2014 and give it an included angle or a radius: 90\u00b0 is the usual cove corner, and whichever you give, the other follows. The length then follows the curve everywhere it matters: the run total, the cut list, the piece list, the feed points and the wire schedule. The curve is stored the way a CAD polyline stores one, so the segment is still one segment with two ends you can drag, and the label sits on the arc where the length is. Straighten it again from the same menu. Adding or removing a vertex on a curved segment is refused rather than quietly flattening it, and a split whose halfway point lands inside an arc says so instead.'],
-      ['Split in half (S)','Two different things, and they are not the same. Splitting a run in half gives two runs of equal length \u2014 the point is found by walking the path, so a dog-legged polyline halves by length and not by vertex count, and an arc halves into two arcs. Press S again for quarters. Halving a segment instead \u2014 click any segment in the inspector\u2019s list \u2014 puts a vertex at its midpoint and changes no length at all.'],
+      ['Split into equal lengths (S)','Two different things, and they are not the same. Splitting a run gives parts of equal length \u2014 in half, into thirds or into quarters, from the inspector, the right-click menu or \u2318K, with S for halves. The cut points are found by walking the path, so a dog-legged polyline divides by length and not by vertex count, and an arc divides into arcs. A stated length divides with it, feed points and splices move to the part they are actually on, and where the run carried a treatment you are asked whether the other parts become runs of their own. A cut that would land inside a curved segment is refused and names the segment rather than quietly straightening it. Halving a segment instead \u2014 click any segment in the inspector\u2019s list \u2014 puts a vertex at its midpoint and changes no length at all.'],
       ['What a split carries','The first half keeps the original run, so anything pointing at it still does. The second half can become its own run with the same product choices, arriving without a zone number and unapproved. Placed feed points and splices move to the half they are actually on and are rescaled to it. A stated length is halved with the run. The original loses its approval, because it was approved against a length that no longer exists.'],
       ['Photos (H)','Pin a site photo where it was taken, with a caption. The picture is kept in this browser alongside the drawings and travels inside a “Save with drawings” file, so the one file really is the whole job. A pin whose picture is not in this browser says so rather than showing a blank.'],
       ['Command palette (\u2318K)','One searched list of every tool, action, setting, sheet and run in the job. Type part of a name \u2014 every word has to appear somewhere, so \u201ccove z4\u201d narrows to that run, and picking it opens the sheet, selects the markup and opens the card. Arrows to move, return to run, escape to close.'],
@@ -15812,7 +15891,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   placePoint,feedsPlaced,splicesOn,alongRun,nearRun,
   openCmd,closeCmd,cmdItems,cmdMatch,presetText,applyPreset,savePreset,presetKeys:PRESET_KEYS,
   placePhoto,photoUrl,openPhoto,photoKey,pdfPrune,grpHead,
-  splitHalf,halveSeg,halvePath,halveArc,halveRun,
+  splitHalf,splitRun,cutRun,cutArc,halveSeg,halvePath,halveArc,halveRun,
   segToArc,setBulge,shiftBulge,bulgeOf,bulgeGeom,bulgeFromDeg,bulgeFromRadius,bowSign,delPointFrom,
   bowGrip,hitBow,bowFromPoint,roundCorners,roundOne,finishDraft,
   tools:TOOLS,toolGroups:TOOL_GROUPS,toolOrder,toolDef,toolShown,renderToolbar,renderPals,editPal,

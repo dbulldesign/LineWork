@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.74.1**
+**Version 1.75.0**
 
 ## What it does
 
@@ -387,6 +387,33 @@ The dimension tool is one segment: **tap where it starts, tap where it ends**, a
 that is the measurement — nothing to press afterwards. Drag instead and it traces a
 curve freehand, as it always did. Poly (`G`) is the tool that keeps going until you
 finish it, for a run that turns corners.
+
+## Splitting a run
+
+A run splits into **halves, thirds or quarters** — three buttons in the inspector, three
+entries in the right-click menu and in ⌘K, with **S** on the keyboard for halves. Halving
+twice only ever gives you quarters; a cove that has to be made in three pieces is as
+ordinary as one that arrives in two.
+
+The cut points are found by **walking the path**, so a dog-legged polyline divides by
+length rather than by vertex count and each part measures exactly the same. An arc divides
+into arcs, each with its own point along the curve. What travels with the parts:
+
+- a **stated length** divides by the same number
+- **feed points and splices** move to the part they are actually on, rescaled to it
+- where the run carried a **treatment**, you are asked whether the other parts become runs
+  of their own — they arrive without a zone number and unapproved, and Renumber folds them
+  in
+- the run was **approved against a length that no longer exists**, so the approval is
+  dropped
+- the first part keeps the original markup id, so anything pointing at it still does
+
+A cut that would land **inside a curved segment** is refused and names the segment, rather
+than quietly straightening it. A curve on a segment the cuts left whole travels with the
+part that kept it.
+
+Splitting a *segment* is a different thing and still there: click any segment in the
+inspector's list to put a vertex at its midpoint, which changes no length at all.
 
 ## The window on a tablet
 
