@@ -559,6 +559,32 @@ cross, a run drawn on one appears on the other with its shape and colour and *on
 sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
 is noticed at the far end, and a code that is not one is refused with a reason.
 
+## Undo, with somebody else drawing
+
+Undo restores a snapshot of the whole job. That is right when you are working
+alone and wrong the moment you are not: the snapshot was taken before your
+colleague drew their last three runs, so putting it back takes those off their
+screen as well as yours. They did not ask for that and would have no way of
+knowing what happened.
+
+So every undo step now records **how much of the other device's work it had
+seen** — a counter bumped each time a delta lands — and restoring one reinstates
+everything that has arrived since. Your change is undone; theirs is left where it
+is, and the toast says how many of their changes it stepped around, so nothing is
+quietly different from what you expected.
+
+The same reasoning runs the other way: a record *they deleted* after your
+snapshot stays deleted rather than reappearing on both screens. And a record you
+edit yourself stops counting as theirs, whoever originally drew it.
+
+Nothing changes when you are alone: with no connection the map is empty, the
+step counter is zero, and undo is undo. Hanging up clears both.
+
+`undosync.mjs` pairs two real browsers and plays out the sequence that motivates
+it — I draw, you draw two, I undo — then checks my run is gone from *both*
+screens and both of yours are still on both. Then it checks the deletion case,
+that redo does not revert them either, and that a single device is unaffected.
+
 ## What changed between two revisions
 
 Comparing two renders of a sheet and clustering the changed blocks was already

@@ -1207,7 +1207,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.83.0';
+const APP_VER='1.84.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -4671,7 +4671,7 @@ const snapshot=()=>JSON.stringify({ann:P.ann,treat:P.treat,cal:P.cal,seq:P.seq,
    label is the caller's; an unlabelled step is honest about being unnamed. */
 let stepAt=0;
 function snap(label){
-  HIST.push({j:snapshot(),l:String(label||'Edit'),t:Date.now(),n:++stepAt});
+  HIST.push({j:snapshot(),l:String(label||'Edit'),t:Date.now(),n:++stepAt,rv:LIVE.tick||0});
   if(HIST.length>60) HIST.shift();
   FUT.length=0; syncUndo(); saveHist();
 }
@@ -4698,7 +4698,45 @@ function loadHist(){
   }catch(e){}
 }
 function clearHist(){ HIST.length=0; FUT.length=0; syncUndo(); try{localStorage.removeItem(HKEY)}catch(e){} }
+/* ---- undoing your own change and not somebody else's ----
+   Undo restores a snapshot of the whole job. That is right when you are working
+   alone and wrong the moment you are not: the snapshot was taken before your
+   colleague drew their last three runs, so putting it back takes those off their
+   screen as well as yours. They did not ask for that and would have no way of
+   knowing what happened.
+
+   So a snapshot records how much of the other device's work it had already seen,
+   and restoring one reinstates everything that has arrived since. Your change is
+   undone; theirs is left where it is. Records the other end deleted after the
+   snapshot stay deleted, for the same reason in the other direction. */
+function liveKeep(step){
+  if(LIVE.state!=='live'||!LIVE.theirs.size) return null;
+  const rv=+asStep(step).rv||0;
+  const keep={ann:[],treat:[],drop:new Set()};
+  LIVE.theirs.forEach((tick,id)=>{
+    if(tick<=rv) return;                       /* the snapshot already had it */
+    const a=P.ann.find(x=>x&&x.id===id), t=a?null:P.treat.find(x=>x&&x.id===id);
+    if(a) keep.ann.push(clone(a));
+    else if(t) keep.treat.push(clone(t));
+    else keep.drop.add(id);                    /* they deleted it after the snapshot */
+  });
+  return (keep.ann.length||keep.treat.length||keep.drop.size)?keep:null;
+}
+function liveReinstate(k){
+  if(!k) return 0;
+  const put=(arr,list)=>list.forEach(r=>{
+    const i=arr.findIndex(x=>x&&x.id===r.id);
+    if(i>=0) arr[i]=r; else arr.push(r);
+  });
+  put(P.ann,k.ann); put(P.treat,k.treat);
+  if(k.drop.size){
+    P.ann=P.ann.filter(x=>x&&!k.drop.has(x.id));
+    P.treat=P.treat.filter(x=>x&&!k.drop.has(x.id));
+  }
+  return k.ann.length+k.treat.length+k.drop.size;
+}
 function restore(step){
+  const keep=liveKeep(step);
   const d=JSON.parse(asStep(step).j);
   P.ann=d.ann; P.treat=d.treat; P.cal=d.cal; P.seq=d.seq;
   if(d.fix) P.fix=d.fix; if(d.ch) P.ch=d.ch; if(d.psu) P.psu=d.psu;
@@ -4706,6 +4744,9 @@ function restore(step){
   P.specs=Array.isArray(d.specs)?d.specs:[];
   P.alts=Array.isArray(d.alts)?d.alts:[];
   if(d.base) P.base=d.base; else delete P.base;
+  const back=liveReinstate(keep);
+  if(back) toast(back+' change'+(back===1?'':'s')+' from '+(LIVE.peer||'the other device')
+    +' left alone \u2014 undo only takes back your own');
   invalidateAnns();
   V.sel=null; showInspector(null); drawOverlay(); renderAnnList(); renderLinks();
   renderSheets(); renderLib(); renderTreatments(); renderBom(); syncScaleUI(); stats(); markDirty();
@@ -4713,7 +4754,7 @@ function restore(step){
 function undo(quiet){
   if(!HIST.length){ if(!quiet) toast('Nothing to undo'); return false; }
   const step=HIST.pop();
-  FUT.push({j:snapshot(),l:step.l,t:Date.now(),n:step.n});
+  FUT.push({j:snapshot(),l:step.l,t:Date.now(),n:step.n,rv:LIVE.tick||0});
   restore(step); syncUndo(); saveHist();
   if(!quiet) toast('Undone: '+step.l);
   return true;
@@ -4721,7 +4762,7 @@ function undo(quiet){
 function redo(quiet){
   if(!FUT.length){ if(!quiet) toast('Nothing to redo'); return false; }
   const step=FUT.pop();
-  HIST.push({j:snapshot(),l:step.l,t:Date.now(),n:step.n});
+  HIST.push({j:snapshot(),l:step.l,t:Date.now(),n:step.n,rv:LIVE.tick||0});
   restore(step); syncUndo(); saveHist();
   if(!quiet) toast('Redone: '+step.l);
   return true;
@@ -16065,6 +16106,7 @@ function manualSections(){
       ['Who wins','Records are matched by their id and the later write wins. One person drawing while the other watches, which is what this is for, is exact. Two people editing the same run at the same moment is not: the second write replaces the first.'],
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
       ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
+      ['Undo takes back your own','Undo restores the job as it was, which is right on your own and wrong the moment somebody else is drawing into the same one \u2014 the state it restores predates their last three runs, and putting it back would take those off their screen as well as yours. So every step remembers how much of the other device it had seen, and undoing one leaves everything that arrived after it alone. Your change goes back; theirs stays. A run they deleted after your step stays deleted for the same reason in the other direction, rather than reappearing on both screens. It says how many of their changes it left alone, so nothing is quietly different from what you expected.'],
       ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
     ]}]},
   {id:'revisions',t:'What changed between two revisions',blocks:[
@@ -16983,7 +17025,15 @@ const LIVE={pc:null,ch:null,role:'',state:'off',peer:'',err:'',
   sent:0,got:0,since:0,code:'',want:'',
   /* the rendezvous half: which room, what to show while waiting, the pair we
      already know about, and a flag to stop a poll that is still running */
-  via:'',room:'',showCode:'',pair:null,stop:false,busyWhat:'',announce:'',bothHave:false};
+  via:'',room:'',showCode:'',pair:null,stop:false,busyWhat:'',announce:'',bothHave:false,
+  /* which records came from the other end and when, so an undo here can put
+     back what arrived from there rather than reverting it along with your own */
+  tick:0,theirs:new Map()};
+const LIVE_THEIRS=4000;       /* records remembered; a long session is bounded */
+function liveMine(ids){
+  /* something you have just edited yourself is yours again, whoever drew it */
+  if(LIVE.theirs.size) (ids||[]).forEach(id=>LIVE.theirs.delete(id));
+}
 
 /* how the other end will refer to this one */
 function liveName(){
@@ -17040,6 +17090,7 @@ function liveDrop(){
   if(LIVE.pc){ try{ LIVE.pc.close(); }catch(e){} }
   LIVE.pc=null; LIVE.ch=null; LIVE.rx=null; LIVE.snap=null; LIVE.sentBundle=false;
   LIVE.gaveJob=false; LIVE.heard=false; LIVE.acked=false;
+  LIVE.theirs.clear(); LIVE.tick=0;
   clearTimeout(LIVE.pushT); LIVE.pushT=null;
   clearTimeout(LIVE.hailT); LIVE.hailT=null;
 }
@@ -17282,6 +17333,14 @@ function liveApply(d){
       });
       return arr.filter(Boolean);
     };
+    /* stamp everything this delta touched as theirs, at this tick */
+    LIVE.tick++;
+    const mark=side=>{
+      (side.up||[]).forEach(r=>{ if(r&&r.id) LIVE.theirs.set(r.id,LIVE.tick); });
+      (side.del||[]).forEach(id=>LIVE.theirs.set(id,LIVE.tick));
+    };
+    mark(d.ann||{}); mark(d.treat||{});
+    while(LIVE.theirs.size>LIVE_THEIRS) LIVE.theirs.delete(LIVE.theirs.keys().next().value);
     P.ann=merge(P.ann,d.ann||{});
     P.treat=merge(P.treat,d.treat||{});
     LIVE.snap=liveSnap();
@@ -17744,6 +17803,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   benchHtml,benchCss,openBench,photoOf,photoNear:PHOTO_NEAR,
   compareSheets,clusterBlocks,cloudRects,revImpact,pickChanges,revKinds:REV_KIND,
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
+  liveKeep,liveReinstate,liveMine,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,
   rvOn,rvUrl,rvCode,rvClean,rvOpen,rvJoinCode,rvReconnect,rvPair,rvSides,
