@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.76.1**
+**Version 1.77.0**
 
 ## What it does
 
@@ -430,6 +430,43 @@ as a 2px line with its rows laid out inside a box that had no height. On any ins
 narrow enough to matter it was simply invisible. It is wrapped in a plain block now, which
 gives the track something ordinary to measure; the scroller inside still caps a long run at
 its own height.
+
+## Live sync
+
+Two devices, one takeoff: draw on the iPad and watch it land on the computer, and the
+other way round.
+
+**What it is, and what it cannot be.** LineWork is one file with no server behind it — it
+is served as static bytes and everything else happens in the browser. Live sync therefore
+cannot go through anything of ours, because there is nothing of ours for it to go through.
+What is left is a direct connection between the two devices, and the one thing that cannot
+do by itself is introduce the peers to each other. That introduction is the pairing code:
+it is what a server would normally carry, handed over once by whatever you already use to
+send a link between your own two machines.
+
+So: **one code out, one code back**, and after that the two devices talk to each other and
+to nothing else. Nothing about the job leaves them, no account is involved, and it keeps
+working with the internet unplugged as long as both are on the same network.
+
+- **Pairing** — *Live › Invite a device* makes an invitation and offers it as a link.
+  AirDrop / message / mail it across; opening it on the other device starts the other half
+  and shows a reply code. Paste that back and they are connected.
+- **What crosses** — the whole job first (takeoff, drawings, pinned photos), then only what
+  changed. Moving one markup sends that markup, not the file.
+- **Who wins** — records are matched by id and the later write wins. One person drawing
+  while the other watches is exact. Two people editing the same run at the same instant is
+  not, and it does not pretend otherwise.
+- **If it will not connect** — the two devices have to be able to see each other. A guest
+  or *client isolation* Wi-Fi is the usual reason two machines in the same room cannot.
+  Settings › Files has a switch for a public STUN server for reaching a device on another
+  network; that is the only part of this that talks to anybody else, it sees that a
+  connection is being made and nothing about the job, and it is off by default.
+
+The suite pairs two real browser contexts, hands the codes across programmatically and
+checks the lot: the code compresses and unpacks, both ends go live, the job and its drawing
+cross, a run drawn on one appears on the other with its shape and colour and *on the
+sheet*, changes and deletions travel both ways, a diff of nothing sends nothing, hanging up
+is noticed at the far end, and a code that is not one is refused with a reason.
 
 ## The sweep
 

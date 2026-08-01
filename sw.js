@@ -4,7 +4,7 @@
    Bump CACHE when the shell changes so old copies are evicted. It must stay in
    step with APP_VER in index.html: the app reads the version out of this file,
    because this file is the one thing the cache is never allowed to answer for. */
-const CACHE = 'linework-v1.76.1';
+const CACHE = 'linework-v1.77.0';
 const SHELL = [
   './',
   './index.html',

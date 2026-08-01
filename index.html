@@ -719,6 +719,25 @@ body[data-tools="rail"] #btnCalc{min-width:44px;padding-left:0;padding-right:0;t
 .tsgrp{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);
   margin:12px 0 6px}
 .tsgrp:first-child{margin-top:0}
+/* ---- live sync ---- */
+.lvdlg{width:min(560px,94vw)}
+.lvstep{display:flex;gap:10px;padding:9px 0;border-bottom:1px dotted var(--line)}
+.lvstep:last-child{border-bottom:0}
+.lvn{flex:0 0 22px;height:22px;border-radius:50%;background:var(--s3);color:var(--dim);
+  display:grid;place-items:center;font-size:11px;font-family:var(--mono)}
+.lvstep.on .lvn{background:var(--amber);color:#20170A}
+.lvstep.done .lvn{background:var(--ok);color:#12200a}
+.lvb{flex:1 1 auto;min-width:0}
+.lvb b{display:block;font-size:12.5px;font-weight:500}
+.lvb span{display:block;font-size:11px;color:var(--faint);margin-top:1px;line-height:1.5}
+.lvcode{width:100%;font-family:var(--mono);font-size:11px;line-height:1.35;height:78px;
+  margin-top:6px;resize:vertical;word-break:break-all}
+.lvrow{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.lvdot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--faint);margin-right:6px}
+.lvdot.on{background:var(--ok)}
+.lvdot.wait{background:var(--amber)}
+.lvdot.bad{background:var(--flag)}
+#stLive{cursor:pointer}
 #penFlag{display:none;color:var(--amber)}
 body.haspen #penFlag{display:inline}
 /* ---------- a finger, not a mouse ----------
@@ -813,6 +832,7 @@ body.haspen #penFlag{display:inline}
     <button class="btn" id="btnSet" title="Settings">⚙</button>
     <button class="btn" id="btnHelp" title="Manual and shortcuts (?)">?</button>
     <button class="btn mobtog" id="togR" title="Show or hide the takeoff rail">Takeoff</button>
+    <button class="btn" id="btnLive" title="Draw on one device and watch it on the other"><svg viewBox="0 0 24 24"><path d="M4 8.5h11a4.5 4.5 0 010 9H9"/><path d="M12 5l3 3.5-3 3.5"/><path d="M12 14l-3 3.5 3 3.5"/></svg><span class="lbl"> Live</span></button>
     <button class="btn mobtog" id="togSwap" title="Swap the two rails over">⇄</button>
   </div>
 </header>
@@ -1102,6 +1122,7 @@ body.haspen #penFlag{display:inline}
   <div class="f" id="stScale">Scale: not set</div>
   <div class="f opt" id="stCoord">—</div>
   <div class="f opt" id="penFlag">✎ Apple Pencil</div>
+  <div class="f" id="stLive" style="display:none"></div>
   <div class="f r" id="stSave">Not saved</div>
   <div class="f" id="stSheet">—</div>
   <div class="f" id="stTot">0 runs · 0'-0"</div>
@@ -1113,6 +1134,8 @@ body.haspen #penFlag{display:inline}
 <div class="scrim" id="scrim"><div class="dlg"><h3 id="dlgT">Dialog</h3><div class="bd" id="dlgB"></div><div class="ft" id="dlgF"></div></div></div>
 <div class="scrim" id="tsScrim"><div class="dlg tsdlg"><h3>Tools</h3><div class="bd" id="tsBody"></div>
   <div class="ft"><span class="hint" id="tsHint"></span><button class="btn" id="tsX">Close</button></div></div></div>
+<div class="scrim" id="lvScrim"><div class="dlg lvdlg"><h3 id="lvT">Live sync</h3><div class="bd" id="lvBody"></div>
+  <div class="ft"><span class="hint" id="lvHint"></span><button class="btn" id="lvX">Close</button></div></div></div>
 <div id="pals"></div>
 <div id="cpad"></div>
 <div class="grab" id="grabL" title="Drag to resize the sheets rail — double-click to reset"></div>
@@ -1161,7 +1184,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.76.1';
+const APP_VER='1.77.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -1776,7 +1799,13 @@ function lockStart(){
   window.addEventListener('pagehide',go);
   lockBarSync();
 }
-function markDirty(){ saved=false; $('#stSave').textContent='Unsaved'; clearTimeout(saveT); saveT=setTimeout(saveProject,1200); }
+function markDirty(){ saved=false; $('#stSave').textContent='Unsaved'; clearTimeout(saveT); saveT=setTimeout(saveProject,1200);
+  /* every change already comes through here, so this is where the other device
+     hears about it — debounced, because a drag calls this on every frame */
+  if(typeof LIVE!=='undefined'&&LIVE.state==='live'&&!LIVE.applying){
+    clearTimeout(LIVE.pushT); LIVE.pushT=setTimeout(livePush,180);
+  }
+}
 function stampSaved(where){
   saved=true;
   const el=$('#stSave');
@@ -2108,6 +2137,7 @@ function applyProject(d){
   if(P.lblAlign!=='run') P.lblAlign='flat';
   if(P.lblStyle!=='box') P.lblStyle='';
   P.segN=clamp(Math.round(+P.segN||2),2,24);
+  P.stun=P.stun===true;
   P.prec=Math.max(0,+P.prec||0);
   if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
@@ -15070,6 +15100,7 @@ document.addEventListener('keydown',e=>{
     setMulti(pageAnns().filter(annVisible).map(a=>a.id));
     toast((V.multi.length||(V.sel?1:0))+' markup(s) selected on this page'); return; }
   if(k==='escape'){ closeCtx(); closeRails();
+    if($('#lvScrim').classList.contains('show')){ closeLive(); return; }
     if($('#tsScrim').classList.contains('show')){ closeToolSheet(); return; }
     if(CALC.pend.length){ CALC.pend=[]; clearTimeout(CALC.t); CALC.t=null; V.draft=null; drawOverlay();
       toast('Dropped what was part-written'); return; }
@@ -15395,6 +15426,16 @@ function manualSections(){
       ['Where the tools are on a tablet','The strip wraps to as many rows as it takes, and the side rail to as many columns \u2014 every tool and every control on screen, with nothing to swipe or scroll to find. It used to hold one row and scroll sideways with a fade at the edge as the only hint, which on an iPad put two thirds of it past the right-hand end: the colours, the line weight, undo and redo, Snap, Ruler, Calc and the scale. \u22ef opens the same set written out by name in its groups, which is the answer to \u201cwhere has that tool gone\u201d \u2014 and Settings \u203a Tools turns off the ones this job does not need, which is the way to shorten the strip. Every button on the bar is drawn rather than set in a character: iOS has no glyph for the pocket calculator, so that button used to be an empty box, and the ruler\u2019s white rectangle drew as an empty rectangle \u2014 which down the side rail, where the word is dropped, was all you got.'],
       ['Right-click anywhere','Not just the sheet. A sheet in the list, a markup row, a run card, a library product, a piece in the cut list — each gives the menu of things you would do to that one thing, including copying its order code straight to the clipboard. On the sheet it is aimed at whatever is under the pointer: a label has its own menu, a markup has its, a segment offers to curve just that segment. ⇧-right-click gives the browser’s own menu where you want it, and middle- or right-dragging pans.'],
     ]}]},
+  {id:'live',t:'Live sync',blocks:[
+    {p:'Two devices, one takeoff. Draw on the iPad and watch it land on the computer, and the other way round.'},
+    {rows:[
+      ['What it is','A direct connection between your two devices. LineWork is one file with no server behind it, so there is nothing of ours in the middle and nothing about the job leaves the two machines. No account, and it keeps working with the internet unplugged as long as both are on the same network.'],
+      ['Pairing','Live \u2192 Invite a device makes an invitation. Send the link to the other device however you already send yourself a link \u2014 AirDrop, Messages, mail, a shared note. Opening it there starts the other half and shows a reply code; paste that back on the first device and they are connected. Once, per session.'],
+      ['What crosses','The whole job first \u2014 the takeoff, the drawings and any pinned photos \u2014 and after that only what changed. A markup you move sends that markup, not the file.'],
+      ['Who wins','Records are matched by their id and the later write wins. One person drawing while the other watches, which is what this is for, is exact. Two people editing the same run at the same moment is not: the second write replaces the first.'],
+      ['If it will not connect','They have to be able to see each other on the network. A guest or \u201cclient isolation\u201d Wi-Fi is the usual reason two devices in the same room cannot. Settings \u203a Files has a switch for a public STUN server, which is what is needed to reach a device somewhere else \u2014 it is the one part of this that talks to anybody else, it sees that a connection is being made and nothing about the job, and it is off unless you turn it on.'],
+      ['Stopping','Disconnect on either device, or just close it. Everything either of you did is already in both copies and saves normally on both.'],
+    ]}]},
   {id:'labels',t:'Labels',blocks:[
     {p:'Every measurement carries labels you can move, turn and hide.'},
     {rows:[
@@ -15702,6 +15743,12 @@ function settingsHtml(){
     +'</div><div class="setgrp"><h4>This project</h4>'
     +setRow('Project name','',('<input type="text" data-set="name" value="'+esc(P.name||'')+'">'))
     +setRow('Job number','',('<input type="text" data-set="no" value="'+esc(P.no||'')+'">'))
+    +'</div><div class="setgrp"><h4>Live sync</h4>'
+    +setRow('Reach a device on another network',
+      'Two devices on the same Wi-Fi find each other by themselves and nothing else is involved. Somewhere else needs a public STUN server to work out how to get through \u2014 Google\u2019s, which sees that a connection is being made and nothing about the job. Off unless you need it.',
+      setChk('stun',P.stun===true,P.stun===true?'Using stun.l.google.com':'Same network only'))
+    +setRow('Pair a device','Make an invitation, or see what the connection is doing.',
+      '<button class="btn sm" id="setLive">Open live sync\u2026</button>')
     +'</div>';
   return '<div class="setgrp"><h4>Linework</h4>'
     +setRow('Version',APP_BUILD+' build','<span class="val">'+APP_VER+'</span>')
@@ -15736,6 +15783,8 @@ function renderSettings(){
     const hb=$('#setHist'); if(hb) hb.onclick=showHistory;
     const mb=$('#setMan');
     if(mb) mb.onclick=()=>{ closeSettings(); openManual(); };
+    const lb=$('#setLive');
+    if(lb) lb.onclick=()=>{ closeSettings(); openLive(); };
     const ub=$('#setUpd');
     if(ub) ub.onclick=async()=>{ ub.textContent='Checking…';
       const v=await checkForUpdate();
@@ -15807,6 +15856,7 @@ function applySetting(el){
     case 'calcRead': P.calcRead=val||''; invalidateAnns(); drawOverlay(); break;
     case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
     case 'lblStyle': P.lblStyle=val==='box'?'box':''; drawOverlay(); break;
+    case 'stun': P.stun=!!val; break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'whipSlack': { const v=parseLen(val); P.whipSlack=(isFinite(v)&&v>0)?v:0;
       renderDrivers(); renderBom(); renderSettings(); markDirty(); break; }
@@ -15934,6 +15984,459 @@ $('#setReset').onclick=async()=>{
 };
 
 /* console handle for scripting / debugging the takeoff */
+/* ============================================================
+   Live sync — two devices, one takeoff
+   ------------------------------------------------------------
+   What this is and, more usefully, what it is not. LineWork is one file with no
+   server behind it: it is served as static bytes and everything else happens in
+   the browser. Live sync between two devices therefore cannot go through
+   anything of ours, because there is nothing of ours for it to go through. What
+   is left is a direct connection between the two devices — WebRTC — and the one
+   thing WebRTC cannot do by itself is introduce the peers to each other. That
+   introduction is the pairing code: it is what a server would normally carry,
+   handed over once by whatever you already use to send a link between your own
+   two machines.
+
+   So: one code out, one code back, and after that the two devices talk to each
+   other and to nothing else. Nothing about the job leaves them, there is no
+   account, and it keeps working with the internet unplugged as long as both are
+   on the same network.
+
+   What travels: the whole job once, drawings included, and after that only what
+   changed. Records are matched by id and the later write wins, so drawing on one
+   device while the other watches — which is the case this is for — is exact.
+   Two people editing the same run at the same moment is not: the second write
+   replaces the first, and it does not pretend otherwise.
+   ============================================================ */
+const LIVE={pc:null,ch:null,role:'',state:'off',peer:'',err:'',
+  snap:null,pushT:null,applying:false,rx:null,sentBundle:false,
+  sent:0,got:0,since:0,code:'',want:''};
+
+/* how the other end will refer to this one */
+function liveName(){
+  const ua=navigator.userAgent||'';
+  if(/iPad/.test(ua)||(coarse&&/Mac/.test(ua)&&navigator.maxTouchPoints>1)) return 'iPad';
+  if(/iPhone/.test(ua)) return 'iPhone';
+  if(coarse) return 'a tablet';
+  if(/Mac/.test(ua)) return 'a Mac';
+  if(/Windows/.test(ua)) return 'a PC';
+  return 'a computer';
+}
+
+/* ---- the pairing code ----
+   A session description is about 650 bytes of text with a great deal of repeated
+   boilerplate in it, so it deflates to a third of that. Compressed and in
+   base64url it is short enough to paste, mail or drop between two machines, and
+   short enough to sit in a link. Where the browser has no CompressionStream —
+   iOS before 16.4 — it goes as plain base64 and is simply longer. */
+const b64u=b=>btoa(String.fromCharCode(...b)).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+const unb64u=t=>{ const s=t.replace(/-/g,'+').replace(/_/g,'/');
+  const bin=atob(s+'==='.slice((s.length+3)%4));
+  return Uint8Array.from(bin,c=>c.charCodeAt(0)); };
+async function squash(str){
+  const raw=new TextEncoder().encode(str);
+  if(typeof CompressionStream!=='function') return 'r'+b64u(raw);
+  try{
+    const cs=new CompressionStream('deflate-raw');
+    const buf=await new Response(new Blob([raw]).stream().pipeThrough(cs)).arrayBuffer();
+    return 'z'+b64u(new Uint8Array(buf));
+  }catch(e){ return 'r'+b64u(raw); }
+}
+async function unsquash(code){
+  const body=unb64u(String(code).trim().replace(/^[a-z]/,''));
+  if(String(code).trim()[0]!=='z') return new TextDecoder().decode(body);
+  const ds=new DecompressionStream('deflate-raw');
+  const buf=await new Response(new Blob([body]).stream().pipeThrough(ds)).arrayBuffer();
+  return new TextDecoder().decode(buf);
+}
+
+/* ---- the connection ---- */
+function liveIce(){
+  /* A STUN server is only needed to reach a device that is not on this network,
+     and it is the one part of this that talks to somebody else, so it is off
+     unless it is asked for. On the same Wi-Fi the two devices find each other
+     without it. */
+  return P.stun ? [{urls:'stun:stun.l.google.com:19302'}] : [];
+}
+function liveTeardown(why){
+  if(LIVE.ch){ try{ LIVE.ch.close(); }catch(e){} }
+  if(LIVE.pc){ try{ LIVE.pc.close(); }catch(e){} }
+  LIVE.pc=null; LIVE.ch=null; LIVE.rx=null; LIVE.snap=null; LIVE.sentBundle=false;
+  LIVE.state=why?'failed':'off'; LIVE.err=why||''; LIVE.peer='';
+  clearTimeout(LIVE.pushT); LIVE.pushT=null;
+  syncLiveUI();
+}
+function liveNewPc(){
+  const pc=new RTCPeerConnection({iceServers:liveIce()});
+  pc.oniceconnectionstatechange=()=>{
+    if(/failed|closed/.test(pc.iceConnectionState)&&LIVE.state!=='off')
+      liveTeardown('The two devices could not reach each other. Same Wi-Fi is the usual fix; a guest network that blocks devices from seeing each other is the usual cause.');
+    else syncLiveUI();
+  };
+  return pc;
+}
+/* every candidate in, then the description: trickling needs a channel to trickle
+   down, and a code handed over by hand is not one */
+function liveGathered(pc){
+  return new Promise(res=>{
+    if(pc.iceGatheringState==='complete') return res();
+    const t=setTimeout(res,4000);
+    pc.onicegatheringstatechange=()=>{
+      if(pc.iceGatheringState==='complete'){ clearTimeout(t); res(); }
+    };
+  });
+}
+function liveWire(ch){
+  LIVE.ch=ch;
+  ch.binaryType='arraybuffer';
+  ch.bufferedAmountLowThreshold=256*1024;
+  ch.onopen=()=>{
+    LIVE.state='live'; LIVE.since=Date.now(); LIVE.err='';
+    liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
+      ann:P.ann.length,treat:P.treat.length});
+    LIVE.snap=liveSnap();
+    syncLiveUI();
+  };
+  ch.onclose=()=>{ if(LIVE.state==='live') liveTeardown('The other device disconnected.'); };
+  ch.onmessage=e=>liveHeard(e.data);
+}
+async function liveHost(){
+  liveTeardown();
+  LIVE.role='host'; LIVE.state='pairing'; syncLiveUI();
+  const pc=liveNewPc(); LIVE.pc=pc;
+  liveWire(pc.createDataChannel('linework',{ordered:true}));
+  await pc.setLocalDescription(await pc.createOffer());
+  await liveGathered(pc);
+  LIVE.code=await squash(JSON.stringify({o:pc.localDescription.sdp}));
+  syncLiveUI();
+  return LIVE.code;
+}
+async function liveJoin(code){
+  liveTeardown();
+  LIVE.role='guest'; LIVE.state='pairing'; syncLiveUI();
+  let sdp;
+  try{ sdp=JSON.parse(await unsquash(code)).o; }
+  catch(e){ liveTeardown('That code did not read as an invitation. Copy the whole of it.'); return null; }
+  const pc=liveNewPc(); LIVE.pc=pc;
+  pc.ondatachannel=e=>liveWire(e.channel);
+  await pc.setRemoteDescription({type:'offer',sdp});
+  await pc.setLocalDescription(await pc.createAnswer());
+  await liveGathered(pc);
+  LIVE.code=await squash(JSON.stringify({a:pc.localDescription.sdp}));
+  syncLiveUI();
+  return LIVE.code;
+}
+async function liveAccept(code){
+  if(!LIVE.pc||LIVE.role!=='host'){ toast('Start the invitation first'); return false; }
+  let sdp;
+  try{ sdp=JSON.parse(await unsquash(code)).a; }
+  catch(e){ toast('That code did not read as a reply. Copy the whole of it.'); return false; }
+  if(!sdp){ toast('That is an invitation, not a reply — it is the other device that sends this one back'); return false; }
+  await LIVE.pc.setRemoteDescription({type:'answer',sdp});
+  syncLiveUI();
+  return true;
+}
+
+/* ---- what goes down the wire ----
+   Control is JSON text. Anything bulky is announced, sent as binary chunks and
+   closed off, because a data channel will drop a message that is too big for the
+   other end rather than splitting it for you. 16KB is the size every browser
+   agrees on. */
+const LV_CHUNK=16*1024;
+function liveTell(o){
+  if(!LIVE.ch||LIVE.ch.readyState!=='open') return false;
+  try{ LIVE.ch.send(JSON.stringify(o)); LIVE.sent++; return true; }catch(e){ return false; }
+}
+async function liveShip(kind,bytes,extra){
+  if(!LIVE.ch||LIVE.ch.readyState!=='open') return false;
+  const n=Math.ceil(bytes.length/LV_CHUNK);
+  liveTell(Object.assign({t:'blob',kind,n,size:bytes.length},extra||{}));
+  for(let i=0;i<n;i++){
+    /* let the channel drain rather than queueing a job's worth of PDF at once */
+    if(LIVE.ch.bufferedAmount>1024*1024)
+      await new Promise(r=>{ const f=()=>{ LIVE.ch.removeEventListener('bufferedamountlow',f); r(); };
+        LIVE.ch.addEventListener('bufferedamountlow',f); setTimeout(f,2000); });
+    if(!LIVE.ch||LIVE.ch.readyState!=='open') return false;
+    LIVE.ch.send(bytes.slice(i*LV_CHUNK,(i+1)*LV_CHUNK));
+  }
+  liveTell({t:'blobEnd',kind});
+  return true;
+}
+
+/* ---- the job, all of it, once ---- */
+async function liveSendJob(){
+  if(LIVE.sentBundle) return;
+  LIVE.sentBundle=true;
+  liveTell({t:'busy',what:'packing the job'});
+  let b;
+  try{ b=await bundleBlob(); }
+  catch(e){ liveTell({t:'busy',what:''}); toast('Could not pack the job to send'); return; }
+  const bytes=new Uint8Array(await b.blob.arrayBuffer());
+  await liveShip('job',bytes,{sheets:b.sheets});
+  liveTell({t:'busy',what:''});
+}
+async function liveTakeJob(bytes){
+  /* Taking a job replaces everything, and replacing everything calls markDirty a
+     great many times on the way. Without this the receiving end would diff its
+     new state against its old one and post the whole job straight back as a
+     delta — the two devices handing the same work to each other. */
+  LIVE.applying=true;
+  try{
+    const b=await openBundle(new Blob([bytes]));
+    applyProject(b.data);
+    Object.keys(FILES).forEach(k=>delete FILES[k]);
+    tileClear(); clearHist();
+    V.docId=null; V.page=1; V.sel=null; V.draft=null; V.pageObj=null; V.vp=null;
+    showInspector(null); closeCtx();
+    boot(); setTool('pan');
+    for(const q of b.pdfs){
+      if(!P.docs.some(x=>x.id===q.id)) continue;
+      const doc=P.docs.find(x=>x.id===q.id);
+      try{ await pdfSave(q.id,q.buf.buffer.slice(q.buf.byteOffset,q.buf.byteOffset+q.buf.byteLength),
+        {name:doc.name||q.id,size:q.buf.byteLength}); }catch(e){}
+    }
+    for(const q of (b.photos||[])){
+      try{ await pdfSave(photoKey(q.id),q.buf.buffer.slice(q.buf.byteOffset,q.buf.byteOffset+q.buf.byteLength),
+        {name:q.name,size:q.buf.byteLength}); }catch(e){}
+    }
+    const back=await restoreDrawings();
+    if(back){ boot(true);
+      const first=P.docs.find(d=>FILES[d.id]);
+      if(first) await openDoc(first.id,1,true); }
+    LIVE.snap=liveSnap();
+    toast('Took the job from '+(LIVE.peer||'the other device'));
+  }catch(e){ toast('The job did not arrive whole — '+e.message); }
+  finally{ LIVE.applying=false; LIVE.snap=liveSnap(); clearTimeout(LIVE.pushT); LIVE.pushT=null; }
+}
+
+/* ---- what changed since last time ----
+   Records are compared by their own text, keyed by id. That is enough to know
+   what to send and cheap enough to do on every change, and it means a device
+   that has been away for a moment catches up on exactly what it missed rather
+   than being handed the whole file again. */
+const LV_SKIP={ann:1,treat:1,docs:1,ui:1,panels:1};
+function liveSnap(){
+  const m=o=>{ const x={}; (o||[]).forEach(r=>{ if(r&&r.id) x[r.id]=JSON.stringify(r); }); return x; };
+  const rest={};
+  Object.keys(P).forEach(k=>{ if(!LV_SKIP[k]) rest[k]=JSON.stringify(P[k]); });
+  return {ann:m(P.ann),treat:m(P.treat),docs:JSON.stringify(P.docs),rest};
+}
+function liveDiff(a,b){
+  const side=(x,y)=>{
+    const up=[], del=[];
+    Object.keys(y).forEach(id=>{ if(x[id]!==y[id]) up.push(JSON.parse(y[id])); });
+    Object.keys(x).forEach(id=>{ if(!(id in y)) del.push(id); });
+    return {up,del};
+  };
+  const rest={};
+  Object.keys(b.rest).forEach(k=>{ if(a.rest[k]!==b.rest[k]) rest[k]=JSON.parse(b.rest[k]); });
+  Object.keys(a.rest).forEach(k=>{ if(!(k in b.rest)) rest[k]=null; });
+  return {ann:side(a.ann,b.ann),treat:side(a.treat,b.treat),
+    docs:a.docs!==b.docs?JSON.parse(b.docs):null,rest};
+}
+const liveEmpty=d=>!d.ann.up.length&&!d.ann.del.length&&!d.treat.up.length&&!d.treat.del.length
+  &&!d.docs&&!Object.keys(d.rest).length;
+function livePush(){
+  if(LIVE.state!=='live'||LIVE.applying) return;
+  const now=liveSnap();
+  if(!LIVE.snap){ LIVE.snap=now; return; }
+  const d=liveDiff(LIVE.snap,now);
+  LIVE.snap=now;
+  if(liveEmpty(d)) return;
+  liveTell(Object.assign({t:'delta'},d));
+  /* a sheet the other end has never seen is no use to it without the drawing */
+  if(d.docs) liveSendSheets();
+}
+async function liveSendSheets(){
+  const theirs=LIVE.theirDocs||[];
+  for(const doc of P.docs){
+    if(theirs.includes(doc.id)) continue;
+    let rec=null;
+    try{ rec=await pdfLoad(doc.id); }catch(e){}
+    if(!rec||!rec.buf) continue;
+    await liveShip('sheet',new Uint8Array(rec.buf),{id:doc.id,name:doc.name||doc.id});
+    theirs.push(doc.id);
+  }
+  LIVE.theirDocs=theirs;
+}
+function liveApply(d){
+  LIVE.applying=true;
+  try{
+    if(d.docs) P.docs=d.docs;
+    Object.keys(d.rest||{}).forEach(k=>{ if(d.rest[k]===null) delete P[k]; else P[k]=d.rest[k]; });
+    const merge=(arr,side)=>{
+      const by={}; arr.forEach((r,i)=>{ if(r&&r.id) by[r.id]=i; });
+      (side.del||[]).forEach(id=>{ if(id in by) arr[by[id]]=null; });
+      (side.up||[]).forEach(r=>{
+        if(!r||!r.id) return;
+        if(r.id in by&&arr[by[r.id]]) Object.keys(arr[by[r.id]]).forEach(k=>delete arr[by[r.id]][k]),
+          Object.assign(arr[by[r.id]],r);
+        else if(r.id in by) arr[by[r.id]]=r;
+        else arr.push(r);
+      });
+      return arr.filter(Boolean);
+    };
+    P.ann=merge(P.ann,d.ann||{});
+    P.treat=merge(P.treat,d.treat||{});
+    LIVE.snap=liveSnap();
+    invalidateAnns(); ovInvalidate();
+    drawOverlay(); renderAnnList(); renderTreatments(); renderBom(); renderSheets(); stats();
+    if(V.sel&&!P.ann.some(a=>a.id===V.sel)){ V.sel=null; showInspector(null); }
+    LIVE.got++;
+  }finally{ LIVE.applying=false; }
+  syncLiveUI();
+}
+
+/* ---- what arrives ---- */
+function liveHeard(data){
+  if(typeof data!=='string'){
+    if(!LIVE.rx) return;
+    LIVE.rx.parts.push(new Uint8Array(data));
+    LIVE.rx.have+=data.byteLength;
+    syncLiveUI();
+    return;
+  }
+  let m; try{ m=JSON.parse(data); }catch(e){ return; }
+  if(m.t==='hello'){
+    LIVE.peer=m.name||'the other device';
+    LIVE.theirDocs=(m.docs||[]).slice();
+    /* whichever side has the job sends it; if both do, the host's stands */
+    const mine=P.ann.length+P.treat.length, theirs=(m.ann||0)+(m.treat||0);
+    if(mine&&(!theirs||LIVE.role==='host')) liveSendJob();
+    syncLiveUI();
+    return;
+  }
+  if(m.t==='busy'){ LIVE.busyWhat=m.what||''; syncLiveUI(); return; }
+  if(m.t==='blob'){ LIVE.rx={kind:m.kind,n:m.n,size:m.size,id:m.id,name:m.name,parts:[],have:0};
+    syncLiveUI(); return; }
+  if(m.t==='blobEnd'){
+    const rx=LIVE.rx; LIVE.rx=null;
+    if(!rx) return;
+    const all=new Uint8Array(rx.have);
+    let at=0; rx.parts.forEach(q=>{ all.set(q,at); at+=q.length; });
+    if(rx.kind==='job') liveTakeJob(all);
+    else if(rx.kind==='sheet') liveTakeSheet(rx.id,rx.name,all);
+    syncLiveUI();
+    return;
+  }
+  if(m.t==='delta'){ liveApply(m); return; }
+}
+async function liveTakeSheet(id,name,bytes){
+  try{
+    await pdfSave(id,bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),
+      {name:name||id,size:bytes.byteLength});
+    const back=await restoreDrawings();
+    if(back){ renderSheets(); if(!V.docId){ const f=P.docs.find(d=>FILES[d.id]); if(f) await openDoc(f.id,1,true); } }
+    toast('Sheet '+(name||id)+' arrived');
+  }catch(e){}
+}
+
+/* ---- the panel ---- */
+function liveStatusLine(){
+  if(LIVE.state==='live') return {cls:'on',txt:'Live with '+(LIVE.peer||'the other device')};
+  if(LIVE.state==='pairing') return {cls:'wait',txt:'Pairing…'};
+  if(LIVE.state==='failed') return {cls:'bad',txt:LIVE.err||'Not connected'};
+  return {cls:'',txt:'Not connected'};
+}
+function syncLiveUI(){
+  const f=$('#stLive');
+  if(f){
+    const st=liveStatusLine();
+    f.style.display=LIVE.state==='off'?'none':'';
+    let extra='';
+    if(LIVE.rx) extra=' · '+Math.round(100*LIVE.rx.have/Math.max(1,LIVE.rx.size))+'%';
+    else if(LIVE.busyWhat) extra=' · '+LIVE.busyWhat;
+    f.innerHTML='<span class="lvdot '+st.cls+'"></span>'+esc(st.txt+extra);
+    f.title='Live sync — tap to open';
+  }
+  const b=$('#btnLive');
+  if(b) b.classList.toggle('pri',LIVE.state==='live');
+  if($('#lvScrim')&&$('#lvScrim').classList.contains('show')) drawLivePanel();
+}
+function drawLivePanel(){
+  const body=$('#lvBody'); if(!body) return;
+  const st=liveStatusLine();
+  const step=(n,on,done,title,note,extra)=>'<div class="lvstep'+(done?' done':(on?' on':''))+'">'
+    +'<div class="lvn">'+(done?'✓':n)+'</div><div class="lvb"><b>'+title+'</b>'
+    +(note?'<span>'+note+'</span>':'')+(extra||'')+'</div></div>';
+  let h='<div class="lvstep"><div class="lvn"><span class="lvdot '+st.cls+'"></span></div>'
+    +'<div class="lvb"><b>'+esc(st.txt)+'</b><span>'
+    +(LIVE.state==='live'
+      ? 'Everything either of you draws shows up on the other. '+LIVE.got+' change'+(LIVE.got===1?'':'s')+' in.'
+      : 'Nothing about the job leaves the two devices, and no account is involved. They need to be on the same network.')
+    +'</span></div></div>';
+
+  if(LIVE.state==='live'){
+    h+='<div class="lvrow"><button class="btn" data-lv="job">Send the whole job again</button>'
+      +'<button class="btn" data-lv="stop">Disconnect</button></div>';
+    body.innerHTML=h;
+  }else if(LIVE.role==='host'){
+    const link=location.origin+location.pathname+'#lw='+LIVE.code;
+    h+=step(1,!LIVE.code,!!LIVE.code,'Make an invitation',
+      'This device offers the connection.',
+      LIVE.code?'':'<div class="lvrow"><button class="btn pri" data-lv="host">Make one</button></div>');
+    if(LIVE.code) h+=step(2,true,false,'Send it to the other device',
+      'AirDrop, Messages, mail, a shared note — anything that gets a line of text across. Opening the link there starts the other half automatically.',
+      '<textarea class="lvcode" readonly id="lvOut">'+esc(link)+'</textarea>'
+      +'<div class="lvrow"><button class="btn" data-lv="copy">Copy the link</button>'
+      +'<button class="btn" data-lv="copycode">Copy the code only</button></div>');
+    if(LIVE.code) h+=step(3,true,false,'Paste what it sends back',
+      'The other device shows a reply code. That closes the loop and nothing else is needed.',
+      '<textarea class="lvcode" id="lvIn" placeholder="paste the reply here"></textarea>'
+      +'<div class="lvrow"><button class="btn pri" data-lv="accept">Connect</button></div>');
+    body.innerHTML=h;
+  }else if(LIVE.role==='guest'){
+    h+=step(1,false,true,'Invitation read','From the link that opened this.');
+    h+=step(2,true,false,'Send this reply back',
+      'Copy it to the device that invited you and paste it there.',
+      '<textarea class="lvcode" readonly id="lvOut">'+esc(LIVE.code||'')+'</textarea>'
+      +'<div class="lvrow"><button class="btn pri" data-lv="copycode">Copy the reply</button></div>');
+    body.innerHTML=h;
+  }else{
+    h+=step(1,true,false,'Invite the other device',
+      'Make an invitation here, send it across, paste the reply back. Once.',
+      '<div class="lvrow"><button class="btn pri" data-lv="host">Invite a device</button></div>');
+    h+=step(2,false,false,'Or join one',
+      'If the other device made the invitation, paste it here instead.',
+      '<textarea class="lvcode" id="lvIn" placeholder="paste the invitation or its link"></textarea>'
+      +'<div class="lvrow"><button class="btn" data-lv="join">Join</button></div>');
+    body.innerHTML=h;
+  }
+  const hint=$('#lvHint');
+  if(hint) hint.textContent=LIVE.state==='live'
+    ? 'Records are matched by id and the later write wins.'
+    : 'Both devices must be on the same network.';
+  $$('[data-lv]',body).forEach(el=>el.onclick=()=>liveAct(el.dataset.lv));
+}
+const lvCode=t=>{ const m=/#lw=([A-Za-z0-9_-]+)/.exec(t||''); return m?m[1]:String(t||'').trim(); };
+async function liveAct(what){
+  if(what==='host'){ await liveHost(); drawLivePanel(); return; }
+  if(what==='join'){
+    const v=$('#lvIn')&&$('#lvIn').value;
+    if(!v){ toast('Paste the invitation first'); return; }
+    await liveJoin(lvCode(v)); drawLivePanel(); return;
+  }
+  if(what==='accept'){
+    const v=$('#lvIn')&&$('#lvIn').value;
+    if(!v){ toast('Paste the reply first'); return; }
+    await liveAccept(lvCode(v)); return;
+  }
+  if(what==='copy'||what==='copycode'){
+    const el=$('#lvOut'); if(!el) return;
+    const txt=what==='copycode'?lvCode(el.value):el.value;
+    copyText(txt,what==='copy'?'Link copied':'Code copied');
+    return;
+  }
+  if(what==='job'){ LIVE.sentBundle=false; liveSendJob(); return; }
+  if(what==='stop'){ liveTell({t:'bye'}); liveTeardown(); closeLive(); return; }
+}
+function openLive(){ $('#lvScrim').classList.add('show'); drawLivePanel(); }
+function closeLive(){ $('#lvScrim').classList.remove('show'); }
+$('#btnLive').onclick=openLive;
+$('#lvX').onclick=closeLive;
+$('#lvScrim').onclick=e=>{ if(e.target===$('#lvScrim')) closeLive(); };
+$('#stLive').onclick=openLive;
+
 window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen,openFiles,openDoc,bomData,boot,rdp,smooth,undo,redo,snap,copyAnn,pasteAnn,ctxForAnn,ctxForSheet,wheelZoom,flushWheel,
   saveProjectFile,openProjectFile,applyProject,projFileText,saveProject,loadProject,
   annLen,annSegs,maxZoom,setTool,editAnnText,version:APP_VER,build:APP_BUILD,fileVer:FILE_VER,
@@ -15980,6 +16483,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   checkForUpdate,applyUpdate,syncVerTag,serverVer,update:UPDATE,markDirty,flushSave,
   imgDoc,isImgFile,docImg,restoreDrawings,sheetBitmap,pageGray,straighten,lenHelp,parseScale,
   openToolSheet,closeToolSheet,railFit,toolName,btnWord,
+  LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
+  liveName,openLive,closeLive,squash,unsquash,lvCode,
   inkLbl,alignRuns,chipSvg,chipGrab,chipBox,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
@@ -16036,6 +16541,16 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
     const first=P.docs.find(d=>FILES[d.id]);
     if(first) await openDoc(first.id,1,true);
     toast('Restored '+n+' drawing'+(n===1?'':'s')+' from this browser');
+  }
+  /* an invitation arrives as a link, so opening it is the whole of joining:
+     read it, answer it, show the reply, and take the code back out of the
+     address bar so a reload does not try to join a connection that has gone */
+  const inv=/[#&]lw=([A-Za-z0-9_-]+)/.exec(location.hash||'');
+  if(inv){
+    try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
+    openLive();
+    await liveJoin(inv[1]);
+    drawLivePanel();
   }
 })();
 </script>
