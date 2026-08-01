@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.77.0**
+**Version 1.78.0**
 
 ## What it does
 
@@ -448,9 +448,13 @@ So: **one code out, one code back**, and after that the two devices talk to each
 to nothing else. Nothing about the job leaves them, no account is involved, and it keeps
 working with the internet unplugged as long as both are on the same network.
 
-- **Pairing** — *Live › Invite a device* makes an invitation and offers it as a link.
-  AirDrop / message / mail it across; opening it on the other device starts the other half
-  and shows a reply code. Paste that back and they are connected.
+- **Pairing** — *Live › Invite a device* makes an invitation and draws it as a **QR code**.
+  Point the iPad's camera at the screen; it offers to open the link, and that is the whole
+  of the first half. Sending the link some other way — AirDrop, message, mail — does the
+  same thing. Opening it there shows a reply code; copy that back and paste it.
+- **The code has to point somewhere both devices can reach.** A QR carries the address this
+  copy is open at, so `localhost` or a `file://` produces a code that scans and finds
+  nothing. The panel says so when that is the case.
 - **What crosses** — the whole job first (takeoff, drawings, pinned photos), then only what
   changed. Moving one markup sends that markup, not the file.
 - **Who wins** — records are matched by id and the later write wins. One person drawing
@@ -461,6 +465,22 @@ working with the internet unplugged as long as both are on the same network.
   Settings › Files has a switch for a public STUN server for reaching a device on another
   network; that is the only part of this that talks to anybody else, it sees that a
   connection is being made and nothing about the job, and it is off by default.
+
+### The QR encoder
+
+Written here rather than vendored — it is a page of arithmetic and the app is one file.
+Byte mode, error level L, automatic version and mask. A pairing link is about 620
+characters, which lands at **version 17: 85×85 modules**, drawn as an SVG at four pixels a
+module with `shape-rendering: crispEdges`, because a blurred module is one a camera has to
+guess at.
+
+It is checked **module for module against an independent encoder** — sixteen inputs from
+one character to 2400, across all eight masks and fourteen versions, every module
+identical. Three of those matrices are kept as fixtures so the arithmetic cannot drift.
+Two real bugs came out of that comparison, both invisible without it: the format
+information's two copies run in *opposite* directions around the code and I had them
+mirrored, and the second copy puts seven bits up the left side rather than eight — an
+eighth lands on the dark module, which is not a format bit.
 
 The suite pairs two real browser contexts, hands the codes across programmatically and
 checks the lot: the code compresses and unpacks, both ends go live, the job and its drawing
