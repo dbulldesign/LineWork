@@ -448,6 +448,11 @@ So: **one code out, one code back**, and after that the two devices talk to each
 to nothing else. Nothing about the job leaves them, no account is involved, and it keeps
 working with the internet unplugged as long as both are on the same network.
 
+That is the version that needs nobody's server, and it stays. If you are willing to run
+one small thing of your own, *[Seamless pairing](#seamless-pairing)* below reduces the
+whole of the above to **six characters, once, ever** — and after that the two devices find
+each other by themselves.
+
 - **Pairing** — *Live › Invite a device* makes an invitation and draws it as a **QR code**.
   Point the iPad's camera at the screen; it offers to open the link, and that is the whole
   of the first half. Sending the link some other way — AirDrop, message, mail — does the
@@ -465,6 +470,72 @@ working with the internet unplugged as long as both are on the same network.
   Settings › Files has a switch for a public STUN server for reaching a device on another
   network; that is the only part of this that talks to anybody else, it sees that a
   connection is being made and nothing about the job, and it is off by default.
+
+### Seamless pairing
+
+Copying a code across is a fine thing to do once and a tedious thing to do every morning.
+The reason it has to happen at all is narrow: WebRTC opens a direct connection between two
+devices, but it cannot *start* one — each side has to be told where the other is before
+there is any channel to tell it over. Everything else about live sync already needs nobody.
+
+So the smallest possible thing that solves exactly that, and nothing else: a **rendezvous**.
+It is a numbered pigeonhole. Each device leaves its half of the handshake in it, takes the
+other's, and the note is deleted on the way out. That is the entire server:
+
+```
+POST /?room=ABC123&side=a    leave a note
+GET  /?room=ABC123&side=b    take the other one, once
+```
+
+What goes through it is an SDP offer or answer — network addresses and a certificate
+fingerprint, a few hundred bytes, worthless the moment the connection is up. **The job
+never touches it.** The drawings, the takeoff and every change still go straight between
+the two devices, exactly as they did before.
+
+Two implementations ship, because the objection to a server is either *I don't want to
+deploy anything* or *I don't want to depend on anybody*, and they have opposite answers:
+
+- **`rendezvous/worker.js`** — a Cloudflare Worker, about forty lines. `wrangler deploy`
+  and you have a URL. Pairing is two small requests and a few polls per session, so the
+  free tier covers a firm doing this all day roughly a hundred thousand times over.
+- **`rendezvous/node.js`** — the same logic on `node:http`, for a machine in the office
+  that is already on. `node rendezvous/node.js 8787`, and both devices point at it.
+
+Either way the URL goes into *Settings › Files › Rendezvous* on both devices. Notes live
+five minutes and are held **in memory, never written down** — long enough to walk across
+the room with an iPad, short enough that a code read over somebody's shoulder is dead
+before they can type it. A room name that is not `[A-Za-z0-9_-]{4,80}` is refused, and so
+is any body over 8 KB, which a handshake never is.
+
+**Then the part that makes it seamless.** Once two devices have met, each stores the pairing
+in `localStorage`: a **24-character random room** — not the six characters, which have
+already expired — plus the other's device id and what it calls itself. Next launch, both
+post to that room and connect with nothing asked of anyone. The six characters happen once
+in the life of the pair.
+
+Which side of the pigeonhole each device uses has to be agreed before there is any way to
+agree on anything. Opening a room settles it by fiat (the opener takes `a`); a remembered
+pair settles it by comparing the two device ids, so both machines reach the same answer
+independently and neither sits waiting for a peer that is also waiting. The room itself is
+named by whichever device opened it and announced over the data channel once it is up,
+rather than invented on both sides — two devices each inventing a private room is two
+devices that never meet again.
+
+Reconnecting is careful about not destroying anything. Handing the whole job over is right
+when a fresh iPad meets a computer with a job on it, and wrong when both have work: the
+join only auto-sends to an *empty* peer, and where both are occupied the panel says so and
+offers a button rather than picking a winner.
+
+None of this is compulsory. Leave the rendezvous empty and the panel does not mention a
+code it cannot make; the QR path is what you get, unchanged.
+
+The suite runs the real `rendezvous/node.js` and two real browser contexts against it, and
+covers the pigeonhole itself (leave, collect, read-once, a bad room, an oversize body), the
+six characters appearing at 44px, the iPad joining by typing them, the job and its drawing
+crossing, **both devices storing the same** 24-character room, a page reload not losing it,
+reconnecting with no code and no tapping, a run drawn on the iPad arriving over the
+reconnected link, forgetting, the panel with no rendezvous set, and a rendezvous that is
+not there reporting rather than hanging.
 
 ### The QR encoder
 

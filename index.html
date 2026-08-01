@@ -741,6 +741,11 @@ body[data-tools="rail"] #btnCalc{min-width:44px;padding-left:0;padding-right:0;t
 .lvdot.on{background:var(--ok)}
 .lvdot.wait{background:var(--amber)}
 .lvdot.bad{background:var(--flag)}
+/* six characters read off one screen and typed on another: as big as the dialog
+   will allow, spaced so a 5 and an S are not a guess */
+.lvbig{font-family:var(--mono);font-size:clamp(26px,7vw,44px);letter-spacing:.16em;
+  font-weight:600;color:var(--amber);text-align:center;padding:10px 0 2px;
+  user-select:all;-webkit-user-select:all}
 #stLive{cursor:pointer}
 #penFlag{display:none;color:var(--amber)}
 body.haspen #penFlag{display:inline}
@@ -1188,7 +1193,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.78.0';
+const APP_VER='1.79.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2142,6 +2147,8 @@ function applyProject(d){
   if(P.lblStyle!=='box') P.lblStyle='';
   P.segN=clamp(Math.round(+P.segN||2),2,24);
   P.stun=P.stun===true;
+  P.rvUrl=/^https?:\/\/\S+$/i.test(String(P.rvUrl||''))?String(P.rvUrl).trim():'';
+  P.rvAuto=P.rvAuto!==false;
   P.prec=Math.max(0,+P.prec||0);
   if(typeof P.keepPdf!=='boolean') P.keepPdf=true;
   /* alternates and the baseline, added in 1.18 */
@@ -15434,7 +15441,11 @@ function manualSections(){
     {p:'Two devices, one takeoff. Draw on the iPad and watch it land on the computer, and the other way round.'},
     {rows:[
       ['What it is','A direct connection between your two devices. LineWork is one file with no server behind it, so there is nothing of ours in the middle and nothing about the job leaves the two machines. No account, and it keeps working with the internet unplugged as long as both are on the same network.'],
-      ['Pairing','Live \u2192 Invite a device makes an invitation and draws it as a QR code. Point the other device\u2019s camera at the screen: it offers to open the link, and that is the whole of the first half. Sending the link across some other way \u2014 AirDrop, Messages, mail, a shared note \u2014 does exactly the same thing. Opening it there shows a reply code; copy that back to the first device and paste it. Once, per session.'],
+      ['Pairing, with a rendezvous','Six characters once, and after that nothing at all. Put the address of a rendezvous into Settings \u203a Files \u2014 see below \u2014 and Live offers Show a code: the computer shows six characters, you type them on the iPad, and they connect. That is the last time either device asks you anything. They remember each other, so the next time both are open with Live on they meet by themselves and the takeoff is simply there.'],
+      ['What a rendezvous is, and what it is not','Two devices cannot find each other on their own; something they can both already reach has to introduce them. A rendezvous is that introduction and nothing else \u2014 a numbered pigeonhole where each side leaves its half of the handshake and takes the other\u2019s, which is then thrown away. What passes through it is addresses and a certificate fingerprint, a few hundred bytes, worthless a minute later. The drawings and the takeoff never touch it; they go straight between the two devices as before. It is yours, not ours: rendezvous/worker.js in the repository deploys to Cloudflare\u2019s free tier in about five minutes, and rendezvous/node.js is the same twenty lines for any machine in the office that is always on.'],
+      ['Pairing, without one','Live \u2192 Invite a device makes an invitation and draws it as a QR code. Point the other device\u2019s camera at the screen: it offers to open the link, and that is the whole of the first half. Sending the link across some other way \u2014 AirDrop, Messages, mail, a shared note \u2014 does exactly the same thing. Opening it there shows a reply code; copy that back to the first device and paste it. Nobody\u2019s server is involved at any point, and this stays available whether or not a rendezvous is set.'],
+      ['The remembered pair','What the two devices keep is a long random room to meet in next time \u2014 not the six characters, which stop working within minutes and could not be guessed back into anyway. Forget this pairing on either device ends it, and pairing again needs a code. Settings \u203a Files can also turn off meeting again on its own, if you would rather press Connect yourself.'],
+      ['If both devices already have work on them','Reconnecting does not replace anybody. The first time a device with nothing on it meets one with a job, the job crosses; where both have work, neither is overwritten and only changes from that point on travel. The panel says so, with a button to send the whole job across deliberately if one of the two is the copy you want.'],
       ['What crosses','The whole job first \u2014 the takeoff, the drawings and any pinned photos \u2014 and after that only what changed. A markup you move sends that markup, not the file.'],
       ['Who wins','Records are matched by their id and the later write wins. One person drawing while the other watches, which is what this is for, is exact. Two people editing the same run at the same moment is not: the second write replaces the first.'],
       ['The code has to point somewhere they can both reach','A QR code carries the address this copy of LineWork is open at. If that is localhost, or a file on the machine, the other device will scan it and find nothing \u2014 the panel says so when that is the case. Anywhere both devices can reach works, and pasting the code across by hand does not care either way.'],
@@ -15752,6 +15763,11 @@ function settingsHtml(){
     +setRow('Reach a device on another network',
       'Two devices on the same Wi-Fi find each other by themselves and nothing else is involved. Somewhere else needs a public STUN server to work out how to get through \u2014 Google\u2019s, which sees that a connection is being made and nothing about the job. Off unless you need it.',
       setChk('stun',P.stun===true,P.stun===true?'Using stun.l.google.com':'Same network only'))
+    +setRow('Rendezvous',
+      'Two devices cannot find each other on their own \u2014 something they can both reach has to introduce them. Give this the address of one and pairing becomes six characters once and nothing after that. It never sees the job: only the handshake, a few hundred bytes, worthless a minute later. rendezvous/worker.js in the repository deploys to Cloudflare free in about five minutes, and rendezvous/node.js runs on any machine that is always on. Leave it empty and the camera way still works.',
+      '<input type="text" data-set="rvUrl" value="'+esc(P.rvUrl||'')+'" placeholder="https://\u2026 \u2014 empty for none">')
+    +setRow('Reconnect on its own','When two devices have paired, meet again the moment both are open.',
+      setChk('rvAuto',P.rvAuto!==false,P.rvAuto!==false?'On':'Ask me'))
     +setRow('Pair a device','Make an invitation, or see what the connection is doing.',
       '<button class="btn sm" id="setLive">Open live sync\u2026</button>')
     +'</div>';
@@ -15862,6 +15878,8 @@ function applySetting(el){
     case 'lblAlign': P.lblAlign=val==='run'?'run':'flat'; drawOverlay(); break;
     case 'lblStyle': P.lblStyle=val==='box'?'box':''; drawOverlay(); break;
     case 'stun': P.stun=!!val; break;
+    case 'rvUrl': P.rvUrl=/^https?:\/\/\S+$/i.test(String(val||'').trim())?String(val).trim():''; break;
+    case 'rvAuto': P.rvAuto=!!val; break;
     case 'areaOff': { const v=parseLen(val); P.areaOff=(isFinite(v)&&v>0)?v:0; break; }
     case 'whipSlack': { const v=parseLen(val); P.whipSlack=(isFinite(v)&&v>0)?v:0;
       renderDrivers(); renderBom(); renderSettings(); markDirty(); break; }
@@ -16287,7 +16305,10 @@ function qrSvg(text,px,quiet){
    ============================================================ */
 const LIVE={pc:null,ch:null,role:'',state:'off',peer:'',err:'',
   snap:null,pushT:null,applying:false,rx:null,sentBundle:false,
-  sent:0,got:0,since:0,code:'',want:''};
+  sent:0,got:0,since:0,code:'',want:'',
+  /* the rendezvous half: which room, what to show while waiting, the pair we
+     already know about, and a flag to stop a poll that is still running */
+  via:'',room:'',showCode:'',pair:null,stop:false,busyWhat:'',announce:'',bothHave:false};
 
 /* how the other end will refer to this one */
 function liveName(){
@@ -16335,12 +16356,23 @@ function liveIce(){
      without it. */
   return P.stun ? [{urls:'stun:stun.l.google.com:19302'}] : [];
 }
-function liveTeardown(why){
+/* Closing the connection and giving up on pairing are two different things, and
+   conflating them cost an afternoon: making an offer starts by dropping whatever
+   connection is open, which was also wiping the code the panel had just been
+   told to display. This one only closes. */
+function liveDrop(){
   if(LIVE.ch){ try{ LIVE.ch.close(); }catch(e){} }
   if(LIVE.pc){ try{ LIVE.pc.close(); }catch(e){} }
   LIVE.pc=null; LIVE.ch=null; LIVE.rx=null; LIVE.snap=null; LIVE.sentBundle=false;
-  LIVE.state=why?'failed':'off'; LIVE.err=why||''; LIVE.peer='';
   clearTimeout(LIVE.pushT); LIVE.pushT=null;
+}
+/* and this one is the whole of stopping: no connection, nothing being waited for,
+   nothing left on screen about either */
+function liveTeardown(why){
+  LIVE.stop=true;
+  liveDrop();
+  LIVE.state=why?'failed':'off'; LIVE.err=why||''; LIVE.peer='';
+  LIVE.via=''; LIVE.showCode=''; LIVE.room=''; LIVE.role='';
   syncLiveUI();
 }
 function liveNewPc(){
@@ -16371,6 +16403,7 @@ function liveWire(ch){
     LIVE.state='live'; LIVE.since=Date.now(); LIVE.err='';
     liveTell({t:'hello',name:liveName(),ver:APP_VER,docs:P.docs.map(d=>d.id),
       ann:P.ann.length,treat:P.treat.length});
+    pairAnnounce();
     LIVE.snap=liveSnap();
     syncLiveUI();
   };
@@ -16378,8 +16411,8 @@ function liveWire(ch){
   ch.onmessage=e=>liveHeard(e.data);
 }
 async function liveHost(){
-  liveTeardown();
-  LIVE.role='host'; LIVE.state='pairing'; syncLiveUI();
+  liveDrop();
+  LIVE.stop=false; LIVE.role='host'; LIVE.state='pairing'; LIVE.err=''; syncLiveUI();
   const pc=liveNewPc(); LIVE.pc=pc;
   liveWire(pc.createDataChannel('linework',{ordered:true}));
   await pc.setLocalDescription(await pc.createOffer());
@@ -16389,8 +16422,8 @@ async function liveHost(){
   return LIVE.code;
 }
 async function liveJoin(code){
-  liveTeardown();
-  LIVE.role='guest'; LIVE.state='pairing'; syncLiveUI();
+  liveDrop();
+  LIVE.stop=false; LIVE.role='guest'; LIVE.state='pairing'; LIVE.err=''; syncLiveUI();
   let sdp;
   try{ sdp=JSON.parse(await unsquash(code)).o; }
   catch(e){ liveTeardown('That code did not read as an invitation. Copy the whole of it.'); return null; }
@@ -16577,13 +16610,23 @@ function liveHeard(data){
   if(m.t==='hello'){
     LIVE.peer=m.name||'the other device';
     LIVE.theirDocs=(m.docs||[]).slice();
-    /* whichever side has the job sends it; if both do, the host's stands */
+    /* The whole job is handed to a device that has none — the first pairing,
+       or an iPad joining a job it has never seen. Two devices that both have
+       work on them get nothing automatic: sending would replace whatever the
+       other one had, which for two devices reconnecting after a spell apart is
+       exactly the wrong thing. They say so instead, and the button is there. */
     const mine=P.ann.length+P.treat.length, theirs=(m.ann||0)+(m.treat||0);
-    if(mine&&(!theirs||LIVE.role==='host')) liveSendJob();
+    LIVE.bothHave=!!(mine&&theirs);
+    if(mine&&!theirs) liveSendJob();
     syncLiveUI();
     return;
   }
   if(m.t==='busy'){ LIVE.busyWhat=m.what||''; syncLiveUI(); return; }
+  if(m.t==='pair'&&m.room){
+    /* both ends keep the same long room, so either can start the next meeting */
+    LIVE.pair={room:m.room,peer:m.dev||'',name:m.name||LIVE.peer,at:Date.now()};
+    pairSave(LIVE.pair); syncLiveUI(); return;
+  }
   if(m.t==='blob'){ LIVE.rx={kind:m.kind,n:m.n,size:m.size,id:m.id,name:m.name,parts:[],have:0};
     syncLiveUI(); return; }
   if(m.t==='blobEnd'){
@@ -16628,6 +16671,173 @@ function localWarn(){
     +'</b>, which only this machine can reach. The other device will scan the code and find nothing. '
     +'Open LineWork from an address both devices can see \u2014 or paste the code across by hand, which does not care.</span></div>';
 }
+/* ---- pairing without handing anything over ----
+   Two devices cannot find each other on their own: something they can both
+   already reach has to introduce them. That is all a rendezvous is — a numbered
+   pigeonhole where each side leaves its half of the handshake and takes the
+   other's. It never sees the job. What goes through it is addresses and a
+   certificate fingerprint, a few hundred bytes, worthless once the connection is
+   open; the drawings and the takeoff go straight between the two devices.
+
+   With one set up, pairing is a six-character code once and nothing ever again:
+   the two devices remember each other and meet in the same place next time. With
+   none set up, the QR code is still there and needs nobody's server. */
+const RV_POLL=900, RV_GIVEUP=90000;
+const rvUrl=()=>String(P.rvUrl||'').trim().replace(/\/+$/,'');
+const rvOn=()=>!!rvUrl();
+/* Crockford-ish: no letters a code could be misread as, so a six-character code
+   read off a screen and typed on a tablet arrives as the one that was shown */
+const RV_ALPHA='ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+function rvCode(n){
+  const b=new Uint8Array(n||6); crypto.getRandomValues(b);
+  return Array.from(b,x=>RV_ALPHA[x%RV_ALPHA.length]).join('');
+}
+const rvClean=t=>String(t||'').toUpperCase().replace(/[^A-Z0-9]/g,'')
+  .replace(/O/g,'0').replace(/[IL]/g,'1').slice(0,10);
+async function rvPut(room,side,body){
+  const r=await fetch(rvUrl()+'?room='+encodeURIComponent(room)+'&side='+side,
+    {method:'POST',body,headers:{'content-type':'text/plain'},cache:'no-store'});
+  if(!r.ok) throw new Error('the rendezvous refused it ('+r.status+')');
+}
+async function rvGet(room,side){
+  const r=await fetch(rvUrl()+'?room='+encodeURIComponent(room)+'&side='+side,{cache:'no-store'});
+  if(r.status===204) return null;
+  if(!r.ok) throw new Error('the rendezvous is not answering ('+r.status+')');
+  const t=await r.text();
+  return t||null;
+}
+/* wait for the other half to be left in the pigeonhole */
+async function rvWait(room,side,until){
+  const stop=Date.now()+(until||RV_GIVEUP);
+  while(Date.now()<stop){
+    if(LIVE.stop) return null;
+    let got=null;
+    try{ got=await rvGet(room,side); }catch(e){ throw e; }
+    if(got) return got;
+    await new Promise(r=>setTimeout(r,RV_POLL));
+  }
+  return null;
+}
+
+/* ---- the remembered pair ----
+   Once two devices have met, each keeps the room they met in and the other's
+   name. That room is a long random string rather than the six characters that
+   were typed, so it is not something anybody could guess, and it is what makes
+   the second time seamless: both sides post to it on launch and connect with
+   nothing asked of anyone. */
+const RV_KEY='linework.pair.v1';
+function pairLoad(){
+  try{ const j=JSON.parse(localStorage.getItem(RV_KEY)||'null');
+    return j&&j.room?j:null; }catch(e){ return null; }
+}
+function pairSave(p){
+  try{ if(p) localStorage.setItem(RV_KEY,JSON.stringify(p));
+    else localStorage.removeItem(RV_KEY); }catch(e){}
+}
+function pairForget(){ pairSave(null); LIVE.pair=null; syncLiveUI(); }
+
+/* Both sides post to 'a' and read 'b' or the other way round, and which is which
+   has to be agreed without talking first. The room's own text decides it: the
+   device that opened the room takes one side, the one that joined takes the
+   other, and a remembered pair settles it by comparing the two device ids so the
+   answer is the same on both machines without a word exchanged. */
+function rvSides(mine,theirs){
+  const first=!theirs||String(mine)<String(theirs);
+  return first?{put:'a',get:'b',host:true}:{put:'b',get:'a',host:false};
+}
+const DEV_KEY='linework.device.v1';
+function deviceId(){
+  let id=null;
+  try{ id=localStorage.getItem(DEV_KEY); }catch(e){}
+  if(!id){ id=rvCode(16); try{ localStorage.setItem(DEV_KEY,id); }catch(e){} }
+  return id;
+}
+
+/* ---- the whole handshake, both halves, over the pigeonhole ---- */
+async function rvPair(room,opts){
+  const o=opts||{};
+  if(!rvOn()){ liveTeardown('No rendezvous is set — Settings › Files, or use the code.'); return false; }
+  liveTeardown();                       /* which clears showCode, so set it after */
+  LIVE.stop=false;
+  LIVE.state='pairing'; LIVE.via='rendezvous'; LIVE.room=room;
+  LIVE.showCode=o.show||''; syncLiveUI(); 
+  const me=deviceId();
+  /* Who speaks first has to be agreed without speaking. Where one side opened the
+     room and the other typed its code, that settles it outright. Two devices that
+     have met before have no such asymmetry, so they compare device ids — the same
+     comparison on both machines, so they never both wait or both offer. */
+  const side=o.host!=null
+    ? (o.host?{put:'a',get:'b',host:true}:{put:'b',get:'a',host:false})
+    : rvSides(me,o.peer);
+  try{
+    if(side.host){
+      /* say who is here first, so the other side can decide the same way */
+      const code=await liveHost();
+      await rvPut(room,side.put,JSON.stringify({dev:me,name:liveName(),sdp:code}));
+      const back=await rvWait(room,side.get,o.until);
+      if(!back){ liveTeardown('Nobody came to meet us. Both devices need the same code, at the same time.'); return false; }
+      const them=JSON.parse(back);
+      LIVE.peer=them.name||'the other device';
+      if(!await liveAccept(them.sdp)) return false;
+      /* the side that opened the room names the one they will use from now on
+         and tells the other. Both naming one gets two rooms and no next time. */
+      pairKeep(room,them);
+      return true;
+    }
+    /* the joining side waits for the invitation, answers it, and leaves the
+       answer where the other one is looking */
+    const first=await rvWait(room,side.get,o.until);
+    if(!first){ liveTeardown('Nobody came to meet us. Both devices need the same code, at the same time.'); return false; }
+    const them=JSON.parse(first);
+    LIVE.peer=them.name||'the other device';
+    const ans=await liveJoin(them.sdp);
+    if(!ans) return false;
+    await rvPut(room,side.put,JSON.stringify({dev:me,name:liveName(),sdp:ans}));
+    /* this side does not name the room: it takes the one the other announces,
+       which arrives over the connection a moment from now */
+    return true;
+  }catch(e){
+    liveTeardown('Could not reach the rendezvous — '+e.message);
+    return false;
+  }
+}
+/* the room two devices met in becomes the room they always meet in */
+function pairKeep(room,them){
+  const keep={room:/^[A-Za-z0-9_-]{20,}$/.test(room)?room:rvCode(24),
+    peer:them&&them.dev||'',name:them&&them.name||'',at:Date.now()};
+  LIVE.pair=keep;
+  pairSave(keep);
+  /* The other side has to be told which room to meet in from now on, and it
+     cannot be told down a channel that is not open yet — which it is not, at
+     this point, because the handshake has only just been answered. So it is
+     queued and sent the moment the channel comes up. */
+  LIVE.announce=keep.room;
+  pairAnnounce();
+}
+function pairAnnounce(){
+  if(!LIVE.announce) return;
+  if(liveTell({t:'pair',room:LIVE.announce,dev:deviceId(),name:liveName()})) LIVE.announce='';
+}
+
+/* ---- opening a room by hand, the first time ---- */
+async function rvOpen(){
+  const room=rvCode(6);
+  return rvPair(room,{host:true,show:room,until:RV_GIVEUP});
+}
+async function rvJoinCode(text){
+  const room=rvClean(text);
+  if(room.length<4){ toast('That code is too short — six characters off the other screen'); return false; }
+  return rvPair(room,{host:false,show:room,until:RV_GIVEUP});
+}
+/* ---- and never again, once they know each other ---- */
+async function rvReconnect(quiet){
+  const p=LIVE.pair||pairLoad();
+  if(!p||!rvOn()) return false;
+  LIVE.pair=p;
+  if(!quiet) toast('Looking for '+(p.name||'the other device')+'…');
+  return rvPair(p.room,{peer:p.peer,until:quiet?12000:RV_GIVEUP});
+}
+
 /* ---- the panel ---- */
 function liveStatusLine(){
   if(LIVE.state==='live') return {cls:'on',txt:'Live with '+(LIVE.peer||'the other device')};
@@ -16665,7 +16875,21 @@ function drawLivePanel(){
 
   if(LIVE.state==='live'){
     h+='<div class="lvrow"><button class="btn" data-lv="job">Send the whole job again</button>'
-      +'<button class="btn" data-lv="stop">Disconnect</button></div>';
+      +'<button class="btn" data-lv="stop">Disconnect</button>'
+      +(LIVE.pair?'<button class="btn" data-lv="forget">Forget this pairing</button>':'')+'</div>';
+    if(LIVE.bothHave) h+='<div class="note" style="margin-top:7px"><span>\u25b2</span><span>'
+      +'Both devices already had work on them, so neither has been replaced \u2014 only changes '
+      +'from here on cross. If one of them is the copy you want, send it over with the button above.</span></div>';
+    if(LIVE.pair) h+='<div class="hint" style="margin-top:6px">Paired. Next time both are open with Live on, they connect by themselves.</div>';
+    body.innerHTML=h;
+  }else if(LIVE.state==='pairing'&&LIVE.via==='rendezvous'){
+    const p=LIVE.pair;
+    h+=step(1,true,false,LIVE.showCode?'Type this on the other device':'Looking for '+((p&&p.name)||'the other device'),
+      LIVE.showCode
+        ? 'Open LineWork there, press Live, and put these six characters in. They only work for the next few minutes.'
+        : 'It will connect by itself the moment the other device is open with Live on.',
+      LIVE.showCode?'<div class="lvbig">'+esc(LIVE.showCode)+'</div>':'');
+    h+='<div class="lvrow"><button class="btn" data-lv="stop">Stop waiting</button></div>';
     body.innerHTML=h;
   }else if(LIVE.role==='host'){
     const link=location.origin+location.pathname+'#lw='+LIVE.code;
@@ -16692,11 +16916,30 @@ function drawLivePanel(){
       +'<div class="lvrow"><button class="btn pri" data-lv="copycode">Copy the reply</button></div>');
     body.innerHTML=h;
   }else{
-    h+=step(1,true,false,'Invite the other device',
-      'Make an invitation here, send it across, paste the reply back. Once.',
-      '<div class="lvrow"><button class="btn pri" data-lv="host">Invite a device</button></div>');
-    h+=step(2,false,false,'Or join one',
-      'If the other device made the invitation, paste it here instead.',
+    const p=LIVE.pair||pairLoad();
+    if(rvOn()){
+      /* with a rendezvous set up this is the whole of it, and after the first
+         time there is not even a code */
+      if(p) h+=step(1,true,false,'Connect to '+esc(p.name||'the device you paired with'),
+        'You have paired before, so there is nothing to type. Both devices meet in the same place.',
+        '<div class="lvrow"><button class="btn pri" data-lv="again">Connect</button>'
+        +'<button class="btn" data-lv="forget">Forget it</button></div>');
+      h+=step(p?2:1,!p,false,'Pair a new device',
+        'This shows six characters. Put them into the other device and they find each other.',
+        '<div class="lvrow"><button class="btn'+(p?'':' pri')+'" data-lv="open">Show a code</button></div>');
+      h+=step(p?3:2,false,false,'Or take a code from the other device',
+        'If it is the one showing the six characters.',
+        '<div class="lvrow"><input type="text" id="lvJoin" placeholder="ABC123" '
+        +'autocapitalize="characters" autocorrect="off" spellcheck="false" style="width:130px;text-transform:uppercase">'
+        +'<button class="btn" data-lv="joincode">Join</button></div>');
+    }
+    h+=step(rvOn()?4:1,!rvOn(),false,rvOn()?'Or pair with no rendezvous at all':'Invite the other device',
+      rvOn()
+        ? 'The camera way still works and needs nobody\u2019s server: an invitation here, a reply pasted back.'
+        : 'Make an invitation, point the other device\u2019s camera at it, and paste the reply back. Set a rendezvous in Settings \u203a Files and this becomes a six-character code once and nothing after that.',
+      '<div class="lvrow"><button class="btn'+(rvOn()?'':' pri')+'" data-lv="host">Invite a device</button></div>');
+    h+=step(rvOn()?5:2,false,false,'Or join an invitation',
+      'If the other device made one, paste it or its link here.',
       '<textarea class="lvcode" id="lvIn" placeholder="paste the invitation or its link"></textarea>'
       +'<div class="lvrow"><button class="btn" data-lv="join">Join</button></div>');
     body.innerHTML=h;
@@ -16726,6 +16969,14 @@ async function liveAct(what){
     copyText(txt,what==='copy'?'Link copied':'Code copied');
     return;
   }
+  if(what==='open'){ await rvOpen(); drawLivePanel(); return; }
+  if(what==='joincode'){
+    const v=$('#lvJoin')&&$('#lvJoin').value;
+    if(!v){ toast('Put the six characters in first'); return; }
+    await rvJoinCode(v); drawLivePanel(); return;
+  }
+  if(what==='again'){ await rvReconnect(false); drawLivePanel(); return; }
+  if(what==='forget'){ pairForget(); toast('Forgotten — pairing again needs a code'); drawLivePanel(); return; }
   if(what==='job'){ LIVE.sentBundle=false; liveSendJob(); return; }
   if(what==='stop'){ liveTell({t:'bye'}); liveTeardown(); closeLive(); return; }
 }
@@ -16785,6 +17036,8 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   LIVE,liveHost,liveJoin,liveAccept,liveTeardown,livePush,liveSnap,liveDiff,liveApply,
   liveName,openLive,closeLive,squash,unsquash,lvCode,qrEncode,qrSvg,qrFor,localWarn,
   qrMatrix,qrPlaceFormat,qrCap,QR_MASK,
+  rvOn,rvUrl,rvCode,rvClean,rvOpen,rvJoinCode,rvReconnect,rvPair,rvSides,
+  pairLoad,pairSave,pairForget,deviceId,drawLivePanel,syncLiveUI,
   inkLbl,alignRuns,chipSvg,chipGrab,chipBox,
   calcTarget:()=>CTARGET&&CTARGET.name,
   readInk,mathRun,calcOf,calcText,calcSrc,calcCommit,calcFix,calcTeach,calcStrokes,calcAnswer,
@@ -16845,6 +17098,12 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   /* an invitation arrives as a link, so opening it is the whole of joining:
      read it, answer it, show the reply, and take the code back out of the
      address bar so a reload does not try to join a connection that has gone */
+  /* Two devices that have met before meet again by themselves. Quietly: it polls
+     for a few seconds and gives up without a word if the other one is not there,
+     because a message every time you open a drawing is not seamless either. */
+  if(P.rvAuto!==false&&rvOn()&&pairLoad()&&!/[#&]lw=/.test(location.hash||'')){
+    setTimeout(()=>{ if(LIVE.state==='off') rvReconnect(true); },1200);
+  }
   const inv=/[#&]lw=([A-Za-z0-9_-]+)/.exec(location.hash||'');
   if(inv){
     try{ history.replaceState(null,'',location.pathname+location.search); }catch(e){}
