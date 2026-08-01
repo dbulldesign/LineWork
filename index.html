@@ -60,9 +60,16 @@ body.canGrab .grab{display:block}
    whole screen — including the strip the clock and battery sit in. Pad by the
    safe-area inset so the titleblock starts below them; in a browser tab the
    inset is zero and nothing moves. */
-header.tb{grid-column:1/-1;display:flex;align-items:stretch;background:var(--s1);border-bottom:1px solid var(--line2);
+/* The header wraps at every width, not only on a tablet. On a 1280px laptop —
+   which is most laptops — it was pushing Help, the takeoff toggle and the swap
+   button off the right-hand edge and making the whole page 1429px wide. A second
+   row costs 40px on the few screens that need one; a Save button you cannot
+   reach costs the work. */
+header.tb{grid-column:1/-1;display:flex;align-items:stretch;flex-wrap:wrap;
+  background:var(--s1);border-bottom:1px solid var(--line2);
   padding-top:env(safe-area-inset-top);
   padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
+header.tb .cell{min-width:0}
 .tb .mark{display:flex;align-items:center;gap:9px;padding:0 16px;border-right:1px solid var(--line);}
 .tb .mark b{font-weight:700;letter-spacing:-.02em;font-size:15px}
 .ckey{display:inline-flex;align-items:center;gap:4px;font-family:var(--mono);font-size:10px;color:var(--dim);
@@ -405,6 +412,11 @@ input.up{text-transform:uppercase}
 .tchk input{width:auto;margin:0}
 .tchk svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.7}
 .setrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px dotted var(--line)}
+/* A dozen tool chips beside a label cannot shrink, so Settings › Tools was wider
+   than the dialog holding it and scrolled sideways at every window size. The
+   chips want the width: they go under the label rather than next to it. */
+.setrow.stack{flex-direction:column;align-items:stretch;gap:6px}
+.setrow.stack .ctl{flex:1 1 auto;min-width:0;flex-wrap:wrap;justify-content:flex-start}
 .setrow:last-child{border-bottom:0}
 .setrow .lab{flex:1 1 auto;min-width:0}
 .setrow .lab b{display:block;font-size:12.5px;font-weight:500;color:var(--txt)}
@@ -739,7 +751,7 @@ body.haspen #penFlag{display:inline}
   .inkbar .sw{width:26px;height:26px}
   .sw{width:26px;height:26px}
   input[type=text],input[type=number],select,textarea{padding:9px;font-size:16px;min-height:40px}
-  .cell input.val{min-height:0;font-size:14px}
+  .cell input.val{min-height:0}
   .setrow .ctl input[type=range]{height:34px}
   .tab{padding:13px 6px;font-size:10px}
   .sec>h3{padding:11px 12px 10px}
@@ -752,6 +764,22 @@ body.haspen #penFlag{display:inline}
   footer .f{padding:7px 11px}
   /* hover-only affordances do not exist here, so do not reserve room for them */
   .item:hover,.btn:hover,#ctx button:hover{background:inherit}
+}
+/* ---- nothing a finger types into may be under 16px ----
+   iOS Safari zooms the whole page when it focuses a field smaller than that, and
+   it does not zoom back: you tap a search box and the drawing is suddenly 30%
+   bigger and off to one side. Ten fields were — the two toolbar selects carry
+   their size in a style attribute, the sort and search boxes carry it in a class,
+   the calculator and the command palette in their own rules — so it is stated
+   once here, last and hard, and any new one is covered by the same line. */
+@media(pointer:coarse){
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),
+  select,textarea{font-size:16px!important}
+  /* 26px is small for a finger and these five get used all day. Growing the
+     target with a pseudo-element around the dot spills outside the bar and the
+     grown areas overlap each other, so the dot is simply bigger: still a dot,
+     and 36px of it. */
+  .inkbar .sw{width:36px;height:36px}
 }
 /* the scroll-wheel toggle means nothing without a wheel */
 @media(pointer:coarse) and (hover:none){ #btnScroll{display:none} }
@@ -1133,7 +1161,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.76.0';
+const APP_VER='1.76.1';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -15625,7 +15653,7 @@ function settingsHtml(){
       +'<div class="setrow"><div class="lab"><b>What shows</b><span>Turning one off only takes it off the toolbar — its key still works and it can still go on a palette.</span></div>'
       +'<div class="ctl"><button class="btn sm" data-set="toolsAll">Show every tool</button></div></div>';
     groups.forEach(gname=>{
-      h+='<div class="setrow"><div class="lab"><b>'+esc(gname)+'</b></div><div class="ctl" style="flex-wrap:wrap;gap:4px;justify-content:flex-end">'
+      h+='<div class="setrow stack"><div class="lab"><b>'+esc(gname)+'</b></div><div class="ctl" style="gap:4px">'
         +toolOrder().filter(d=>d.g===gname).map(d=>'<label class="tchk'+(toolShown(d.k)?' on':'')+(d.core?' core':'')+'" title="'
           +esc(d.t)+(d.core?' — always on the toolbar':'')+'">'
           +'<input type="checkbox" data-tool-on="'+d.k+'"'+(toolShown(d.k)?' checked':'')

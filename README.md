@@ -4,7 +4,7 @@ Linear lighting takeoff from architectural PDFs. No build step and no backend �
 serve the repo root as a static site, or open `index.html` directly. pdf.js is
 vendored in `vendor/`, so it works offline and installs as a PWA.
 
-**Version 1.76.0**
+**Version 1.76.1**
 
 ## What it does
 
@@ -430,6 +430,26 @@ as a 2px line with its rows laid out inside a box that had no height. On any ins
 narrow enough to matter it was simply invisible. It is wrapped in a plain block now, which
 gives the track something ordinary to measure; the scroller inside still caps a long run at
 its own height.
+
+## The sweep
+
+`ui` is a standing sweep rather than a feature test: six window sizes — three laptops and
+three iPads — opening every tool, every settings tab, every takeoff pane, the manual and
+both rails, then asking what happened. Anything thrown, anything drawn off the window,
+anything sitting on top of anything else, any target too small for a finger, any field
+small enough to make iOS zoom the page. It found four faults on its first run:
+
+- **The header clipped on a 1280px laptop** — which is most laptops. Help, the takeoff
+  toggle and the swap button were off the right-hand edge and the page was 1429px wide in
+  1280. It wraps at every width now, not only on a tablet.
+- **Settings › Tools scrolled sideways** at every window size: a dozen tool chips beside a
+  label cannot shrink. The chips get the width and go under the label.
+- **Ten fields were under 16px on a tablet.** iOS Safari zooms the whole page when it
+  focuses one of those and does not zoom back — tap a search box and the drawing is
+  suddenly 30% bigger and off to one side. Two carried the size in a style attribute, the
+  rest in classes and their own rules, so it is now stated once, last and hard, and any
+  new field is covered by the same line.
+- **The colour dots were 26px.** They get used all day; they are 36px on a tablet.
 
 ## The window on a tablet
 
