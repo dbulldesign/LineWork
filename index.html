@@ -103,6 +103,14 @@ header.tb .cell{min-width:0}
 .cell input.val:focus{outline:0;color:var(--amber)}
 .tb .grow{flex:1}
 .tb .acts{display:flex;align-items:center;gap:6px;padding:0 12px;margin-left:auto}
+/* The header wraps; this did not, so at anything under about 840 px the last two
+   or three buttons — Live and the rail toggles among them — ran off the right
+   edge of the window with nothing to scroll and no way to reach them. A row of
+   buttons that cannot break is a row of buttons that ends up somewhere else. */
+.tb .acts{flex-wrap:wrap;row-gap:5px;justify-content:flex-end}
+/* and where there is not room even for that, it takes a line of its own rather
+   than squeezing the cells beside it into nothing */
+@media(max-width:900px){ .tb .acts{margin-left:0;flex:1 1 100%;padding:0 12px 6px} }
 
 /* ---------- generic controls ---------- */
 .btn{background:var(--s3);border:1px solid var(--line2);color:var(--txt);padding:5px 10px;cursor:pointer;font-size:12px;line-height:1.3;white-space:nowrap;border-radius:2px}
@@ -180,6 +188,13 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
    almost none, so the drawing tools were simply not there. A tablet keeps the one
    swipeable row, further down, because there the height matters more. */
 .tools{flex-wrap:wrap;overflow:visible}
+/* min-width on a flex item defaults to auto, which means "never narrower than
+   your contents". A strip of thirty finger-sized tools therefore held main open
+   at 854 px inside a 768 px window, and everything that sits at the right-hand
+   end of a row — the last header buttons, the last footer field — was pushed off
+   the screen by the tool bar rather than by anything of its own. It is allowed to
+   shrink; the tools inside it wrap, which is what they are for. */
+.tools{min-width:0}
 #toolbtns{display:flex;align-items:center;gap:4px;flex:1 1 100%;min-width:0;
   flex-wrap:wrap;overflow:visible;scrollbar-width:none}
 #toolbtns::-webkit-scrollbar{display:none}
@@ -191,6 +206,10 @@ main{position:relative;background:#0E0D0B;display:flex;flex-direction:column;min
 .tool svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round}
 .sep{width:1px;height:20px;background:var(--line2);margin:0 4px}
 .viewbar{display:flex;align-items:center;gap:4px}
+/* Floating over the top right of the sheet is right until the sheet is narrower
+   than the strip, and then it reaches back across the tool rail and sits on top
+   of it. It wraps and it is bounded by what it is floating over. */
+.viewbar{flex-wrap:wrap;justify-content:flex-end;max-width:calc(100% - 20px)}
 /* min-height:0 is load-bearing — without it the flex item grows to the stage
    height instead of scrolling, which kills vertical pan and zoom-at-cursor */
 #viewport{flex:1;min-height:0;overflow:auto;position:relative;padding:26px;overscroll-behavior:contain;-webkit-overflow-scrolling:touch}
@@ -245,6 +264,11 @@ footer{grid-column:1/-1;display:flex;align-items:center;gap:0;background:var(--s
   padding-bottom:env(safe-area-inset-bottom);
   padding-left:env(safe-area-inset-left);padding-right:env(safe-area-inset-right)}
 footer .f{padding:5px 12px;border-right:1px solid var(--line);white-space:nowrap}
+/* eight fields do not fit across an iPad in portrait, and the ones that fell off
+   the end were the two worth reading: what is saved, and what the job comes to */
+footer{flex-wrap:wrap}
+footer .f.r{margin-left:auto}
+@media(max-width:900px){ footer .f.r{margin-left:0} }
 footer .f.r{margin-left:auto;border-right:0;border-left:1px solid var(--line)}
 footer b{color:var(--amber);font-weight:500}
 
@@ -1180,6 +1204,7 @@ body.haspen #penFlag{display:inline}
 <div id="cpad"></div>
 <div class="grab" id="grabL" title="Drag to resize the sheets rail — double-click to reset"></div>
 <div class="grab" id="grabR" title="Drag to resize the takeoff rail — double-click to reset"></div>
+<div class="grab" id="grabT" title="Drag to resize the tool rail — double-click to fit it to its tools"></div>
 <div class="ring" id="ring"><div class="rbg"></div><div class="rc" id="ringC"></div></div>
 <div class="toast" id="toast"></div>
 <div class="prog" id="prog" role="status" aria-live="polite">
@@ -1224,7 +1249,7 @@ body.haspen #penFlag{display:inline}
    ============================================================ */
 /* Bump APP_VER on every released change. FILE_VER (below) is the project-file
    schema and only moves when the saved shape changes incompatibly. */
-const APP_VER='1.87.0';
+const APP_VER='1.88.0';
 const APP_BUILD='2026-07-30';
 const pdfjsLib = window.pdfjsLib || window['pdfjs-dist/build/pdf'];
 const PDF_OK=!!pdfjsLib;
@@ -2304,6 +2329,9 @@ function applyProject(d){
     if(!psuIds.has(t.psuId)) t.psuId=P.psu[0].id;
   });
   P.panels=Object.assign({left:true,right:true,swap:false},P.panels);
+  /* a hand-set tool rail width, kept with the job like the other two rails' */
+  if(P.panels.wT!=null){ const v=+P.panels.wT;
+    if(isFinite(v)&&v>0) P.panels.wT=clamp(Math.round(v),TRAIL_MIN,TRAIL_MAX); else delete P.panels.wT; }
   if(typeof P.width==='number') V.width=clamp(P.width,.5,12);
   if(typeof P.fingerDraws==='boolean') V.fingerDraws=P.fingerDraws;
   delete P.savedAt; delete P.app; delete P.ver; delete P.appVer;
@@ -15771,6 +15799,11 @@ function applyPanels(){
    arrangement. */
 const RAIL_DEF={wL:260,wR:400};
 const RAIL_MIN=190, RAIL_MAX=760;
+/* The tool rail sizes itself to its tools, which is right until somebody wants
+   two columns where the measurement says three, or wants the whole set out where
+   it can be seen. So it takes a handle like the other two: dragged, it holds what
+   it is given; double-clicked, it goes back to fitting itself. */
+const TRAIL_MIN=48, TRAIL_MAX=520;
 function railW(side){
   const p=P.panels||{};
   const v=+p[side==='left'?'wL':'wR'];
@@ -15801,8 +15834,11 @@ function placeGrabs(){
   };
   put('#grabL',$('aside.left'));
   put('#grabR',$('aside.right'));
+  /* only when it is a rail — there is nothing to drag sideways on a top strip */
+  put('#grabT',document.body.dataset.tools==='rail'?$('#toolbar'):null);
 }
 function wireGrabs(){
+  wireToolGrab();
   [['#grabL','left'],['#grabR','right']].forEach(([id,side])=>{
     const g=$(id); if(!g||g.dataset.on) return;
     g.dataset.on='1';
@@ -15834,6 +15870,33 @@ function wireGrabs(){
       applyRailW(); if(V.vp) scheduleRepaint(true); markDirty();
       toast((side==='left'?'Sheets':'Takeoff')+' rail back to its usual width');
     });
+  });
+}
+function wireToolGrab(){
+  const g=$('#grabT'); if(!g||g.dataset.on) return;
+  g.dataset.on='1';
+  g.addEventListener('pointerdown',e=>{
+    e.preventDefault();
+    const t=$('#toolbar'); if(!t) return;
+    const w0=t.getBoundingClientRect().width, x0=e.clientX;
+    g.classList.add('on');
+    try{ g.setPointerCapture(e.pointerId); }catch(_){}
+    const mv=ev=>{
+      P.panels=P.panels||{};
+      P.panels.wT=clamp(Math.round(w0+(ev.clientX-x0)),TRAIL_MIN,TRAIL_MAX);
+      railFit(); placeGrabs();
+    };
+    const up=()=>{ g.classList.remove('on');
+      g.removeEventListener('pointermove',mv); g.removeEventListener('pointerup',up);
+      if(V.vp) scheduleRepaint(true);
+      markDirty(); };
+    g.addEventListener('pointermove',mv); g.addEventListener('pointerup',up);
+  });
+  g.addEventListener('dblclick',()=>{
+    P.panels=P.panels||{};
+    delete P.panels.wT;
+    railFit(); placeGrabs(); if(V.vp) scheduleRepaint(true); markDirty();
+    toast('The tool rail fits itself to its tools again');
   });
 }
 /* open or close an overlaid rail; only one at a time, or the sheet disappears */
@@ -15885,8 +15948,16 @@ function railFit(){
      looking at underneath it rather than leaving 71 px of one */
   root.style.setProperty('--toolh',
     (coarse&&document.body.dataset.tools!=='rail'?t.offsetHeight:0)+'px');
-  if(!(coarse&&document.body.dataset.tools==='rail')){
+  /* the rail is a layout, not a kind of device: it is measured wherever it is
+     chosen, and it was only being measured on a tablet */
+  if(document.body.dataset.tools!=='rail'){
     root.style.removeProperty('--railtools'); return;
+  }
+  /* a width set by hand wins; the measured one is what it falls back to */
+  const hand=+((P.panels||{}).wT);
+  if(isFinite(hand)&&hand>0){
+    root.style.setProperty('--railtools',clamp(hand,TRAIL_MIN,TRAIL_MAX)+'px');
+    return;
   }
   /* Lay it out at the minimum, then read what the columns came to and say so.
      It takes a few passes: a wider rail lets the buttons in it take their natural
@@ -16399,6 +16470,15 @@ function manualSections(){
       ['Why it reads the picture rather than the file','Walls are drawn as two parallel lines with door openings punched through them and hatching in between, and no amount of reading the file makes a reliable loop out of that. What a person sees as a closed room fills as one. What does not fill is exactly the case that needed a person anyway.'],
       ['When it will not','A wall with a gap in it lets the fill run off across the sheet, and it says so rather than handing back the outline of the whole building. Clicking a line instead of the floor says that too. Neither is a guess dressed up as an answer.'],
       ['Where the line lands','On the inside face of the wall, which is where a cove actually runs.'],
+    ]}]},
+  {id:'furniture',t:'Moving the furniture',blocks:[
+    {p:'Where the tools sit, where the takeoff sits, and how wide any of it is.'},
+    {rows:[
+      ['The tools: a top strip or a side rail','Both, on any machine. A side rail wraps into as many columns as it needs and takes the width they come to \u2014 measured, so a rail is never a column of tools with the last ten below the bottom of the screen.'],
+      ['Resizing all three rails','Each has a handle on the edge that faces the drawing: the sheets rail, the takeoff rail, and the tool rail. Drag one to set it, double-click it to put it back \u2014 which for the tool rail means back to fitting itself to its tools. A width set by hand is kept with the job.'],
+      ['Why the tool rail resizes at all','It sizes itself to its tools, which is right until you want two columns where the measurement says three, or want the whole set out where it can be seen at once. Then it is yours to set.'],
+      ['The takeoff: a side rail or a drawer','A drawer divides the height instead of the width, which is the better trade on a tablet in portrait. On a narrow screen both side rails become drawers that slide over the sheet, and the Sheets and Takeoff buttons open them \u2014 one at a time, or there is no sheet left to look at.'],
+      ['Where all this lives','Settings \u203a View, and the workspaces at the top of it set all four at once. It travels with the job.'],
     ]}]},
   {id:'size',t:'How much of it shows',blocks:[
     {p:'Thirty tools, seven takeoff tabs and eight pages of settings is the right amount for somebody doing this all day and far too much for somebody who wants the length of a cove. So the app has a size.'},
@@ -18306,6 +18386,7 @@ window.LW={get project(){return P},view:V,files:FILES,calc,lenOf,parseLen,fmtLen
   setLblRot,rotFor,rotsOf,alignRuns,lblRotFor,ctxForLabel,
   setMulti,toggleMulti,multiAnns,inMulti,alignMulti,distributeMulti,annBox,shiftAnn,aligns:ALIGNS,
   narrowUI,railOpen,setRail,closeRails,startLongPress,cancelLongPress,syncMultiBtn,syncFingerBtn,
+  placeGrabs,wireGrabs,railW,applyRailW,trailBounds:{min:TRAIL_MIN,max:TRAIL_MAX},
   probeInsets,checkForUpdate,syncVerTag,update:UPDATE,
   keys:KEYS,touchGestures:TOUCH,manualSections,manualHtml,manualPrintHtml,keyTableHtml,
   openManual,closeManual,printManual,

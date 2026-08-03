@@ -641,6 +641,54 @@ Each colour sits in a **cell the size of a tool button with a dot in the middle*
 rather than being a dot the size of a tool button. The tap target matches
 everything beside it, and the weight on screen is a dot, which is what it is.
 
+## Moving the furniture
+
+Three rails, three handles. The sheets rail and the takeoff rail already resized;
+the **tool rail** does now too, on the edge that faces the drawing. Drag to set
+it, double-click to put it back — which for the tool rail means back to fitting
+itself to its tools. A hand-set width is kept with the job.
+
+It needs the handle because the automatic width is right until it isn't: two
+columns where the measurement says three, or the whole set out where it can be
+seen at once.
+
+### Four things a second pass found
+
+A standing pass over the *shape* of the app — nine window sizes crossed with the
+four places the tools and the takeoff can sit, asking the same questions each
+time: can every control be reached, is anything behind anything else, is anything
+wider than the window, and do the handles work. It started at 29 failures.
+
+**The side rail only worked on a tablet.** The wrapping rules were written behind
+`@media(pointer:coarse)`, on the assumption that a side rail is a tablet thing.
+It isn't — it's a layout, and the *slate* workspace picks it on any machine. On a
+desktop none of it applied and `railFit` returned early, so the rail stayed 60px
+wide, couldn't wrap, and **the last ten tools and every colour sat below the
+bottom of a scroll region nine pixels of which were visible**. That is the
+screenshot. It is measured wherever it is chosen now, and the same desktop window
+goes from an unusable 60px to 114px and two columns.
+
+**A tool strip set the width of the whole app.** `min-width` on a flex item
+defaults to `auto` — "never narrower than your contents" — so thirty
+finger-sized tools held `main` open at 854px inside a 768px window. Everything at
+the right-hand end of any row went off screen: the last header buttons, the last
+footer field. Not the header's fault and not the footer's; it just sat downstream
+of a strip that refused to shrink.
+
+**The header's action buttons couldn't wrap** — the header did, `.acts` didn't —
+so under about 840px Live and the rail toggles ran off the right edge with nothing
+to scroll. And the **footer** couldn't either, which is why the two fields worth
+reading, what's saved and what the job comes to, were the ones that fell off.
+
+**The floating zoom strip reached back over the tool rail.** Right until the sheet
+is narrower than the strip. It's bounded on the left by the rail now and wraps
+instead.
+
+`pass2.mjs` is the pass: 36 layout combinations for reachability and overlap, the
+document width checked directly with the longest sheet name anybody would type,
+every panel and all eight settings tabs opened and measured, and all three
+handles dragged and double-clicked.
+
 ## The rail, measured properly
 
 The screenshot that prompted this: five colour dots laid out in a column *on top

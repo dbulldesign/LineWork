@@ -90,25 +90,28 @@ body[data-tools="rail"] .tools{
   border-bottom:0; border-right:1px solid var(--line2);
   overflow-x:hidden; overflow-y:auto;
 }
-/* ---- the rail on a tablet ----
-   Sixty pixels of width holds one column of finger-sized buttons, and one column
-   holds nowhere near forty of them: the rest were below the screen, which hides
-   them exactly as well as scrolling sideways did across the top. So it wraps into
-   as many columns as it needs and takes the width they came to — measured by the
-   app, because a wrapped column flex container does not report that to the grid
-   track it sits in. The cap is here: past it the answer is fewer tools on the bar,
-   not more rail, and past it the rail scrolls with every tool still in the ⋯ list. */
-@media(pointer:coarse){
-  body[data-tools="rail"] .tools{
-    flex-wrap:wrap; align-content:flex-start; height:100%;
-    width:var(--railtools,60px); max-width:min(38vw,420px);
-  }
-  body[data-tools="rail"] #toolbtns{
-    flex:0 1 auto; flex-flow:column wrap; align-content:flex-start;
-    min-height:0; max-height:100%;
-  }
-  body[data-tools="rail"] .inkbar{ flex-flow:column wrap; max-height:100% }
+/* ---- the rail, wherever it is ----
+   Sixty pixels of width holds one column of buttons, and one column holds nowhere
+   near forty of them: the rest were below the screen, which hides them exactly as
+   well as scrolling sideways did across the top. So it wraps into as many columns
+   as it needs and takes the width they came to — measured by the app, because a
+   wrapped column flex container does not report that to the grid track it sits in.
+   The cap is here: past it the answer is fewer tools on the bar, not more rail.
+
+   This was written behind a coarse-pointer query, on the assumption that a side
+   rail is a tablet thing. It is not — it is a layout, and the slate workspace
+   picks it on any machine. On a desktop none of this applied, the rail stayed
+   sixty pixels wide and could not wrap, and the last ten tools and every colour
+   were below the bottom of a scroll region nine pixels of which were visible. */
+body[data-tools="rail"] .tools{
+  flex-wrap:wrap; align-content:flex-start; height:100%;
+  width:var(--railtools,60px); max-width:min(38vw,420px);
 }
+body[data-tools="rail"] #toolbtns{
+  flex:0 1 auto; flex-flow:column wrap; align-content:flex-start;
+  min-height:0; max-height:100%;
+}
+body[data-tools="rail"] .inkbar{ flex-flow:column wrap; max-height:100% }
 body[data-tools="rail"] #toolbtns{
   flex-direction:column; align-items:center;
   flex:0 0 auto; min-width:0; overflow:visible;
@@ -119,8 +122,12 @@ body[data-tools="rail"] .inkbar{ flex-direction:column }
    tablet — a vertical strip is the wrong shape for them */
 body[data-tools="rail"] .viewbar{
   /* below the calibrate bar rather than on top of its buttons — the app measures
-     that bar, because it is there or not depending on the sheet */
-  position:absolute; top:calc(var(--nagh,0px) + 10px); right:10px; z-index:6;
+     that bar, because it is there or not depending on the sheet.
+     Bounded on the left by the rail as well: floating over the top right of the
+     sheet is right until the sheet is narrower than the strip, and then it
+     reached back across the rail and sat on top of the tools. It wraps instead. */
+  position:absolute; top:calc(var(--nagh,0px) + 10px); right:10px;
+  left:calc(var(--railtools,60px) + 10px); z-index:6;
   background:var(--s1); border:1px solid var(--line2); border-radius:6px;
   padding:4px 6px; box-shadow:0 8px 24px rgba(0,0,0,.35);
 }
